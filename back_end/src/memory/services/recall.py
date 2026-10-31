@@ -76,6 +76,7 @@ def recall(
     store: WeaviateStore | None = None,
     embedder: Any | None = None,
     graph_searcher: Any | None = None,
+    counter: Any | None = None,
     budget_ms: int | None = None,
 ) -> RecallResult:
     """召回与 query 相关的记忆材料。
@@ -89,7 +90,8 @@ def recall(
         store: 可注入的 Weaviate 封装。
         embedder: 可替换的编码函数 ``(text, settings) -> list[float]``。
         graph_searcher: 可替换的图通道函数。
-        budget_ms: 整体预算，缺省 1500ms。
+        counter: 召回计数器（`RecallCounter`）；None 表示不回写。
+        budget_ms: 整体预算，缺省取 `RECALL_BUDGET_MS`。
 
     Raises:
         RecallUnavailableError: 事实源（Weaviate / embedding）不可用 → 503。
@@ -269,6 +271,20 @@ def recall(
         )
         by_id = {c.event_id: c for c in scored}
         materials = [_material(meta[eid], by_id[eid]) for eid in decision.selected]
+
+        # 10) 召回计数回写（A13 / A19）
+        # 只有进了返回集 **且** 分数达标才算「被用过」——
+        # 低分条目即使返回也不能因此获得留存豁免。
+        if counter is not None:
+            try:
+                counter.record_many(
+                    namespace,
+                    [(m["event_id"], m["score"]) for m in materials],
+                    min_score=settings.RECALL_COUNT_MIN_SCORE,
+                    now=moment,
+                )
+            except Exception as exc:  # noqa: BLE001 - 计数是派生数据，不影响召回
+                logger.warning("召回计数回写失败（已忽略）: %s", exc)
 
         return RecallResult(
             materials=materials,

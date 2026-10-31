@@ -18,6 +18,7 @@ from typing import Any
 from memory.config import Settings, load_settings
 from memory.core.logging import fatal, setup_logging
 from memory.core.tools import INSTRUCTIONS, PROTOCOL_VERSION, SERVER_NAME, SERVER_VERSION, TOOLS
+from memory.services.forget import forget_event
 from memory.services.recall import recall
 from memory.services.remember import remember_event
 
@@ -97,7 +98,23 @@ def _tool_remember(settings: Settings, args: dict[str, Any]) -> dict[str, Any]:
 
 
 def _tool_forget(settings: Settings, args: dict[str, Any]) -> dict[str, Any]:
-    raise NotImplementedError("memory_forget 尚未实现（阶段 E1）")
+    """D7 遗忘：软删，移出索引但保留事实层（A32）。"""
+    namespace = settings.MEMORY_NAMESPACE
+    if namespace is None:  # 防御性：main 已拦截
+        raise RuntimeError("MEMORY_NAMESPACE 未设置")
+
+    event_id = args.get("event_id")
+    if not isinstance(event_id, str) or not event_id.strip():
+        raise ValueError("event_id 必须是非空字符串")
+
+    reason = args.get("reason", "user_forget")
+    result = forget_event(
+        namespace=namespace,
+        event_id=event_id,
+        reason=reason,
+        settings=settings,
+    )
+    return result.to_tool_result()
 
 
 def _tool_feedback(settings: Settings, args: dict[str, Any]) -> dict[str, Any]:

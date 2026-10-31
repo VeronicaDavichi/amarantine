@@ -85,6 +85,12 @@ SCHEMA_PROPERTIES: list[dict[str, Any]] = [
     # 护栏降级留痕（A33）
     {"name": "anomaly", "dataType": ["text"]},
     # 派生片段层软删标记（事件卡本身永不软删）
+    # 派生片段层软删标记（事件卡本身永不软删）
+    # 用 `is_deleted` 布尔而不是靠 `deleted_at IsNull`：Weaviate 的 property 级
+    # `invertedIndexConfig`（indexNullState）在 1.28 的建表请求里会被静默忽略，
+    # 而 `IsNull` 过滤又强制要求它。布尔字段走普通倒排索引，没有这个坑。
+    {"name": "is_deleted", "dataType": ["boolean"]},
+    # 保留时间戳供审计展示（不参与过滤）
     {"name": "deleted_at", "dataType": ["date"]},
 ]
 
@@ -109,6 +115,8 @@ def to_properties(card: EventCard, *, anomaly: str | None = None) -> dict[str, A
         "recall_count": card.recall_count,
         "confirmed_by_use": card.confirmed_by_use,
         "ingested_at": _rfc3339(card.ingested_at),
+        # 新对象一律未删 —— 检索侧的 `is_deleted = false` 过滤依赖它存在且为 false
+        "is_deleted": False,
     }
     if card.date_end is not None:
         props["date_end"] = _rfc3339(card.date_end)
@@ -254,6 +262,34 @@ class WeaviateStore:
             )
         return props
 
+    # ---------- 软删（D7 / A32） ----------
+
+    def mark_forgotten(
+        self, event_id: str, namespace: str, *, deleted_at: str
+    ) -> None:
+        """给对象打 `deleted_at`，**不删除对象**（N4：事件卡永不物理删）。
+
+        写完之后检索侧靠 `deleted_at IsNull` 把它过滤掉，
+        但审计通道（按 id 直取）仍能读到。
+        """
+        self.ensure_collection()
+        uid = deterministic_uuid(namespace, event_id)
+        url = f"{self._base}/v1/objects/{COLLECTION}/{uid}"
+        try:
+            resp = self._http.patch(
+                url,
+                json={
+                    "class": COLLECTION,
+                    "properties": {"is_deleted": True, "deleted_at": deleted_at},
+                },
+            )
+        except httpx.HTTPError as exc:
+            raise WeaviateStoreError(f"标记软删失败: {exc}") from exc
+        if resp.status_code not in (200, 204):
+            raise WeaviateStoreError(
+                f"标记软删失败: HTTP {resp.status_code} {resp.text[:200]}"
+            )
+
     # ---------- 检索（M3 召回用） ----------
 
     def _graphql(self, query: str, variables: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -290,7 +326,9 @@ class WeaviateStore:
         operands = [
             '{path: ["namespace"], operator: Equal, valueText: '
             + json.dumps(namespace, ensure_ascii=False)
-            + "}"
+            + "}",
+            # 软删的卡永不进检索结果（A32）；审计通道按 id 直取，不受影响
+            '{path: ["is_deleted"], operator: Equal, valueBoolean: false}',
         ]
         if date_from:
             operands.append(
@@ -298,8 +336,8 @@ class WeaviateStore:
                 + json.dumps(date_from, ensure_ascii=False)
                 + "}"
             )
-        if len(operands) == 1:
-            return operands[0]
+        if len(operands) == 2:
+            return "{operator: And, operands: [" + ", ".join(operands) + "]}"
         return "{operator: And, operands: [" + ", ".join(operands) + "]}"
 
     @staticmethod
