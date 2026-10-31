@@ -121,16 +121,21 @@ def test_namespace_argument_rejected(tmp_path: Path) -> None:
 
 
 def test_missing_namespace_exits_nonzero(tmp_path: Path) -> None:
-    out, err, code = run_mcp([INIT], namespace=None, log_file=tmp_path / "m.log")
+    """缺 namespace：退出码 1，stdout/stderr 全空，原因只写日志文件。"""
+    log_file = tmp_path / "m.log"
+    out, err, code = run_mcp([INIT], namespace=None, log_file=log_file)
     assert code == 1
-    assert "MEMORY_NAMESPACE" in err  # 致命错误保留一行 stderr 供 host 感知
     assert out.strip() == ""
+    assert err.strip() == "", "stderr 不应有任何输出"
+    assert "MEMORY_NAMESPACE" in log_file.read_text(encoding="utf-8")
 
 
 def test_invalid_namespace_blocks_start(tmp_path: Path) -> None:
-    _, err, code = run_mcp([INIT], namespace="Bad Name", log_file=tmp_path / "m.log")
+    log_file = tmp_path / "m.log"
+    _, err, code = run_mcp([INIT], namespace="Bad Name", log_file=log_file)
     assert code != 0
-    assert "MEMORY_NAMESPACE" in err
+    assert err.strip() == "", "stderr 不应有任何输出"
+    assert "FATAL" in log_file.read_text(encoding="utf-8")
 
 
 @pytest.mark.parametrize(

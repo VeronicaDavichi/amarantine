@@ -42,7 +42,7 @@ updated_at: 2026-10-31T02:02:33.378234700Z
 | 双入口：MCP stdio（LLM）+ Admin HTTP（人） | ADR 4.0 |
 | 工具使用指南单一源头 → MCP instructions | ADR 4.10 |
 | 语言信号：意图判断上移给 LLM，服务端只做参数校验与滥用护栏 | ADR C.B13 |
-| 日志落盘，stdout 只跑协议 | ADR 4.0 通用约定 |
+| 日志落盘，stdout/stderr 都不承载日志 | ADR 4.0 通用约定 |
 
 ## 里程碑
 

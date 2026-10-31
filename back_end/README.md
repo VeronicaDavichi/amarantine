@@ -49,6 +49,6 @@ tests/                 契约测试 + 协议冒烟
 
 ## 关键约束
 
-- **stdout 只写协议消息**，日志一律走 stderr
+- **stdout 只写协议消息**，日志一律落 `LOG_FILE`；stderr 也不承载日志，失败看退出码
 - **namespace 只来自环境变量**，任何工具入参携带 `namespace` 直接报错
 - EventCard 改动必须同步 ADR 附录 B，否则 `test_event_card.py` 会红

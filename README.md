@@ -69,6 +69,6 @@ MEMORY_NAMESPACE=agent-a uv run memory-mcp
 
 ## 约定
 
-- **日志落盘**（`LOG_FILE`），stdout 只跑协议
+- **日志落盘**（`LOG_FILE`），stdout / stderr 都不承载日志，失败靠退出码
 - **namespace 只来自环境变量**，入参携带一律拒绝
 - EventCard 改动必须同步 ADR 附录 B，否则契约测试会红

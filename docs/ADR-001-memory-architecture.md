@@ -486,7 +486,7 @@ docker: rerank-svc     →  POST /v1/rerank        （P1 启用）
 | 错误体（MCP） | JSON-RPC `error`，或 tool result 带 `isError: true`，正文同上 |
 | 幂等 | 按 `(namespace, dedupe_key)` 与 `event_id` 双重幂等 |
 | 代码结构 | `core/` 领域逻辑被两入口共享；**入口层只做参数转换，不许写业务** |
-| 日志 | 一律落 `LOG_FILE`；**stdout 只跑协议**，stderr 仅保留致命错误一行 |
+| 日志 | 一律落 `LOG_FILE`；**stdout 与 stderr 都不承载日志**，失败靠退出码感知 |
 
 ### 4.1 事件卡 EventCard
 

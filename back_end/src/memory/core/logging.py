@@ -1,16 +1,16 @@
-"""日志：写文件，不走 stdout / stderr。
+"""日志：写文件，完全不使用 stdout / stderr。
 
 原因：MCP 的 stdout 必须只承载 JSON-RPC 消息（写一个字节的日志都会被 host 解析失败），
-而 stderr 在部分 host 里会被合并进协议流或被静默丢弃。落盘是唯一可靠通道。
+stderr 在部分 host 里会被合并进协议流或被静默丢弃。落盘是唯一可靠通道。
 
-唯一例外：进程级致命错误（配置加载失败、namespace 缺失）会在 stderr 留一行，
-因为此时日志系统可能尚未就绪，且「进程没起来」需要让 host/用户立刻感知。
+所以**进程级致命错误也不写 stderr**——host 能感知的信号只有退出码，
+失败原因去 `LOG_FILE` 里看。
 """
 
 from __future__ import annotations
 
 import logging
-import sys
+import os
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
@@ -19,6 +19,7 @@ from memory.config import Settings
 FORMAT = "%(asctime)s %(levelname)-7s %(name)-14s | %(message)s"
 MAX_BYTES = 5 * 1024 * 1024
 BACKUP_COUNT = 3
+DEFAULT_LOG_FILE = "logs/memory.log"
 
 
 def setup_logging(settings: Settings) -> logging.Logger:
@@ -46,15 +47,20 @@ def setup_logging(settings: Settings) -> logging.Logger:
 
 
 def fatal(settings: Settings | None, message: str) -> None:
-    """记录致命错误并保留一行 stderr。"""
-    logging.getLogger("memory").error("FATAL: %s", message)
+    """记录致命错误——只写文件，不碰 std。
+
+    配置阶段失败（settings 为 None）时日志系统尚未就绪，直接追加到
+    `LOG_FILE`（环境变量优先，否则默认路径），不经过 logging，避免
+    lastResort handler 把内容漏到 stderr。
+    """
     if settings is None:
-        # 配置阶段失败：日志文件可能还没建，兜底写一次
+        target = Path(os.environ.get("LOG_FILE", DEFAULT_LOG_FILE))
         try:
-            path = Path("logs/memory.log")
-            path.parent.mkdir(parents=True, exist_ok=True)
-            with path.open("a", encoding="utf-8") as fh:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with target.open("a", encoding="utf-8") as fh:
                 fh.write(f"FATAL: {message}\n")
         except OSError:
             pass
-    print(f"FATAL: {message}", file=sys.stderr, flush=True)
+        return
+
+    logging.getLogger("memory").error("FATAL: %s", message)
