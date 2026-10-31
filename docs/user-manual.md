@@ -303,6 +303,49 @@ curl -X DELETE http://127.0.0.1:8081/v1/schema/MemoryEvent
 > 这条坑踩过两次：一次是 `deleted_at` 的 `indexNullState` 被静默忽略，
 > 一次是给 schema 加字段后没重建。改 schema 一定要重建。
 
+### LLM 调用一直超时
+
+**症状**：`LLM 请求失败: timed out`，打标/切分全部回退，日志里一串
+`LLM 打标失败，回退规则层`。
+
+**先分清是哪一层**：
+
+```powershell
+# Windows 侧直连（走 VPN）
+Invoke-WebRequest "http://192.168.0.58:3000/" -TimeoutSec 10 -UseBasicParsing
+```
+
+```bash
+# WSL 侧直连
+curl -o /dev/null -w "%{http_code}\n" http://192.168.0.58:3000/
+```
+
+**Windows 通、WSL 不通** → 是 NAT 不继承 VPN 路由，不是代码问题。
+网关挂在 aTrust 这类**用户态虚拟网卡**上，WSL2 默认 NAT 网络看不到那条路由：
+
+```
+Windows: 192.168.31.129  ──(aTrustVPNIC 2.0.0.1)──> 192.168.0.58:3000   ✅
+WSL2:    172.20.192.x    ──────────────────────────> 192.168.0.58:3000   ❌
+```
+
+**解法**（不需要管理员、不需要重启）：
+
+```powershell
+# Windows 侧起转发（3000 端口防火墙已放行，所以直接用它）
+python harness\vpn_relay.py --listen 3000 --target 192.168.0.58:3000
+```
+
+`harness/dev-linux.sh` 会自动把 `LLM_BASE_URL` 填成
+`http://<WSL默认网关>:3000`，所以 WSL 这边**什么都不用改**。
+
+> **网关 IP 会变**：每次 `wsl --shutdown` 之后默认网关可能换一个，
+> 所以别把 IP 写死进 `.env`，交给脚本动态取。
+> 想临时切回直连排查：`MEMORY_KEEP_LLM_BASE_URL=1 ./harness/dev-linux.sh ...`
+
+**长期方案**：`%USERPROFILE%\.wslconfig` 里加 `networkingMode=mirrored`
+（需 WSL 2.0+ / Win11 22H2+，本机 2.7.3 + 22631 满足），WSL 会直接继承
+Windows 网络接口包括 VPN。代价是得 `wsl --shutdown` 一次，容器会停、要重起。
+
 ---
 
 ## 八、变更记录
@@ -310,3 +353,4 @@ curl -X DELETE http://127.0.0.1:8081/v1/schema/MemoryEvent
 | 版本 | 日期 | 变更 |
 |---|---|---|
 | v0.1 | 2026-10-31 | 首版：安装、配置、日常操作、遗忘策略、FAQ、排障 |
+| v0.2 | 2026-10-31 | 补 LLM 超时排障（WSL 不继承 VPN 路由）+ vpn_relay 用法 |

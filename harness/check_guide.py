@@ -98,9 +98,9 @@ def main() -> int:
         "DROP_RATIO", "OVERFLOW_FORCED", "HTTP", "ADR", "MCP", "LLM",
         "FAQ", "TTL", "JSON", "API", "URL", "SQL", "RRF", "BM25",
         "UTF", "CPU", "RAM", "SQLITE", "PG",
-        # 非配置项：代码常量 / 外部工具的环境变量
+        # 非配置项：代码常量 / 外部工具的环境变量 / shell 层开关
         "SCHEMA_PROPERTIES", "UV_PROJECT_ENVIRONMENT", "LOG_FILE",
-        "PYTHONIOENCODING",
+        "PYTHONIOENCODING", "MEMORY_KEEP_LLM_BASE_URL",
     }
     unknown = [v for v in unknown if v not in allowed_extra]
     for v in unknown:

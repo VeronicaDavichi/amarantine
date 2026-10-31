@@ -11,8 +11,13 @@ __pycache__/
 data/
 *.db
 *.sqlite3
+# .env 的全家桶：.env.bak / .env.old / .env.prod 都可能带真 key。
+# 只放行 .env.example（模板，无密钥）。
+# **踩过的坑**：只写 `.env` 时，`cp .env .env.bak` 出来的备份会被提交进仓库，
+# 里面带着真实 API key。所有以 .env 开头的都要挡，再用 ! 单独放行模板。
 .env
-.env.local
+.env.*
+!.env.example
 
 # 模型权重（本地下载，约 2.2 GB）
 models/
