@@ -18,6 +18,7 @@ from typing import Any
 from memory.config import Settings, load_settings
 from memory.core.logging import fatal, setup_logging
 from memory.core.tools import INSTRUCTIONS, PROTOCOL_VERSION, SERVER_NAME, SERVER_VERSION, TOOLS
+from memory.services.remember import remember_event
 
 log = logging.getLogger("memory.mcp")
 
@@ -59,7 +60,25 @@ def _tool_recall(settings: Settings, args: dict[str, Any]) -> dict[str, Any]:
 
 
 def _tool_remember(settings: Settings, args: dict[str, Any]) -> dict[str, Any]:
-    raise NotImplementedError("memory_remember 尚未实现（阶段 B1）")
+    """B1 `memory_remember`：把 LLM 的意图落成一条事件卡。
+
+    namespace 来自进程环境（已在 main 里校验非空），不进工具参数。
+    参数非法 / 下游不可用都会由外层转成 isError，这里不吞异常。
+    """
+    namespace = settings.MEMORY_NAMESPACE
+    if namespace is None:  # 理论上 main 已拦截，防御性保留
+        raise RuntimeError("MEMORY_NAMESPACE 未设置")
+
+    result = remember_event(
+        namespace=namespace,
+        summary=args.get("summary"),
+        date_hint=args.get("date_hint"),
+        pinned=args.get("pinned", False),
+        important=args.get("important", False),
+        emotion_intensity=args.get("emotion_intensity", 0.0),
+        settings=settings,
+    )
+    return result.to_tool_result()
 
 
 def _tool_forget(settings: Settings, args: dict[str, Any]) -> dict[str, Any]:

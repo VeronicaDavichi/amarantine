@@ -1,0 +1,219 @@
+"""B1/B6 `memory_remember` 编排。
+
+一条写入的完整链路（顺序即代码顺序）：
+
+    校验参数 → 解析时间 → 应用护栏 → 打标 → 算 importance
+    → 生成 event_id → 幂等检查 → embed → 写 Weaviate → 记护栏计数 → 写图
+
+几个刻意的设计：
+
+- **幂等检查放在 embed 之前**：重复内容不该浪费一次 embedding 调用。
+- **护栏计数放在写入成功之后**：写失败还记账，会让正常用户被误降级。
+- **图失败不影响返回值**：ADR D2 规定图可丢弃重建，只留告警。
+- **重要度计算与写卡分离**：`merge_importance` 在 guards 里，这里只做组装。
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import date, datetime, timezone
+
+from memory.config import Settings
+from memory.core.event_id import make_event_id
+from memory.core.guards import (
+    GuardError,
+    apply_directive_guards,
+    merge_importance,
+    validate_remember_args,
+)
+from memory.core.time_resolver import resolve_date_hint
+from memory.models.event_card import EventCard
+from memory.services.directive_counter import DirectiveCounter
+from memory.services.embedding import EmbeddingError, embed_one
+from memory.services.graph_outbox import write_event_node
+from memory.services.labeler import label_event
+from memory.services.weaviate_store import WeaviateStore, WeaviateStoreError
+
+#: 未给出任何重要性信号时的基础分（B6 的四档 rubrics 在 P1 细化）
+BASE_IMPORTANCE = 0.5
+
+
+@dataclass(frozen=True)
+class RememberResult:
+    """工具层要返回给 LLM 的结构。"""
+
+    event_id: str
+    created: bool
+    anomaly: str | None = None
+    weaviate_id: str | None = None
+    graph_ok: bool = True
+
+    def to_tool_result(self) -> dict[str, object]:
+        payload: dict[str, object] = {
+            "event_id": self.event_id,
+            "created": self.created,
+        }
+        if self.anomaly:
+            payload["anomaly"] = self.anomaly
+        return payload
+
+
+def remember_event(
+    *,
+    namespace: str,
+    summary: str,
+    date_hint: str | None = None,
+    pinned: bool = False,
+    important: bool = False,
+    emotion_intensity: float = 0.0,
+    settings: Settings,
+    store: WeaviateStore | None = None,
+    counter: DirectiveCounter | None = None,
+    embedder: object | None = None,
+    graph_writer: object | None = None,
+    llm_labeler: object | None = None,
+    now: datetime | None = None,
+    today: date | None = None,
+) -> RememberResult:
+    """写入一条记忆。
+
+    Args:
+        namespace: 记忆域（由入口层从环境变量取得，**不接受工具参数**）。
+        summary: 事件摘要（LLM 给定边界即作用域）。
+        date_hint: 自然语言时间线索。
+        pinned: 用户是否显式要求记住。
+        important: 用户是否强调重要。
+        emotion_intensity: 情绪强度 0–1。
+        settings: 配置。
+        store: 可注入的 Weaviate 封装（测试用）。
+        counter: 可注入的护栏计数器（测试用）。
+        embedder: 可替换的编码函数，签名 ``(text, settings) -> list[float]``。
+        graph_writer: 可替换的图写入函数，签名同 `write_event_node`。
+        llm_labeler: 可选的 LLM 打标器。
+        now: 当前时刻（UTC），缺省取系统时间。
+        today: 「今天」的基准日，缺省取 `now` 的日期。
+
+    Raises:
+        GuardError: 参数非法（工具层应转 isError）。
+        EmbeddingError: embedding 服务不可用（工具层应转 503）。
+        WeaviateStoreError: 写入失败（工具层应转 503）。
+    """
+    # 1) 参数校验（不信任 LLM 的类型自觉）
+    validate_remember_args(
+        summary=summary,
+        pinned=pinned,
+        important=important,
+        emotion_intensity=emotion_intensity,
+    )
+
+    moment = now or datetime.now(timezone.utc)
+    base_day = today or moment.date()
+
+    # 2) 时间解析（规则层）
+    date_range = resolve_date_hint(date_hint, today=base_day)
+
+    # 3) 护栏（需要 24h 计数）
+    counter = counter or DirectiveCounter(_db_path(settings))
+    used = counter.count_pinned(namespace, now=moment)
+    decision = apply_directive_guards(
+        pinned=pinned,
+        important=important,
+        emotion_intensity=emotion_intensity,
+        pinned_in_window=used,
+        daily_max=settings.USER_DIRECTIVE_DAILY_MAX,
+        explicit_important_floor=settings.EXPLICIT_IMPORTANT_FLOOR,
+        emotion_boost=settings.EMOTION_BOOST,
+    )
+
+    # 4) 打标（规则层必定产出非空 types）
+    labels = label_event(
+        summary,
+        vocab=settings.TYPES_VOCAB or None,
+        llm_labeler=llm_labeler,
+    )
+
+    # 5) 重要度：基础分 → 下限 → 情绪加成（封顶 1.0）
+    importance = merge_importance(
+        base=BASE_IMPORTANCE,
+        floor=decision.importance_floor,
+        boost=decision.importance_boost,
+    )
+
+    # 6) 内容哈希主键（namespace 参与，防跨域撞 id）
+    event_id = make_event_id(
+        namespace=namespace,
+        date_start=date_range.start,
+        date_end=date_range.end,
+        types=labels.types,
+        entity_names=[e.name for e in labels.entities],
+        summary=summary,
+    )
+
+    card = EventCard(
+        namespace=namespace,
+        event_id=event_id,
+        date_start=date_range.start,
+        date_end=date_range.end,
+        types=labels.types,
+        entities=labels.entities,
+        summary=summary,
+        retention="normal",
+        ingested_at=moment,
+        importance=importance,
+        emotion_intensity=decision.emotion_intensity if emotion_intensity else None,
+        pinned=decision.pinned,
+        pinned_source=decision.pinned_source,
+        user_directive=decision.user_directive,
+    )
+    card.check_invariants()
+
+    # 7) 幂等：同内容已存在则不重复写（A7）
+    owns_store = store is None
+    active_store = store or WeaviateStore(settings)
+    try:
+        if store is None:
+            active_store.ensure_collection()
+
+        existing = active_store.get_by_event_id(namespace, event_id)
+        if existing is not None:
+            return RememberResult(
+                event_id=event_id,
+                created=False,
+                weaviate_id=existing.get("id"),  # type: ignore[arg-type]
+            )
+
+        # 8) embed（只对确实要写的内容付费）
+        encode = embedder or (lambda text, cfg: embed_one(text, cfg))  # type: ignore[operator]
+        vector = encode(summary, settings)  # type: ignore[operator]
+        if not isinstance(vector, list):
+            raise EmbeddingError(f"编码函数返回了非向量: {type(vector)}")
+
+        # 9) 写事实源
+        weaviate_id = active_store.insert_event(card, vector, anomaly=decision.anomaly)
+
+        # 10) 写入成功才记账（否则失败也会消耗配额）
+        if decision.pinned:
+            counter.record_pinned(namespace, now=moment)
+
+        # 11) 派生图（失败只告警）
+        writer = graph_writer or write_event_node
+        outbox = writer(  # type: ignore[operator]
+            card, settings=settings, weaviate_id=weaviate_id
+        )
+
+        return RememberResult(
+            event_id=event_id,
+            created=True,
+            anomaly=decision.anomaly,
+            weaviate_id=weaviate_id,
+            graph_ok=bool(getattr(outbox, "ok", False)),
+        )
+    finally:
+        if owns_store:
+            active_store.close()
+
+
+def _db_path(settings: Settings):
+    from memory.services.directive_counter import db_path_from_settings
+
+    return db_path_from_settings(settings)

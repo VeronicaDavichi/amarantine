@@ -132,6 +132,8 @@ class Settings(BaseSettings):
     SQLITE_WAL: bool = True
     DB_BUSY_TIMEOUT_MS: int = 5000
     WEAVIATE_URL: str = "http://127.0.0.1:8081"
+    #: gRPC 端口与 REST 不同（本机为避开 Dify 占用改成 50061）
+    WEAVIATE_GRPC_PORT: int = 50061
     NEO4J_URI: str = "bolt://127.0.0.1:7687"
     NEO4J_USER: str = "neo4j"
     NEO4J_PASSWORD: str = "password"
