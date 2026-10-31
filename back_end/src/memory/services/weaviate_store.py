@@ -20,6 +20,7 @@
 
 from __future__ import annotations
 
+import json
 import uuid
 from datetime import date, datetime
 from typing import Any
@@ -252,6 +253,140 @@ class WeaviateStore:
                 f"namespace 不一致：期望 {namespace}，实际 {props.get('namespace')}"
             )
         return props
+
+    # ---------- 检索（M3 召回用） ----------
+
+    def _graphql(self, query: str, variables: dict[str, Any] | None = None) -> dict[str, Any]:
+        """执行 GraphQL；失败转 WeaviateStoreError（调用方据此降级）。
+
+        `where` 这类结构化过滤**必须走变量**：GraphQL 不认 JSON 对象字面量，
+        内联会直接语法错误。
+        """
+        try:
+            resp = self._http.post(
+                f"{self._base}/v1/graphql",
+                json={"query": query, "variables": variables or {}},
+            )
+        except httpx.HTTPError as exc:
+            raise WeaviateStoreError(f"GraphQL 请求失败: {exc}") from exc
+        if resp.status_code != 200:
+            raise WeaviateStoreError(
+                f"GraphQL 返回 {resp.status_code}: {resp.text[:300]}"
+            )
+        body = resp.json()
+        if body.get("errors"):
+            raise WeaviateStoreError(f"GraphQL 报错: {body['errors'][:1]}")
+        return body.get("data") or {}
+
+    @staticmethod
+    def _where_graphql(namespace: str, *, date_from: str | None = None) -> str:
+        """构造 where **GraphQL 对象字面量**。
+
+        两个坑：
+        1. Weaviate 不接受 `$where: WhereFilter` 变量声明（Unknown type）
+        2. 也不接受 JSON 字面量（键带引号会语法错）
+        所以只能拼 GraphQL 的对象语法（键不带引号、逗号分隔）。
+        """
+        operands = [
+            '{path: ["namespace"], operator: Equal, valueText: '
+            + json.dumps(namespace, ensure_ascii=False)
+            + "}"
+        ]
+        if date_from:
+            operands.append(
+                '{path: ["date_start"], operator: GreaterThanEqual, valueDate: '
+                + json.dumps(date_from, ensure_ascii=False)
+                + "}"
+            )
+        if len(operands) == 1:
+            return operands[0]
+        return "{operator: And, operands: [" + ", ".join(operands) + "]}"
+
+    @staticmethod
+    def _to_hit(obj: dict[str, Any], *, score: float) -> dict[str, Any]:
+        props = dict(obj)
+        extra = props.pop("_additional", {}) or {}
+        return {
+            "event_id": props.get("event_id"),
+            "namespace": props.get("namespace"),
+            "summary": props.get("summary"),
+            "date_start": props.get("date_start"),
+            "importance": props.get("importance"),
+            "pinned": props.get("pinned"),
+            "unresolved": props.get("unresolved") or [],
+            "entity_names": props.get("entity_names") or [],
+            "score": score,
+            "distance": extra.get("distance"),
+        }
+
+    _FIELDS = """
+      event_id
+      namespace
+      summary
+      date_start
+      importance
+      pinned
+      unresolved
+      entity_names
+      _additional { distance }"""
+
+    @staticmethod
+    def _extract_hits(data: dict[str, Any]) -> list[dict[str, Any]]:
+        return ((data.get("Get") or {}).get(COLLECTION)) or []
+
+    def search_near_vector(
+        self,
+        vector: list[float],
+        namespace: str,
+        *,
+        limit: int = 50,
+        date_from: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """向量召回。distance 转成 (0,1] 的相似度，越大越相关。"""
+        if len(vector) != self._settings.EMBEDDING_DIM:
+            raise MixedModelError(
+                f"查询向量维度 {len(vector)} 与 EMBEDDING_DIM={self._settings.EMBEDDING_DIM} 不一致"
+            )
+        self.ensure_collection()
+        # limit 必须内联：走变量会被 Weaviate 解析成 int64 并报类型转换错
+        query = (
+            "query ($vector: [Float!]!) {"
+            " Get { MemoryEvent("
+            f"nearVector: {{vector: $vector}}, limit: {int(limit)}, where: "
+            + self._where_graphql(namespace, date_from=date_from)
+            + f") {{{self._FIELDS}}} }} }}"
+        )
+        data = self._graphql(query, {"vector": vector})
+        out = []
+        for obj in self._extract_hits(data):
+            distance = (obj.get("_additional") or {}).get("distance") or 0.0
+            out.append(self._to_hit(obj, score=1.0 / (1.0 + float(distance))))
+        return out
+
+    def search_bm25(
+        self,
+        text: str,
+        namespace: str,
+        *,
+        limit: int = 50,
+        date_from: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """BM25 关键词召回。Weaviate 的 bm25 分没有上界，这里保留原分。"""
+        self.ensure_collection()
+        query = (
+            "query ($query: String!) {"
+            " Get { MemoryEvent("
+            f"bm25: {{query: $query}}, limit: {int(limit)}, where: "
+            + self._where_graphql(namespace, date_from=date_from)
+            + f") {{{self._FIELDS}}} }} }}"
+        )
+        data = self._graphql(query, {"query": text})
+        return [
+            self._to_hit(
+                obj, score=float((obj.get("_additional") or {}).get("score") or 0.0)
+            )
+            for obj in self._extract_hits(data)
+        ]
 
     def close(self) -> None:
         if self._owns_client:

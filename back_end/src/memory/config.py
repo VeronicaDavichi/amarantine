@@ -59,6 +59,8 @@ class Settings(BaseSettings):
     ARCHIVE_WINDOW_DAYS: int = 180
     RECALL_TOP_K_MIN: int = 3
     RECALL_TOP_K_MAX: int = 30
+    #: 每路召回的候选条数（ADR：候选每路 top 50，再交给动态 K 截断）
+    RECALL_CANDIDATES: int = 50
     RECALL_DROP_RATIO: float = 0.6
     RECALL_GAP_RATIO: float = 0.15
     CONTEXT_TOKEN_BUDGET: int = 3000

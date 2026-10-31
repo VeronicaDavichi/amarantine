@@ -83,6 +83,15 @@ def _extract_entities(summary: str) -> list[Entity]:
     return entities
 
 
+def extract_entities(text: str) -> list[Entity]:
+    """从自由文本抽实体（召回时从 query 里抽，用于图通道）。
+
+    与打标共用同一套规则，保证「写入时抽到的实体」和「查询时抽到的实体」
+    口径一致——否则图通道会系统性漏检。
+    """
+    return _extract_entities(text)
+
+
 def label_by_rules(summary: str, *, vocab: list[str] | None = None) -> LabelResult:
     """规则层打标：永远给出非空 types（否则事件卡无法落库）。"""
     types = _match_types(summary, vocab or [])

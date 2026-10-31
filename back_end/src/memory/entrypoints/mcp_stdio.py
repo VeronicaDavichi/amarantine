@@ -18,6 +18,7 @@ from typing import Any
 from memory.config import Settings, load_settings
 from memory.core.logging import fatal, setup_logging
 from memory.core.tools import INSTRUCTIONS, PROTOCOL_VERSION, SERVER_NAME, SERVER_VERSION, TOOLS
+from memory.services.recall import recall
 from memory.services.remember import remember_event
 
 log = logging.getLogger("memory.mcp")
@@ -56,7 +57,21 @@ def _tool_text(payload: dict[str, Any], *, is_error: bool = False) -> dict[str, 
 
 
 def _tool_recall(settings: Settings, args: dict[str, Any]) -> dict[str, Any]:
-    raise NotImplementedError("memory_recall 尚未实现（阶段 C7）")
+    """C7 `memory_recall`：检索与 query 相关的记忆材料。
+
+    事实源不可用会抛 `RecallUnavailableError`，由外层转成 `isError`——
+    MCP 没有 HTTP 状态码，调用方只能靠 isError 区分「查不到」和「查失败」。
+    """
+    namespace = settings.MEMORY_NAMESPACE
+    if namespace is None:  # 防御性：main 已拦截
+        raise RuntimeError("MEMORY_NAMESPACE 未设置")
+
+    query = args.get("query")
+    if not isinstance(query, str) or not query.strip():
+        raise ValueError("query 必须是非空字符串")
+
+    result = recall(query, namespace=namespace, settings=settings)
+    return result.to_payload()
 
 
 def _tool_remember(settings: Settings, args: dict[str, Any]) -> dict[str, Any]:
