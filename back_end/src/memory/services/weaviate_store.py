@@ -262,6 +262,25 @@ class WeaviateStore:
             )
         return props
 
+    # ---------- 全量列举（M5 管理接口用） ----------
+
+    def list_all(self, namespace: str, *, limit: int = 1000) -> list[dict[str, Any]]:
+        """列出某 namespace 下所有未删除的卡。
+
+        管理接口的数据量是「一个人多年的记忆」，几百到几千条，
+        一次性拉全量足够；真到上万条再换游标分页。
+        """
+        self.ensure_collection()
+        query = (
+            "query {"
+            " Get { MemoryEvent("
+            f"limit: {int(limit)}, where: "
+            + self._where_graphql(namespace)
+            + f") {{{self._ADMIN_FIELDS}}} }} }}"
+        )
+        data = self._graphql(query)
+        return [self._to_hit(obj, score=0.0) for obj in self._extract_hits(data)]
+
     # ---------- 软删（D7 / A32） ----------
 
     def mark_forgotten(
@@ -356,6 +375,23 @@ class WeaviateStore:
             "score": score,
             "distance": extra.get("distance"),
         }
+
+    #: 管理接口要的字段集（不能用 `_FIELDS` 拼接：它结尾是 `_additional`，
+    #: GraphQL 里继续追加字段会直接语法错误）
+    _ADMIN_FIELDS = """
+      event_id
+      namespace
+      summary
+      date_start
+      date_end
+      types
+      importance
+      pinned
+      unresolved
+      entity_names
+      retention
+      recall_count
+      confirmed_by_use"""
 
     _FIELDS = """
       event_id

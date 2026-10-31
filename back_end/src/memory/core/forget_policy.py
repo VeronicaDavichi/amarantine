@@ -43,6 +43,8 @@ class ForgetCandidate:
     retention: str = "normal"
     pinned: bool = False
     unresolved: list[str] = field(default_factory=list)
+    #: 仅用于管理接口展示，不参与分桶判定
+    summary: str | None = None
 
 
 @dataclass(frozen=True)
