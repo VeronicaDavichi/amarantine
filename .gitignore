@@ -13,6 +13,9 @@ data/
 .env
 .env.local
 
+# 模型权重（本地下载，约 2.2 GB）
+models/
+
 # 前端
 node_modules/
 dist/

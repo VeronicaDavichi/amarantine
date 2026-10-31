@@ -13,11 +13,13 @@ name: amarantine
 
 services:
   weaviate:
-    image: cr.weaviate.io/semitechnologies/weaviate:1.28.4
+    # 用 Docker Hub 镜像名（与本地已拉取的一致）；cr.weaviate.io 在国内常超时
+    image: semitechnologies/weaviate:1.28.4
     container_name: amarantine-weaviate
     ports:
       - "8081:8080"
-      - "50051:50051"
+      # gRPC 宿主端口避开 Dify 的 weaviate（已占用 50051）
+      - "50061:50051"
     environment:
       QUERY_DEFAULTS_LIMIT: "25"
       AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED: "true"
@@ -29,7 +31,8 @@ services:
     volumes:
       - weaviate_data:/var/lib/weaviate
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://127.0.0.1:8080/v1/.well-known/ready"]
+      # 该镜像没有 curl，用 busybox wget
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/v1/.well-known/ready"]
       interval: 5s
       timeout: 3s
       retries: 30
@@ -40,23 +43,34 @@ services:
     # bge-m3（1024 维）。镜像较大，首次拉取慢属正常。
     # 若 ghcr.io 不可达，可换成本地推理服务或任意 OpenAI 兼容 /v1/embeddings 实现，
     # 只需保证 EMBEDDING_BASE_URL 指向它、EMBEDDING_DIM=1024。
-    image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.7
+    # TEI 1.7 的 Candle 后端加载 bge-m3 时 MKL SGEMM 报错并退出；
+    # 换 1.8 版本验证。若仍失败，改用 onnx 后端（需 onnx/model.onnx）。
+    image: infiniflow/text-embeddings-inference:cpu-1.8
     container_name: amarantine-embedding
     ports:
       - "8082:80"
     command:
       - "--model-id"
-      - "BAAI/bge-m3"
+      - "/models/bge-m3"
       - "--port"
       - "80"
+      # 内存吃紧：默认 max-batch-tokens=16384 会让 ORT 申请十几 GB，
+      # 在本机（WSL 15 GB）会被内核 OOM 杀掉。按 P0 实际负载调小。
+      - "--max-batch-tokens"
+      - "2048"
       - "--max-client-batch-size"
-      - "16"
+      - "4"
+      - "--tokenization-workers"
+      - "4"
     environment:
-      # 首次启动要从 HuggingFace 拉模型权重（约 2.2 GB）。
-      # 国内直连不通时用镜像站；也可改成离线挂载已下载的模型目录。
+      # 模型预先用 harness/download_model.py 下到 ./models/bge-m3 后挂载。
+      # 不在容器内下载的原因：TEI 下载器要求 Content-Range 响应头，
+      # 而 hf-mirror 经 307 重定向后返回 200 全量内容，会报
+      # "Header content-range is missing"。
       HF_ENDPOINT: https://hf-mirror.com
       HF_HUB_ENABLE_HF_TRANSFER: "0"
     volumes:
+      - ./models:/models:ro
       - embedding_cache:/data
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://127.0.0.1:80/health"]

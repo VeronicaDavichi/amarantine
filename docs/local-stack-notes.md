@@ -1,0 +1,150 @@
+# 本地中间件运维笔记
+
+记录 P0 中间件在本机（Windows + WSL2）跑起来时踩过的坑，避免重复排查。
+
+> 环境：WSL2 Ubuntu 22.04 / Docker 29.5.3 / 宿主 i7-1360P（Raptor Lake，**无 AVX512**）
+
+## 端口分配
+
+| 服务 | 宿主端口 | 容器端口 | 备注 |
+|---|---|---|---|
+| Weaviate REST | 8081 | 8080 | 8080 被同机的 Dify weaviate 占用 |
+| Weaviate gRPC | **50061** | 50051 | 50051 被 Dify weaviate 占用 |
+| Embedding | 8082 | 80 | |
+| Neo4j HTTP | 7474 | 7474 | |
+| Neo4j Bolt | 7687 | 7687 | |
+
+**教训**：本机还跑着一套 Dify（`docker-*` 前缀容器），端口 `8080` / `50051` 已被占。
+`docker compose up` 报 `Bind for 0.0.0.0:50051 failed: port is already allocated` 就是这个原因。
+
+## 镜像与模型来源
+
+国内网络下 `hf-mirror.com` 与 `ghcr.io` 都不稳定，实测对比：
+
+| 源 | 速度 | 备注 |
+|---|---|---|
+| hf-mirror 大文件 | ~44 KB/s | 2.27 GB 需 14 小时，不可用 |
+| **ModelScope** | **~4.7 MB/s** | 2.27 GB 约 8 分钟，首选 |
+
+镜像方面：
+
+- Weaviate 用 Docker Hub 的 `semitechnologies/weaviate:1.28.4`
+  （`cr.weaviate.io/...` 在国内常 `i/o timeout`）
+- TEI 用 `infiniflow/text-embeddings-inference:cpu-1.8`
+  （`ghcr.io/...` 拉不动时可用；1.7 与本机 CPU 不兼容，见下）
+
+## bge-m3 只有 pytorch_model.bin
+
+`BAAI/bge-m3` 仓库**不提供** `model.safetensors`，只有 `pytorch_model.bin`（2.17 GB）。
+而 TEI（Rust/candle 后端）只加载 safetensors，必须先转换：
+
+```bash
+# back_end 目录下
+uv pip install torch safetensors numpy
+.venv\Scripts\python.exe ..\harness\convert_to_safetensors.py
+```
+
+**三个坑**：
+
+1. **必须用 mmap 加载**。本机可用内存常只有 2~3 GB，`torch.load` 全量读入会被 OOM 杀掉。
+   `torch.load(..., mmap=True, weights_only=True)` 按需映射，峰值内存降到几百 MB。
+2. **不能用 `uv run`**。`uv run` 会按 `pyproject.toml` 同步环境，把手工装的
+   `torch` / `numpy` 卸掉，报 `No module named 'numpy'`。改用 `.venv\Scripts\python.exe` 直接跑。
+3. **转换前确认 bin 是 zip 格式**（前 4 字节 `50 4B 03 04`），否则 mmap 无效。
+
+## TEI 的 Candle 后端在本机崩溃
+
+现象：容器反复重启（`RestartCount` 增长），日志停在
+`INFO ... Warming up model` 之后没有下文，`ExitCode=0`、`OOMKilled=false`，
+中间夹杂大量 `Intel MKL ERROR: Parameter 13 was incorrect on entry to SGEMM`。
+
+原因：**i7-1360P 不支持 AVX512**（Intel 12 代起消费级禁用），而 TEI 的
+Candle + MKL kernel 按 AVX512 编译，warmup 时触发 SIGILL。
+
+解决：走 **ORT（onnxruntime）后端**——它会按 CPU 实际能力选择 kernel。
+
+```bash
+bash harness/fetch-onnx-modelscope.sh
+```
+
+ONNX 文件放到 `models/bge-m3/onnx/` 后，TEI 会自动优先尝试 ORT 后端
+（日志里原先的 `Could not start ORT backend` 错误消失，转而直接加载）。
+
+## ORT 后端的两个必调参数
+
+即便走 ORT，默认参数在本机也会把内存打爆——实测容器内存冲到 **12.34 GiB**，
+WSL 只剩 214 MB，内核直接 OOM 杀进程（此时 `docker inspect` 的 `OOMKilled=false`，
+`ExitCode=0`，很容易误判成"指令集问题"）。
+
+`docker-compose.yml` 里必须调小：
+
+```yaml
+      - "--max-batch-tokens"
+      - "2048"          # 默认 16384，是内存爆炸的主因
+      - "--max-client-batch-size"
+      - "4"             # 默认 16
+      - "--tokenization-workers"
+      - "4"             # 默认 16
+```
+
+调后稳定在 **2.54 GiB**，P0 负载（每次嵌入几条记忆）完全够用。
+
+启动成功的标志：
+
+```
+INFO text_embeddings_router::http::server: Starting HTTP server: 0.0.0.0:80
+INFO text_embeddings_router::http::server: Ready
+```
+
+## embedding 接口格式（TEI 1.8）
+
+**注意字段名是 `input`，不是 `inputs`**（1.7 是 `inputs`，1.8 改成了 OpenAI 兼容格式）：
+
+```bash
+curl -s -X POST http://127.0.0.1:8082/v1/embeddings \
+  -H "Content-Type: application/json" \
+  -d '{"input":"要编码的文本","model":"bge-m3"}'
+```
+
+响应：
+
+```json
+{"object":"list","data":[{"object":"embedding","embedding":[...1024 个 float...]}]}
+```
+
+`/health` 返回 **200 + 空 body**，这是正常的（不是故障）。
+
+实测单条嵌入约 **0.2 秒**。
+
+## 健康检查
+
+- `semitechnologies/weaviate` 镜像**没有 curl**，healthcheck 必须用 `wget`
+  （镜像内有 `/usr/bin/wget`），否则会一直 `unhealthy` 但其实服务正常。
+- `neo4j` 镜像用 `wget` 同样可行。
+
+## 模型目录结构（挂载到容器 `/models/bge-m3`）
+
+```
+models/bge-m3/
+  config.json                     # 必需
+  tokenizer.json                  # 必需
+  tokenizer_config.json
+  special_tokens_map.json
+  sentencepiece.bpe.model
+  modules.json
+  config_sentence_transformers.json
+  sentence_bert_config.json
+  1_Pooling/config.json
+  colbert_linear.pt
+  sparse_linear.pt
+  pytorch_model.bin               # 原始权重（转换后可删）
+  model.safetensors               # 转换产物
+  onnx/                           # ORT 后端用
+    model.onnx
+    model.onnx_data
+    config.json
+    tokenizer.json
+    ...
+```
+
+`models/` 已在 `.gitignore` 中排除（约 6.5 GB）。
