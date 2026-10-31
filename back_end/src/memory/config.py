@@ -117,8 +117,11 @@ class Settings(BaseSettings):
     RERANK_CANDIDATES: int = 50
     RERANK_TIMEOUT_MS: int = 300
 
-    LLM_BASE_URL: str = "http://127.0.0.1:3000/v1"
-    LLM_MODEL: str = "deepseek-chat"
+    #: `anthropic`（Messages API）或 `openai`（chat/completions）。
+    #: 本机接的是 hongwang 网关，走 Anthropic 协议。
+    LLM_PROVIDER: str = "anthropic"
+    LLM_BASE_URL: str = "http://192.168.0.58:3000"
+    LLM_MODEL: str = "deepseek-v4-flash"
     LLM_API_KEY: str | None = None
     LLM_TIMEOUT_MS: int = 60000
 
