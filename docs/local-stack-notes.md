@@ -148,3 +148,55 @@ models/bge-m3/
 ```
 
 `models/` 已在 `.gitignore` 中排除（约 6.5 GB）。
+
+## 后端跑在 WSL 里（不在 Windows）
+
+**结论：代码用 WSL 跑。** Windows 那边的坑（gRPC 转发、CRLF、编码、路径分隔符）
+一个都不想过第二遍。
+
+### 一次性准备
+
+```bash
+# 在 WSL 内执行
+export PATH="$HOME/.local/bin:$PATH"
+cd /mnt/e/PycharmProjects/amarantine/back_end
+export UV_PROJECT_ENVIRONMENT=.venv-linux   # 独立 venv，不碰 Windows 的 .venv
+uv sync
+```
+
+- `uv` 自带 Python 管理：`uv python install 3.12`（Ubuntu 22.04 自带 3.10，不满足 `>=3.12`）
+- **必须用 `.venv-linux`**：Windows 的 `.venv` 里是 `Scripts/`，Linux 要 `bin/`，
+  同一个目录不能混用（`uv sync` 会直接报错或装出诡异状态）
+
+### 日常用法
+
+```bash
+# 仓库根目录
+./harness/dev-linux.sh pytest -q
+./harness/dev-linux.sh python -c "from memory.config import load_settings; print(load_settings().WEAVIATE_URL)"
+```
+
+脚本负责三件事：`PATH` 加 `~/.local/bin`、切到 `back_end/`、指定 `.venv-linux`。
+
+### 性能：`/mnt/e` 是 drvfs，冷启动慢约 10 倍
+
+实测 `recall()`（真实容器）：
+
+| 次数 | 耗时 |
+|---|---|
+| 第 1 次（冷） | **1456 ms** |
+| 第 2 次（热） | 162 ms |
+| 第 3 次（热） | 179 ms |
+
+**影响**：冷启动那一下逼近 `RECALL_BUDGET_MS=1500`，会误报 `partial=true`。
+**不是 bug**：MCP stdio 是长驻进程，只在启动时冷一次；HTTP admin 同理。
+
+若想让开发调试也快，可把仓库放进 WSL 原生目录（`~/amarantine`），
+但那样 git 会变两份、容易漂移 —— **默认留在 `/mnt/e`，接受冷启动**。
+
+### 端口在 WSL 里怎么写
+
+Docker 端口映射到 WSL 的 `0.0.0.0`，所以 **WSL 内访问 `127.0.0.1:8081` 直接通**，
+不需要 `host.docker.internal`，也不需要 WSL 的宿主 IP。
+`.env` 里的地址可以照抄 Windows 的写法。
+
