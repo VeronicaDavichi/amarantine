@@ -51,6 +51,11 @@ services:
       - "80"
       - "--max-client-batch-size"
       - "16"
+    environment:
+      # 首次启动要从 HuggingFace 拉模型权重（约 2.2 GB）。
+      # 国内直连不通时用镜像站；也可改成离线挂载已下载的模型目录。
+      HF_ENDPOINT: https://hf-mirror.com
+      HF_HUB_ENABLE_HF_TRANSFER: "0"
     volumes:
       - embedding_cache:/data
     healthcheck:
