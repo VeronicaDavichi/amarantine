@@ -269,6 +269,8 @@ query 里的「上次」「最近」「去年这时候」不解析成**绝对区
 | `DB_BUSY_TIMEOUT_MS` | `5000` | SQLite 锁等待上限 |
 | `AGENT_KEY_HEADER` | `X-Agent-Key` | 认证头名（4.0 通用约定） |
 | `GUIDE_CHECK_CRON` | `0 9 * * 1` | 指南一致性校验的 cron 表达式（用户自行装 crontab，见 4.10） |
+| `LOG_FILE` | `logs/memory.log` | 日志文件路径；**日志不走 stdout/stderr**（全局约定） |
+| `LOG_LEVEL` | `INFO` | 日志级别 |
 
 ### D7 遗忘策略：LRU 只作用于派生层
 
@@ -484,6 +486,7 @@ docker: rerank-svc     →  POST /v1/rerank        （P1 启用）
 | 错误体（MCP） | JSON-RPC `error`，或 tool result 带 `isError: true`，正文同上 |
 | 幂等 | 按 `(namespace, dedupe_key)` 与 `event_id` 双重幂等 |
 | 代码结构 | `core/` 领域逻辑被两入口共享；**入口层只做参数转换，不许写业务** |
+| 日志 | 一律落 `LOG_FILE`；**stdout 只跑协议**，stderr 仅保留致命错误一行 |
 
 ### 4.1 事件卡 EventCard
 

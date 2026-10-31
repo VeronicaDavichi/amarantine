@@ -1,7 +1,7 @@
 """A5 MCP stdio 入口：JSON-RPC 2.0 over stdin/stdout。
 
 硬约束：
-  - **stdout 只写协议消息**，任何日志必须走 stderr，否则会把协议流污染成解析错误。
+  - **stdout 只写协议消息**；运行日志一律落 `LOG_FILE`（见 core/logging.py），不走 std。
   - 一行一个 JSON 对象（MCP 用换行分隔的 JSON-RPC，不是 batch）。
 
 启动：
@@ -11,11 +11,15 @@
 from __future__ import annotations
 
 import json
+import logging
 import sys
 from typing import Any
 
 from memory.config import Settings, load_settings
+from memory.core.logging import fatal, setup_logging
 from memory.core.tools import INSTRUCTIONS, PROTOCOL_VERSION, SERVER_NAME, SERVER_VERSION, TOOLS
+
+log = logging.getLogger("memory.mcp")
 
 JSONRPC_PARSE_ERROR = -32700
 JSONRPC_INVALID_REQUEST = -32600
@@ -29,10 +33,6 @@ def _write(msg: dict[str, Any]) -> None:
     sys.stdout.flush()
 
 
-def _log(msg: str) -> None:
-    print(msg, file=sys.stderr, flush=True)
-
-
 def _result(msg_id: Any, result: dict[str, Any]) -> None:
     _write({"jsonrpc": "2.0", "id": msg_id, "result": result})
 
@@ -44,9 +44,7 @@ def _error(msg_id: Any, code: int, message: str) -> None:
 def _tool_text(payload: dict[str, Any], *, is_error: bool = False) -> dict[str, Any]:
     """把业务结果包成 MCP tool result。"""
     out: dict[str, Any] = {
-        "content": [
-            {"type": "text", "text": json.dumps(payload, ensure_ascii=False)}
-        ]
+        "content": [{"type": "text", "text": json.dumps(payload, ensure_ascii=False)}]
     }
     if is_error:
         out["isError"] = True
@@ -100,7 +98,7 @@ def handle_message(msg: dict[str, Any], settings: Settings) -> None:
                 "_meta": {"namespace": namespace},
             },
         )
-        _log(f"initialize: namespace={namespace!r}")
+        log.info("initialize: namespace=%r", namespace)
 
     elif method == "tools/list":
         _result(msg_id, {"tools": list(TOOLS.values())})
@@ -116,6 +114,7 @@ def handle_message(msg: dict[str, Any], settings: Settings) -> None:
 
         # 入参不允许携带 namespace——它只能来自进程环境
         if "namespace" in args:
+            log.warning("拒绝工具 %s 的 namespace 入参", name)
             _result(
                 msg_id,
                 _tool_text(
@@ -130,7 +129,7 @@ def handle_message(msg: dict[str, Any], settings: Settings) -> None:
         except NotImplementedError as exc:
             _result(msg_id, _tool_text({"error": str(exc)}, is_error=True))
         except Exception as exc:  # 兜底：任何异常都转成 tool error，不让进程崩
-            _log(f"tool {name} failed: {type(exc).__name__}: {exc}")
+            log.exception("tool %s failed", name)
             _result(
                 msg_id,
                 _tool_text({"error": f"{type(exc).__name__}: {exc}"}, is_error=True),
@@ -148,18 +147,31 @@ def handle_message(msg: dict[str, Any], settings: Settings) -> None:
 
     else:
         if is_notification:
-            _log(f"ignore unknown notification: {method}")
+            log.warning("忽略未知通知: %s", method)
         else:
             _error(msg_id, JSONRPC_METHOD_NOT_FOUND, f"method not found: {method!r}")
 
 
 def main() -> int:
-    settings = load_settings()
-    if settings.MEMORY_NAMESPACE is None:
-        _log("FATAL: MEMORY_NAMESPACE 未设置——MCP server 必须由 host 通过环境变量注入 namespace")
+    try:
+        settings = load_settings()
+    except Exception as exc:  # 配置阶段失败：日志文件可能还没建
+        fatal(None, f"配置加载失败: {exc}")
         return 1
 
-    _log(f"{SERVER_NAME} {SERVER_VERSION} started, namespace={settings.MEMORY_NAMESPACE}")
+    setup_logging(settings)
+
+    if settings.MEMORY_NAMESPACE is None:
+        fatal(settings, "MEMORY_NAMESPACE 未设置——MCP server 必须由 host 通过环境变量注入 namespace")
+        return 1
+
+    log.info(
+        "%s %s started, namespace=%s, log=%s",
+        SERVER_NAME,
+        SERVER_VERSION,
+        settings.MEMORY_NAMESPACE,
+        settings.LOG_FILE,
+    )
 
     for raw in sys.stdin:
         line = raw.strip()
@@ -168,6 +180,7 @@ def main() -> int:
         try:
             msg = json.loads(line)
         except json.JSONDecodeError as exc:
+            log.warning("parse error: %s", exc)
             _error(None, JSONRPC_PARSE_ERROR, f"parse error: {exc}")
             continue
         if not isinstance(msg, dict):
@@ -175,6 +188,7 @@ def main() -> int:
             continue
         handle_message(msg, settings)
 
+    log.info("stdin closed, exiting")
     return 0
 
 

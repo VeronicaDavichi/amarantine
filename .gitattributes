@@ -1,0 +1,16 @@
+# 统一换行符，避免 Windows/WSL 双端协作时整文件 diff
+* text=auto eol=lf
+
+*.sh   text eol=lf
+*.bash text eol=lf
+*.ps1  text eol=crlf
+
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.ico  binary
+*.woff binary
+*.woff2 binary
+
+uv.lock linguist-generated=true

@@ -141,6 +141,8 @@ class Settings(BaseSettings):
     ADMIN_TOKEN: str | None = None
     ADMIN_HOST: str = "127.0.0.1"
     ADMIN_PORT: int = 8765
+    LOG_FILE: str = "logs/memory.log"
+    LOG_LEVEL: str = "INFO"
 
     # ---------- 校验 ----------
 
