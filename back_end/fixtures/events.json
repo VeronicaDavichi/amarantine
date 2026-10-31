@@ -1,0 +1,1113 @@
+[
+  {
+    "conclusion": null,
+    "confirmed_by_use": 0,
+    "date_end": null,
+    "date_start": "2026-08-12",
+    "emotion": null,
+    "emotion_intensity": null,
+    "entities": [
+      {
+        "kind": "person",
+        "name": "老同学"
+      },
+      {
+        "kind": "place",
+        "name": "街边小馆"
+      }
+    ],
+    "event_id": "evt_0000000000000001",
+    "importance": 0.5,
+    "importance_reason": null,
+    "ingested_at": "2026-10-30T10:21:14+08:00",
+    "last_recalled_at": null,
+    "namespace": "agent-demo",
+    "observed_at": null,
+    "pinned": false,
+    "pinned_source": null,
+    "raw_quote_ids": [],
+    "recall_count": 0,
+    "resolves": [],
+    "retention": "normal",
+    "summary": "主人和老同学在街边小馆吃了顿晚饭，聊到各自近况",
+    "supersedes": null,
+    "types": [
+      "daily",
+      "social"
+    ],
+    "unresolved": [],
+    "user_directive": null
+  },
+  {
+    "conclusion": null,
+    "confirmed_by_use": 0,
+    "date_end": null,
+    "date_start": "2026-07-20",
+    "emotion": "平静",
+    "emotion_intensity": 0.3,
+    "entities": [
+      {
+        "kind": "event",
+        "name": "一一"
+      }
+    ],
+    "event_id": "evt_0000000000000002",
+    "importance": 0.5,
+    "importance_reason": null,
+    "ingested_at": "2026-10-30T10:21:14+08:00",
+    "last_recalled_at": null,
+    "namespace": "agent-demo",
+    "observed_at": null,
+    "pinned": false,
+    "pinned_source": null,
+    "raw_quote_ids": [],
+    "recall_count": 0,
+    "resolves": [],
+    "retention": "normal",
+    "summary": "主人看完了电影《一一》，评价节奏慢但结尾喜欢",
+    "supersedes": null,
+    "types": [
+      "daily",
+      "hobby"
+    ],
+    "unresolved": [],
+    "user_directive": null
+  },
+  {
+    "conclusion": null,
+    "confirmed_by_use": 0,
+    "date_end": null,
+    "date_start": "2026-06-15",
+    "emotion": null,
+    "emotion_intensity": null,
+    "entities": [
+      {
+        "kind": "topic",
+        "name": "自行车"
+      }
+    ],
+    "event_id": "evt_0000000000000003",
+    "importance": 0.5,
+    "importance_reason": null,
+    "ingested_at": "2026-10-30T10:21:14+08:00",
+    "last_recalled_at": null,
+    "namespace": "agent-demo",
+    "observed_at": null,
+    "pinned": false,
+    "pinned_source": null,
+    "raw_quote_ids": [],
+    "recall_count": 0,
+    "resolves": [],
+    "retention": "normal",
+    "summary": "主人自己修好了自行车后刹，换了刹车皮",
+    "supersedes": null,
+    "types": [
+      "daily"
+    ],
+    "unresolved": [],
+    "user_directive": null
+  },
+  {
+    "conclusion": null,
+    "confirmed_by_use": 0,
+    "date_end": null,
+    "date_start": "2026-05-03",
+    "emotion": "兴奋",
+    "emotion_intensity": 0.5,
+    "entities": [
+      {
+        "kind": "topic",
+        "name": "吉他"
+      }
+    ],
+    "event_id": "evt_0000000000000004",
+    "importance": 0.5,
+    "importance_reason": null,
+    "ingested_at": "2026-10-30T10:21:14+08:00",
+    "last_recalled_at": null,
+    "namespace": "agent-demo",
+    "observed_at": null,
+    "pinned": false,
+    "pinned_source": null,
+    "raw_quote_ids": [],
+    "recall_count": 0,
+    "resolves": [],
+    "retention": "normal",
+    "summary": "主人开始学吉他，练了 C 大调和弦，手指疼",
+    "supersedes": null,
+    "types": [
+      "hobby"
+    ],
+    "unresolved": [],
+    "user_directive": null
+  },
+  {
+    "conclusion": null,
+    "confirmed_by_use": 0,
+    "date_end": null,
+    "date_start": "2026-04-18",
+    "emotion": "疲惫",
+    "emotion_intensity": 0.7,
+    "entities": [],
+    "event_id": "evt_0000000000000005",
+    "importance": 0.6,
+    "importance_reason": "高强度持续期，后续健康受影响",
+    "ingested_at": "2026-10-30T10:21:14+08:00",
+    "last_recalled_at": null,
+    "namespace": "agent-demo",
+    "observed_at": null,
+    "pinned": false,
+    "pinned_source": null,
+    "raw_quote_ids": [],
+    "recall_count": 0,
+    "resolves": [],
+    "retention": "normal",
+    "summary": "主人为赶项目上线连续加班三天，最后一天到凌晨两点",
+    "supersedes": null,
+    "types": [
+      "work"
+    ],
+    "unresolved": [],
+    "user_directive": null
+  },
+  {
+    "conclusion": null,
+    "confirmed_by_use": 0,
+    "date_end": null,
+    "date_start": "2026-09-20",
+    "emotion": null,
+    "emotion_intensity": null,
+    "entities": [
+      {
+        "kind": "place",
+        "name": "城郊"
+      }
+    ],
+    "event_id": "evt_0000000000000006",
+    "importance": 0.5,
+    "importance_reason": null,
+    "ingested_at": "2026-10-30T10:21:14+08:00",
+    "last_recalled_at": null,
+    "namespace": "agent-demo",
+    "observed_at": null,
+    "pinned": false,
+    "pinned_source": null,
+    "raw_quote_ids": [],
+    "recall_count": 0,
+    "resolves": [],
+    "retention": "normal",
+    "summary": "主人周末去城郊爬山，走了 12 公里，天气很好",
+    "supersedes": null,
+    "types": [
+      "daily",
+      "health"
+    ],
+    "unresolved": [],
+    "user_directive": null
+  },
+  {
+    "conclusion": null,
+    "confirmed_by_use": 0,
+    "date_end": null,
+    "date_start": "2026-03-11",
+    "emotion": null,
+    "emotion_intensity": null,
+    "entities": [
+      {
+        "kind": "topic",
+        "name": "机械键盘"
+      }
+    ],
+    "event_id": "evt_0000000000000007",
+    "importance": 0.5,
+    "importance_reason": null,
+    "ingested_at": "2026-10-30T10:21:14+08:00",
+    "last_recalled_at": null,
+    "namespace": "agent-demo",
+    "observed_at": null,
+    "pinned": false,
+    "pinned_source": null,
+    "raw_quote_ids": [],
+    "recall_count": 0,
+    "resolves": [],
+    "retention": "normal",
+    "summary": "主人买了一把静音机械键盘，青轴太吵换成了茶轴",
+    "supersedes": null,
+    "types": [
+      "daily",
+      "shopping"
+    ],
+    "unresolved": [],
+    "user_directive": null
+  },
+  {
+    "conclusion": "打算下周试时间块",
+    "confirmed_by_use": 0,
+    "date_end": null,
+    "date_start": "2026-02-08",
+    "emotion": null,
+    "emotion_intensity": null,
+    "entities": [
+      {
+        "kind": "event",
+        "name": "深度工作"
+      }
+    ],
+    "event_id": "evt_0000000000000008",
+    "importance": 0.5,
+    "importance_reason": null,
+    "ingested_at": "2026-10-30T10:21:14+08:00",
+    "last_recalled_at": null,
+    "namespace": "agent-demo",
+    "observed_at": null,
+    "pinned": false,
+    "pinned_source": null,
+    "raw_quote_ids": [],
+    "recall_count": 0,
+    "resolves": [],
+    "retention": "normal",
+    "summary": "主人读完《深度工作》，认为时间块方法可试",
+    "supersedes": null,
+    "types": [
+      "study",
+      "hobby"
+    ],
+    "unresolved": [],
+    "user_directive": null
+  },
+  {
+    "conclusion": null,
+    "confirmed_by_use": 0,
+    "date_end": null,
+    "date_start": "2026-08-29",
+    "emotion": null,
+    "emotion_intensity": null,
+    "entities": [],
+    "event_id": "evt_0000000000000009",
+    "importance": 0.5,
+    "importance_reason": null,
+    "ingested_at": "2026-10-30T10:21:14+08:00",
+    "last_recalled_at": null,
+    "namespace": "agent-demo",
+    "observed_at": null,
+    "pinned": false,
+    "pinned_source": null,
+    "raw_quote_ids": [],
+    "recall_count": 0,
+    "resolves": [],
+    "retention": "normal",
+    "summary": "主人参加了一场线上技术分享，主题是向量检索的召回评估",
+    "supersedes": null,
+    "types": [
+      "work",
+      "study"
+    ],
+    "unresolved": [],
+    "user_directive": null
+  },
+  {
+    "conclusion": null,
+    "confirmed_by_use": 0,
+    "date_end": null,
+    "date_start": "2026-07-05",
+    "emotion": null,
+    "emotion_intensity": null,
+    "entities": [
+      {
+        "kind": "topic",
+        "name": "番茄牛腩"
+      }
+    ],
+    "event_id": "evt_000000000000000a",
+    "importance": 0.5,
+    "importance_reason": null,
+    "ingested_at": "2026-10-30T10:21:14+08:00",
+    "last_recalled_at": null,
+    "namespace": "agent-demo",
+    "observed_at": null,
+    "pinned": false,
+    "pinned_source": null,
+    "raw_quote_ids": [],
+    "recall_count": 0,
+    "resolves": [],
+    "retention": "normal",
+    "summary": "主人照着菜谱做了番茄牛腩，火候差点但味道可以",
+    "supersedes": null,
+    "types": [
+      "daily"
+    ],
+    "unresolved": [],
+    "user_directive": null
+  },
+  {
+    "conclusion": null,
+    "confirmed_by_use": 0,
+    "date_end": null,
+    "date_start": "2025-11-02",
+    "emotion": null,
+    "emotion_intensity": null,
+    "entities": [
+      {
+        "kind": "topic",
+        "name": "慢性胃炎"
+      }
+    ],
+    "event_id": "evt_000000000000000b",
+    "importance": 0.8,
+    "importance_reason": "长期健康约束，影响日常选择",
+    "ingested_at": "2026-10-30T10:21:14+08:00",
+    "last_recalled_at": null,
+    "namespace": "agent-demo",
+    "observed_at": null,
+    "pinned": false,
+    "pinned_source": null,
+    "raw_quote_ids": [],
+    "recall_count": 0,
+    "resolves": [],
+    "retention": "normal",
+    "summary": "主人有慢性胃炎，需要长期注意饮食，不能吃辣",
+    "supersedes": null,
+    "types": [
+      "health",
+      "慢性病"
+    ],
+    "unresolved": [],
+    "user_directive": null
+  },
+  {
+    "conclusion": null,
+    "confirmed_by_use": 0,
+    "date_end": null,
+    "date_start": "2026-09-01",
+    "emotion": null,
+    "emotion_intensity": null,
+    "entities": [
+      {
+        "kind": "event",
+        "name": "分布式系统课程"
+      }
+    ],
+    "event_id": "evt_000000000000000c",
+    "importance": 0.5,
+    "importance_reason": null,
+    "ingested_at": "2026-10-30T10:21:14+08:00",
+    "last_recalled_at": null,
+    "namespace": "agent-demo",
+    "observed_at": null,
+    "pinned": false,
+    "pinned_source": null,
+    "raw_quote_ids": [],
+    "recall_count": 0,
+    "resolves": [],
+    "retention": "normal",
+    "summary": "主人在跟一门分布式系统课程，预计还要两个月",
+    "supersedes": null,
+    "types": [
+      "study"
+    ],
+    "unresolved": [
+      "课程结课项目",
+      "期末考核"
+    ],
+    "user_directive": null
+  },
+  {
+    "conclusion": null,
+    "confirmed_by_use": 0,
+    "date_end": "2026-02-28",
+    "date_start": "2025-06-10",
+    "emotion": null,
+    "emotion_intensity": null,
+    "entities": [
+      {
+        "kind": "person",
+        "name": "小王"
+      },
+      {
+        "kind": "org",
+        "name": "A 公司"
+      }
+    ],
+    "event_id": "evt_000000000000000d",
+    "importance": 0.5,
+    "importance_reason": null,
+    "ingested_at": "2026-10-30T10:21:14+08:00",
+    "last_recalled_at": null,
+    "namespace": "agent-demo",
+    "observed_at": null,
+    "pinned": false,
+    "pinned_source": null,
+    "raw_quote_ids": [],
+    "recall_count": 0,
+    "resolves": [],
+    "retention": "normal",
+    "summary": "小王当时在 A 公司做后端，负责订单系统",
+    "supersedes": null,
+    "types": [
+      "work",
+      "social"
+    ],
+    "unresolved": [],
+    "user_directive": null
+  },
+  {
+    "conclusion": null,
+    "confirmed_by_use": 0,
+    "date_end": null,
+    "date_start": "2026-03-01",
+    "emotion": null,
+    "emotion_intensity": null,
+    "entities": [
+      {
+        "kind": "person",
+        "name": "小王"
+      },
+      {
+        "kind": "org",
+        "name": "B 公司"
+      }
+    ],
+    "event_id": "evt_000000000000000e",
+    "importance": 0.5,
+    "importance_reason": null,
+    "ingested_at": "2026-10-30T10:21:14+08:00",
+    "last_recalled_at": null,
+    "namespace": "agent-demo",
+    "observed_at": null,
+    "pinned": false,
+    "pinned_source": null,
+    "raw_quote_ids": [],
+    "recall_count": 0,
+    "resolves": [],
+    "retention": "normal",
+    "summary": "小王从 A 公司跳槽到 B 公司，转做基础架构",
+    "supersedes": null,
+    "types": [
+      "work",
+      "social"
+    ],
+    "unresolved": [],
+    "user_directive": null
+  },
+  {
+    "conclusion": null,
+    "confirmed_by_use": 0,
+    "date_end": null,
+    "date_start": "2026-01-15",
+    "emotion": null,
+    "emotion_intensity": null,
+    "entities": [
+      {
+        "kind": "topic",
+        "name": "备用钥匙"
+      }
+    ],
+    "event_id": "evt_000000000000000f",
+    "importance": 0.9,
+    "importance_reason": "安全相关，人工标记",
+    "ingested_at": "2026-10-30T10:21:14+08:00",
+    "last_recalled_at": null,
+    "namespace": "agent-demo",
+    "observed_at": null,
+    "pinned": true,
+    "pinned_source": "manual",
+    "raw_quote_ids": [],
+    "recall_count": 0,
+    "resolves": [],
+    "retention": "normal",
+    "summary": "主人交代过：家里备用钥匙放在门口鞋柜第二层",
+    "supersedes": null,
+    "types": [
+      "life"
+    ],
+    "unresolved": [],
+    "user_directive": null
+  },
+  {
+    "conclusion": null,
+    "confirmed_by_use": 0,
+    "date_end": null,
+    "date_start": "2026-02-20",
+    "emotion": null,
+    "emotion_intensity": null,
+    "entities": [
+      {
+        "kind": "topic",
+        "name": "花生过敏"
+      }
+    ],
+    "event_id": "evt_0000000000000010",
+    "importance": 0.9,
+    "importance_reason": "用户显式指令",
+    "ingested_at": "2026-10-30T10:21:14+08:00",
+    "last_recalled_at": null,
+    "namespace": "agent-demo",
+    "observed_at": null,
+    "pinned": true,
+    "pinned_source": "user_directive",
+    "raw_quote_ids": [],
+    "recall_count": 0,
+    "resolves": [],
+    "retention": "normal",
+    "summary": "主人明确要求记住：对花生过敏，外出吃饭要确认",
+    "supersedes": null,
+    "types": [
+      "health"
+    ],
+    "unresolved": [],
+    "user_directive": "remember"
+  },
+  {
+    "conclusion": null,
+    "confirmed_by_use": 0,
+    "date_end": null,
+    "date_start": "2026-09-25",
+    "emotion": "纠结",
+    "emotion_intensity": 0.5,
+    "entities": [
+      {
+        "kind": "topic",
+        "name": "外包项目"
+      }
+    ],
+    "event_id": "evt_0000000000000011",
+    "importance": 0.7,
+    "importance_reason": "未闭环决策，预期会回查",
+    "ingested_at": "2026-10-30T10:21:14+08:00",
+    "last_recalled_at": null,
+    "namespace": "agent-demo",
+    "observed_at": null,
+    "pinned": false,
+    "pinned_source": null,
+    "raw_quote_ids": [],
+    "recall_count": 0,
+    "resolves": [],
+    "retention": "normal",
+    "summary": "主人还在犹豫要不要接那个外包项目，担心影响主业",
+    "supersedes": null,
+    "types": [
+      "work"
+    ],
+    "unresolved": [
+      "是否接外包项目"
+    ],
+    "user_directive": null
+  },
+  {
+    "conclusion": null,
+    "confirmed_by_use": 0,
+    "date_end": null,
+    "date_start": "2026-10-02",
+    "emotion": null,
+    "emotion_intensity": null,
+    "entities": [
+      {
+        "kind": "person",
+        "name": "房东"
+      }
+    ],
+    "event_id": "evt_0000000000000012",
+    "importance": 0.5,
+    "importance_reason": null,
+    "ingested_at": "2026-10-30T10:21:14+08:00",
+    "last_recalled_at": null,
+    "namespace": "agent-demo",
+    "observed_at": null,
+    "pinned": false,
+    "pinned_source": null,
+    "raw_quote_ids": [],
+    "recall_count": 0,
+    "resolves": [],
+    "retention": "normal",
+    "summary": "主人在等房东回复能否续租一年，价格还没谈拢",
+    "supersedes": null,
+    "types": [
+      "life",
+      "housing"
+    ],
+    "unresolved": [
+      "续租价格",
+      "是否搬走"
+    ],
+    "user_directive": null
+  },
+  {
+    "conclusion": null,
+    "confirmed_by_use": 0,
+    "date_end": null,
+    "date_start": "2026-04-02",
+    "emotion": null,
+    "emotion_intensity": null,
+    "entities": [
+      {
+        "kind": "event",
+        "name": "阑尾炎手术"
+      }
+    ],
+    "event_id": "evt_0000000000000013",
+    "importance": 0.9,
+    "importance_reason": "不可逆健康事件",
+    "ingested_at": "2026-10-30T10:21:14+08:00",
+    "last_recalled_at": null,
+    "namespace": "agent-demo",
+    "observed_at": null,
+    "pinned": false,
+    "pinned_source": null,
+    "raw_quote_ids": [],
+    "recall_count": 0,
+    "resolves": [],
+    "retention": "normal",
+    "summary": "主人做了阑尾炎手术，住院三天，术后恢复顺利",
+    "supersedes": null,
+    "types": [
+      "health",
+      "手术"
+    ],
+    "unresolved": [],
+    "user_directive": null
+  },
+  {
+    "conclusion": null,
+    "confirmed_by_use": 0,
+    "date_end": null,
+    "date_start": "2026-05-18",
+    "emotion": null,
+    "emotion_intensity": null,
+    "entities": [
+      {
+        "kind": "place",
+        "name": "城西"
+      }
+    ],
+    "event_id": "evt_0000000000000014",
+    "importance": 0.85,
+    "importance_reason": "不可逆环境变化",
+    "ingested_at": "2026-10-30T10:21:14+08:00",
+    "last_recalled_at": null,
+    "namespace": "agent-demo",
+    "observed_at": null,
+    "pinned": false,
+    "pinned_source": null,
+    "raw_quote_ids": [],
+    "recall_count": 0,
+    "resolves": [],
+    "retention": "normal",
+    "summary": "主人从城东搬到了城西，通勤时间缩短半小时",
+    "supersedes": null,
+    "types": [
+      "life",
+      "搬家"
+    ],
+    "unresolved": [],
+    "user_directive": null
+  },
+  {
+    "conclusion": null,
+    "confirmed_by_use": 0,
+    "date_end": null,
+    "date_start": "2026-09-30",
+    "emotion": null,
+    "emotion_intensity": null,
+    "entities": [
+      {
+        "kind": "org",
+        "name": "原公司"
+      }
+    ],
+    "event_id": "evt_0000000000000015",
+    "importance": 0.9,
+    "importance_reason": "不可逆职业事件",
+    "ingested_at": "2026-10-30T10:21:14+08:00",
+    "last_recalled_at": null,
+    "namespace": "agent-demo",
+    "observed_at": null,
+    "pinned": false,
+    "pinned_source": null,
+    "raw_quote_ids": [],
+    "recall_count": 0,
+    "resolves": [],
+    "retention": "normal",
+    "summary": "主人从原公司离职，最后工作日是 9 月 30 日",
+    "supersedes": null,
+    "types": [
+      "work",
+      "离职"
+    ],
+    "unresolved": [],
+    "user_directive": null
+  },
+  {
+    "conclusion": null,
+    "confirmed_by_use": 0,
+    "date_end": null,
+    "date_start": "2026-06-22",
+    "emotion": null,
+    "emotion_intensity": null,
+    "entities": [
+      {
+        "kind": "place",
+        "name": "新房"
+      }
+    ],
+    "event_id": "evt_0000000000000016",
+    "importance": 0.95,
+    "importance_reason": "不可逆财务事件",
+    "ingested_at": "2026-10-30T10:21:14+08:00",
+    "last_recalled_at": null,
+    "namespace": "agent-demo",
+    "observed_at": null,
+    "pinned": false,
+    "pinned_source": null,
+    "raw_quote_ids": [],
+    "recall_count": 0,
+    "resolves": [],
+    "retention": "normal",
+    "summary": "主人签了购房合同，首付已付，明年交房",
+    "supersedes": null,
+    "types": [
+      "finance",
+      "买房"
+    ],
+    "unresolved": [],
+    "user_directive": null
+  },
+  {
+    "conclusion": null,
+    "confirmed_by_use": 0,
+    "date_end": null,
+    "date_start": "2026-06-30",
+    "emotion": null,
+    "emotion_intensity": null,
+    "entities": [
+      {
+        "kind": "event",
+        "name": "研究生"
+      }
+    ],
+    "event_id": "evt_0000000000000017",
+    "importance": 0.9,
+    "importance_reason": "不可逆教育节点",
+    "ingested_at": "2026-10-30T10:21:14+08:00",
+    "last_recalled_at": null,
+    "namespace": "agent-demo",
+    "observed_at": null,
+    "pinned": false,
+    "pinned_source": null,
+    "raw_quote_ids": [],
+    "recall_count": 0,
+    "resolves": [],
+    "retention": "normal",
+    "summary": "主人研究生毕业，论文答辩通过",
+    "supersedes": null,
+    "types": [
+      "study",
+      "毕业"
+    ],
+    "unresolved": [],
+    "user_directive": null
+  },
+  {
+    "conclusion": null,
+    "confirmed_by_use": 0,
+    "date_end": null,
+    "date_start": "2026-08-05",
+    "emotion": null,
+    "emotion_intensity": null,
+    "entities": [
+      {
+        "kind": "topic",
+        "name": "工作签证"
+      }
+    ],
+    "event_id": "evt_0000000000000018",
+    "importance": 0.9,
+    "importance_reason": "不可逆法律状态",
+    "ingested_at": "2026-10-30T10:21:14+08:00",
+    "last_recalled_at": null,
+    "namespace": "agent-demo",
+    "observed_at": null,
+    "pinned": false,
+    "pinned_source": null,
+    "raw_quote_ids": [],
+    "recall_count": 0,
+    "resolves": [],
+    "retention": "normal",
+    "summary": "主人的工作签证获批，有效期三年",
+    "supersedes": null,
+    "types": [
+      "legal",
+      "签证"
+    ],
+    "unresolved": [],
+    "user_directive": null
+  },
+  {
+    "conclusion": null,
+    "confirmed_by_use": 2,
+    "date_end": null,
+    "date_start": "2025-12-01",
+    "emotion": null,
+    "emotion_intensity": null,
+    "entities": [
+      {
+        "kind": "topic",
+        "name": "Vim"
+      }
+    ],
+    "event_id": "evt_0000000000000019",
+    "importance": 0.7,
+    "importance_reason": "多次被引用",
+    "ingested_at": "2026-10-30T10:21:14+08:00",
+    "last_recalled_at": null,
+    "namespace": "agent-demo",
+    "observed_at": null,
+    "pinned": false,
+    "pinned_source": null,
+    "raw_quote_ids": [],
+    "recall_count": 0,
+    "resolves": [],
+    "retention": "normal",
+    "summary": "主人偏好用 Vim 编辑代码，讨厌鼠标操作",
+    "supersedes": null,
+    "types": [
+      "preference"
+    ],
+    "unresolved": [],
+    "user_directive": null
+  },
+  {
+    "conclusion": null,
+    "confirmed_by_use": 3,
+    "date_end": null,
+    "date_start": "2026-01-08",
+    "emotion": null,
+    "emotion_intensity": null,
+    "entities": [],
+    "event_id": "evt_000000000000001a",
+    "importance": 0.7,
+    "importance_reason": "多次被引用",
+    "ingested_at": "2026-10-30T10:21:14+08:00",
+    "last_recalled_at": null,
+    "namespace": "agent-demo",
+    "observed_at": null,
+    "pinned": false,
+    "pinned_source": null,
+    "raw_quote_ids": [],
+    "recall_count": 0,
+    "resolves": [],
+    "retention": "normal",
+    "summary": "主人对咖啡因敏感，下午三点后不喝咖啡",
+    "supersedes": null,
+    "types": [
+      "health",
+      "preference"
+    ],
+    "unresolved": [],
+    "user_directive": null
+  },
+  {
+    "conclusion": null,
+    "confirmed_by_use": 4,
+    "date_end": null,
+    "date_start": "2025-10-20",
+    "emotion": null,
+    "emotion_intensity": null,
+    "entities": [],
+    "event_id": "evt_000000000000001b",
+    "importance": 0.75,
+    "importance_reason": "多次被引用",
+    "ingested_at": "2026-10-30T10:21:14+08:00",
+    "last_recalled_at": null,
+    "namespace": "agent-demo",
+    "observed_at": null,
+    "pinned": false,
+    "pinned_source": null,
+    "raw_quote_ids": [],
+    "recall_count": 0,
+    "resolves": [],
+    "retention": "normal",
+    "summary": "主人的常用开发语言是 Python，其次 Go",
+    "supersedes": null,
+    "types": [
+      "work",
+      "preference"
+    ],
+    "unresolved": [],
+    "user_directive": null
+  },
+  {
+    "conclusion": null,
+    "confirmed_by_use": 0,
+    "date_end": null,
+    "date_start": "2025-01-14",
+    "emotion": null,
+    "emotion_intensity": null,
+    "entities": [],
+    "event_id": "evt_000000000000001c",
+    "importance": 0.5,
+    "importance_reason": null,
+    "ingested_at": "2026-10-30T10:21:14+08:00",
+    "last_recalled_at": null,
+    "namespace": "agent-demo",
+    "observed_at": null,
+    "pinned": false,
+    "pinned_source": null,
+    "raw_quote_ids": [],
+    "recall_count": 0,
+    "resolves": [],
+    "retention": "normal",
+    "summary": "主人看过一部纪录片讲深海生物，觉得画面不错",
+    "supersedes": null,
+    "types": [
+      "daily"
+    ],
+    "unresolved": [],
+    "user_directive": null
+  },
+  {
+    "conclusion": null,
+    "confirmed_by_use": 0,
+    "date_end": null,
+    "date_start": "2025-03-22",
+    "emotion": null,
+    "emotion_intensity": null,
+    "entities": [],
+    "event_id": "evt_000000000000001d",
+    "importance": 0.5,
+    "importance_reason": null,
+    "ingested_at": "2026-10-30T10:21:14+08:00",
+    "last_recalled_at": null,
+    "namespace": "agent-demo",
+    "observed_at": null,
+    "pinned": false,
+    "pinned_source": null,
+    "raw_quote_ids": [],
+    "recall_count": 0,
+    "resolves": [],
+    "retention": "normal",
+    "summary": "主人买过一盆绿萝放在窗台，后来忘了浇水",
+    "supersedes": null,
+    "types": [
+      "daily"
+    ],
+    "unresolved": [],
+    "user_directive": null
+  },
+  {
+    "conclusion": null,
+    "confirmed_by_use": 0,
+    "date_end": null,
+    "date_start": "2025-05-09",
+    "emotion": null,
+    "emotion_intensity": null,
+    "entities": [],
+    "event_id": "evt_000000000000001e",
+    "importance": 0.5,
+    "importance_reason": null,
+    "ingested_at": "2026-10-30T10:21:14+08:00",
+    "last_recalled_at": null,
+    "namespace": "agent-demo",
+    "observed_at": null,
+    "pinned": false,
+    "pinned_source": null,
+    "raw_quote_ids": [],
+    "recall_count": 0,
+    "resolves": [],
+    "retention": "normal",
+    "summary": "主人试过一家新开的咖啡馆，拿铁一般",
+    "supersedes": null,
+    "types": [
+      "daily"
+    ],
+    "unresolved": [],
+    "user_directive": null
+  },
+  {
+    "conclusion": null,
+    "confirmed_by_use": 0,
+    "date_end": null,
+    "date_start": "2026-10-25",
+    "emotion": null,
+    "emotion_intensity": null,
+    "entities": [],
+    "event_id": "evt_000000000000001f",
+    "importance": 0.5,
+    "importance_reason": null,
+    "ingested_at": "2026-10-30T10:21:14+08:00",
+    "last_recalled_at": null,
+    "namespace": "agent-demo",
+    "observed_at": null,
+    "pinned": false,
+    "pinned_source": null,
+    "raw_quote_ids": [],
+    "recall_count": 0,
+    "resolves": [],
+    "retention": "normal",
+    "summary": "主人今天提到下周要去看牙医，做常规洗牙",
+    "supersedes": null,
+    "types": [
+      "health"
+    ],
+    "unresolved": [],
+    "user_directive": null
+  },
+  {
+    "conclusion": null,
+    "confirmed_by_use": 0,
+    "date_end": null,
+    "date_start": "2026-10-28",
+    "emotion": null,
+    "emotion_intensity": null,
+    "entities": [],
+    "event_id": "evt_0000000000000020",
+    "importance": 0.5,
+    "importance_reason": null,
+    "ingested_at": "2026-10-30T10:21:14+08:00",
+    "last_recalled_at": null,
+    "namespace": "agent-demo",
+    "observed_at": null,
+    "pinned": false,
+    "pinned_source": null,
+    "raw_quote_ids": [],
+    "recall_count": 0,
+    "resolves": [],
+    "retention": "normal",
+    "summary": "主人刚把书桌重新布置了一遍，显示器升高了",
+    "supersedes": null,
+    "types": [
+      "daily"
+    ],
+    "unresolved": [],
+    "user_directive": null
+  },
+  {
+    "conclusion": null,
+    "confirmed_by_use": 0,
+    "date_end": null,
+    "date_start": "2026-03-05",
+    "emotion": "焦虑",
+    "emotion_intensity": 0.8,
+    "entities": [],
+    "event_id": "evt_0000000000000021",
+    "importance": 0.8,
+    "importance_reason": "敏感信息，需谨慎处理",
+    "ingested_at": "2026-10-30T10:21:14+08:00",
+    "last_recalled_at": null,
+    "namespace": "agent-demo",
+    "observed_at": null,
+    "pinned": false,
+    "pinned_source": null,
+    "raw_quote_ids": [],
+    "recall_count": 0,
+    "resolves": [],
+    "retention": "sensitive",
+    "summary": "主人提到自己有焦虑倾向，在考虑是否看心理医生",
+    "supersedes": null,
+    "types": [
+      "health",
+      "emotion"
+    ],
+    "unresolved": [],
+    "user_directive": null
+  }
+]

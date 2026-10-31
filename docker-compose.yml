@@ -1,0 +1,87 @@
+# A4 P0 中间件栈
+#
+# 运行位置：WSL2（Ubuntu）内的 docker
+# 访问位置：代码跑在 Windows 宿主，通过 localhost 转发访问映射端口
+#
+#   Weaviate  http://127.0.0.1:8081   (gRPC 50051)
+#   Embedding http://127.0.0.1:8082
+#   Neo4j     bolt://127.0.0.1:7687   (browser 7474)
+#
+# 启动：wsl -d Ubuntu2204 -- docker compose -f /mnt/e/PycharmProjects/amarantine/docker-compose.yml up -d
+
+name: amarantine
+
+services:
+  weaviate:
+    image: cr.weaviate.io/semitechnologies/weaviate:1.28.4
+    container_name: amarantine-weaviate
+    ports:
+      - "8081:8080"
+      - "50051:50051"
+    environment:
+      QUERY_DEFAULTS_LIMIT: "25"
+      AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED: "true"
+      PERSISTENCE_DATA_PATH: /var/lib/weaviate
+      DEFAULT_VECTORIZER_MODULE: none
+      CLUSTER_HOSTNAME: node1
+      # P0 关闭异步索引，写入后立即可查（便于验收）
+      ASYNC_INDEXING: "false"
+    volumes:
+      - weaviate_data:/var/lib/weaviate
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1:8080/v1/.well-known/ready"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 10s
+    restart: unless-stopped
+
+  embedding:
+    # bge-m3（1024 维）。镜像较大，首次拉取慢属正常。
+    # 若 ghcr.io 不可达，可换成本地推理服务或任意 OpenAI 兼容 /v1/embeddings 实现，
+    # 只需保证 EMBEDDING_BASE_URL 指向它、EMBEDDING_DIM=1024。
+    image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.7
+    container_name: amarantine-embedding
+    ports:
+      - "8082:80"
+    command:
+      - "--model-id"
+      - "BAAI/bge-m3"
+      - "--port"
+      - "80"
+      - "--max-client-batch-size"
+      - "16"
+    volumes:
+      - embedding_cache:/data
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1:80/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+    restart: unless-stopped
+
+  neo4j:
+    image: neo4j:5.26-community
+    container_name: amarantine-neo4j
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    environment:
+      NEO4J_AUTH: neo4j/password
+      NEO4J_server_memory_heap_initial__size: 256m
+      NEO4J_server_memory_heap_max__size: 512m
+    volumes:
+      - neo4j_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:7474 >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+    restart: unless-stopped
+
+volumes:
+  weaviate_data:
+  embedding_cache:
+  neo4j_data:

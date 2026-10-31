@@ -1,0 +1,27 @@
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.egg-info/
+.ruff_cache/
+
+# 本地数据与密钥
+data/
+*.db
+*.sqlite3
+.env
+.env.local
+
+# 前端
+node_modules/
+dist/
+.vite/
+
+# 日志
+logs/
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
