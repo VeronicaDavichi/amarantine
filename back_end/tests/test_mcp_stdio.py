@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import inspect
 import json
 import os
 import subprocess
@@ -141,7 +142,8 @@ def test_invalid_namespace_blocks_start(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     "tool", ["memory_recall", "memory_remember", "memory_forget", "memory_feedback"]
 )
-def test_unimplemented_tools_report_error_not_crash(tool: str, tmp_path: Path) -> None:
+def test_bad_arguments_report_error_not_crash(tool: str, tmp_path: Path) -> None:
+    """空参数调任一工具 → isError，进程不崩（参数校验而非未实现）。"""
     call = json.dumps(
         {
             "jsonrpc": "2.0",
@@ -151,5 +153,62 @@ def test_unimplemented_tools_report_error_not_crash(tool: str, tmp_path: Path) -
         }
     )
     out, _, code = run_mcp([call], log_file=tmp_path / "m.log")
-    assert code == 0, "工具未实现不应让进程崩溃"
+    assert code == 0, "参数非法不应让进程崩溃"
     assert parse(out)[0]["result"]["isError"] is True
+
+
+def test_all_four_tools_are_implemented() -> None:
+    """四个工具都不能再挂 NotImplementedError —— 这是阶段 E 的出口条件。"""
+    from memory.entrypoints.mcp_stdio import HANDLERS
+
+    assert set(HANDLERS) == {
+        "memory_recall",
+        "memory_remember",
+        "memory_forget",
+        "memory_feedback",
+    }
+    for name, handler in HANDLERS.items():
+        source = inspect.getsource(handler)
+        assert "NotImplementedError" not in source, f"{name} 仍是空壳"
+
+
+def test_recall_survives_trace_store_failure(tmp_path: Path, monkeypatch) -> None:
+    """凭据存储挂了不能连累召回 —— trace 是辅助数据。
+
+    真踩过：目录不可写时整个 recall 变 isError，上层拿到 KeyError: 'materials'。
+    这里用假 store 绕开外部依赖，只断言「故障被隔离」。
+    """
+    from memory.entrypoints import mcp_stdio
+
+    class _FakeResult:
+        materials = [{"event_id": "evt_" + "a" * 16}]
+        trace_id = None
+
+        def to_payload(self):
+            return {"materials": self.materials, "trace_id": self.trace_id}
+
+    def boom(_settings):
+        raise RuntimeError("目录不可写")
+
+    monkeypatch.setattr(mcp_stdio, "trace_store_from_settings", boom)
+    monkeypatch.setattr(mcp_stdio, "recall", lambda *a, **kw: _FakeResult())
+
+    settings = mcp_stdio.load_settings().model_copy(
+        update={"MEMORY_NAMESPACE": "agent-a"}
+    )
+    out = mcp_stdio._tool_recall(settings, {"query": "项目"})
+    assert "materials" in out, "召回结果不该被 trace 故障吞掉"
+    assert out["trace_id"] is None
+
+
+def test_feedback_validates_before_touching_storage() -> None:
+    """参数校验要挡在存储之前 —— 坏参数不该先建库再报错。"""
+    from memory.entrypoints import mcp_stdio
+
+    settings = mcp_stdio.load_settings().model_copy(
+        update={"MEMORY_NAMESPACE": "agent-a"}
+    )
+    with pytest.raises(ValueError, match="trace_id"):
+        mcp_stdio._tool_feedback(settings, {"trace_id": "", "used_material_ids": ["x"]})
+    with pytest.raises(ValueError, match="used_material_ids"):
+        mcp_stdio._tool_feedback(settings, {"trace_id": "tr_x", "used_material_ids": []})

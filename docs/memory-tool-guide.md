@@ -12,7 +12,7 @@
 | `memory_recall` | 按当前问题召回相关记忆 | ✅ 可用 |
 | `memory_remember` | 记下一件值得长期记住的事 | ✅ 可用 |
 | `memory_forget` | 让某条记忆失效（软删） | ✅ 可用 |
-| `memory_feedback` | 告诉系统某条记忆有没有用 | ⏳ 待实现 |
+| `memory_feedback` | 告诉系统某条记忆有没有用 | ✅ 用，只报真用到的 |
 
 ## 三条铁律
 
@@ -208,9 +208,35 @@
 | 记忆写错了 | ❌ **不要忘**，重写一条正确的 |
 | 记太多了想清理 | ❌ 不要，交给遗忘扫描 |
 
-## memory_feedback（待实现）
+## memory_feedback
 
-目前调用会返回 `isError: true`。等功能上线后再用。
+```
+memory_feedback({ "trace_id": "tr_...", "used_material_ids": ["evt_..."] })
+→ { "accepted": 1, "deduped": 0, "confirmed_by_use_incremented": ["evt_..."] }
+```
+
+| 场景 | 怎么做 |
+|---|---|
+| 回答里用了 recall 返回的某几条 | ✅ 报那几条的 `event_id` |
+| 一条都没用到 | ❌ **不要调用**（没东西可报） |
+| 用到了全部 | ✅ 全报 |
+| 不确定用了哪条 | ❌ 不要瞎报，宁可不报 |
+
+三条硬规矩：
+
+1. **`trace_id` 用 recall 当次返回的那个** —— 每次 recall 都不同，不能复用旧的
+2. **只报真用到的** —— 虚报会污染「有效引用」统计，让保护机制失效
+3. **同一个 trace 重复报同一条不会重复计数** —— 第二次计入 `deduped`
+
+报错怎么看：
+
+| 返回 | 含义 | 怎么办 |
+|---|---|---|
+| `isError` + 「trace_id 不存在或已过期」 | trace 存根被清了（默认留 7 天） | 重新 recall 拿新的 |
+| `isError` + 「不在该 trace 的返回集里」 | 报了幻觉 id 或记错 trace | 只报 recall 真给过的 `event_id` |
+
+> **整单校验**：只要有一条 id 不在该 trace 的返回集里，**整个请求都会失败**，
+> 合法的那几条也不会被记账。所以别把不同 trace 的 id 混在一起报。
 
 ## 常见错误对照
 

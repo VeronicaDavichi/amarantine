@@ -87,6 +87,47 @@ def main() -> int:
         check("recall 有材料", len(body["materials"]) > 0, f"{len(body['materials'])} 条")
         check("recall 无降级", body["degraded"] is False)
         check("trace 带 top_k_decision", "top_k_decision" in body["trace"])
+        check("recall 带 trace_id", bool(body.get("trace_id")), body.get("trace_id"))
+
+        # 4b) 引用上报（E2）：拿 recall 的 trace_id 报一条真用到的
+        trace_id = body.get("trace_id")
+        first_id = body["materials"][0]["event_id"]
+        send({
+            "jsonrpc": "2.0", "id": 40, "method": "tools/call",
+            "params": {
+                "name": "memory_feedback",
+                "arguments": {"trace_id": trace_id, "used_material_ids": [first_id]},
+            },
+        })
+        fb = json.loads(recv()["result"]["content"][0]["text"])
+        check("feedback 新计入 1 条", fb.get("accepted") == 1, str(fb))
+        check("feedback 记录了被确认的 id",
+              fb.get("confirmed_by_use_incremented") == [first_id], str(fb))
+
+        # 4c) 重复上报 → 幂等，不累加
+        send({
+            "jsonrpc": "2.0", "id": 41, "method": "tools/call",
+            "params": {
+                "name": "memory_feedback",
+                "arguments": {"trace_id": trace_id, "used_material_ids": [first_id]},
+            },
+        })
+        fb2 = json.loads(recv()["result"]["content"][0]["text"])
+        check("feedback 幂等（deduped=1）", fb2.get("deduped") == 1, str(fb2))
+        check("feedback 幂等不累加", fb2.get("accepted") == 0, str(fb2))
+
+        # 4d) 报一个没被返回过的 id → 整单拒绝
+        send({
+            "jsonrpc": "2.0", "id": 42, "method": "tools/call",
+            "params": {
+                "name": "memory_feedback",
+                "arguments": {
+                    "trace_id": trace_id,
+                    "used_material_ids": ["evt_" + "0" * 16],
+                },
+            },
+        })
+        check("feedback 拒绝幻觉 id", recv()["result"].get("isError") is True)
 
         # 5) namespace 不许当工具参数
         send({

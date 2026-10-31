@@ -56,6 +56,9 @@ class RecallResult:
     degraded: bool = False
     partial: bool = False
     trace: dict[str, Any] = field(default_factory=dict)
+    #: 本次召回的引用凭据。`memory_feedback` 靠它校验「是不是真的返回过」。
+    #: 空结果也给 —— 否则 LLM 无法上报「一条都没用」。
+    trace_id: str | None = None
 
     def to_payload(self) -> dict[str, Any]:
         return {
@@ -63,6 +66,7 @@ class RecallResult:
             "degraded": self.degraded,
             "partial": self.partial,
             "trace": self.trace,
+            "trace_id": self.trace_id,
         }
 
 
@@ -78,6 +82,7 @@ def recall(
     graph_searcher: Any | None = None,
     counter: Any | None = None,
     budget_ms: int | None = None,
+    trace_store: Any | None = None,
 ) -> RecallResult:
     """召回与 query 相关的记忆材料。
 
@@ -92,6 +97,8 @@ def recall(
         graph_searcher: 可替换的图通道函数。
         counter: 召回计数器（`RecallCounter`）；None 表示不回写。
         budget_ms: 整体预算，缺省取 `RECALL_BUDGET_MS`。
+        trace_store: 引用凭据存储（`RecallTraceStore`）。传了才会产出
+            `trace_id` 并落快照；None 表示不需要 feedback 能力（测试/内部调用）。
 
     Raises:
         RecallUnavailableError: 事实源（Weaviate / embedding）不可用 → 503。
@@ -208,19 +215,22 @@ def recall(
             "bm25_candidates": len(bm25_hits),
         }
         if not channels:
-            return RecallResult(
-                materials=[],
-                degraded=degraded,
-                partial=partial,
-                trace={
-                    "empty_reason": (
-                        "below_threshold" if gate_filtered else "no_candidate"
-                    ),
-                    "channels": {},
-                    "errors": errors,
-                    "date_range": _range_dict(date_range),
-                    "gate": gate_trace,
-                },
+            return _with_trace(
+                RecallResult(
+                    materials=[],
+                    degraded=degraded,
+                    partial=partial,
+                    trace={
+                        "empty_reason": (
+                            "below_threshold" if gate_filtered else "no_candidate"
+                        ),
+                        "channels": {},
+                        "errors": errors,
+                        "date_range": _range_dict(date_range),
+                        "gate": gate_trace,
+                    },
+                ),
+                trace_store=trace_store, namespace=namespace, query=query,
             )
 
         # 6) RRF 融合
@@ -236,16 +246,19 @@ def recall(
         # 7) 打分：RRF 归一 → 时效 × 重要性
         ranked = [(eid, s) for eid, s in ranked if eid in meta]
         if not ranked:
-            return RecallResult(
-                materials=[],
-                degraded=degraded,
-                partial=partial,
-                trace={
-                    "empty_reason": "no_candidate",
-                    "channels": {k: len(v) for k, v in channels.items()},
-                    "errors": errors,
-                    "note": "图通道命中的 id 没有元数据（P0 限制）",
-                },
+            return _with_trace(
+                RecallResult(
+                    materials=[],
+                    degraded=degraded,
+                    partial=partial,
+                    trace={
+                        "empty_reason": "no_candidate",
+                        "channels": {k: len(v) for k, v in channels.items()},
+                        "errors": errors,
+                        "note": "图通道命中的 id 没有元数据（P0 限制）",
+                    },
+                ),
+                trace_store=trace_store, namespace=namespace, query=query,
             )
 
         norm = normalize_relevance([s for _, s in ranked])
@@ -276,17 +289,20 @@ def recall(
         # 8) 空结果判定（ADR：最高分低于阈值也算空）
         top = scored[0].score if scored else 0.0
         if not scored or top < settings.RECALL_EMPTY_THRESHOLD:
-            return RecallResult(
-                materials=[],
-                degraded=degraded,
-                partial=partial,
-                trace={
-                    "empty_reason": "below_threshold",
-                    "top_score": round(top, 4),
-                    "threshold": settings.RECALL_EMPTY_THRESHOLD,
-                    "channels": {k: len(v) for k, v in channels.items()},
-                    "errors": errors,
-                },
+            return _with_trace(
+                RecallResult(
+                    materials=[],
+                    degraded=degraded,
+                    partial=partial,
+                    trace={
+                        "empty_reason": "below_threshold",
+                        "top_score": round(top, 4),
+                        "threshold": settings.RECALL_EMPTY_THRESHOLD,
+                        "channels": {k: len(v) for k, v in channels.items()},
+                        "errors": errors,
+                    },
+                ),
+                trace_store=trace_store, namespace=namespace, query=query,
             )
 
         # 9) 动态 K
@@ -316,18 +332,21 @@ def recall(
             except Exception as exc:  # noqa: BLE001 - 计数是派生数据，不影响召回
                 logger.warning("召回计数回写失败（已忽略）: %s", exc)
 
-        return RecallResult(
-            materials=materials,
-            degraded=degraded,
-            partial=partial,
-            trace={
-                "empty_reason": None,
-                "top_k_decision": decision.to_trace(),
-                "channels": {k: len(v) for k, v in channels.items()},
-                "errors": errors,
-                "date_range": _range_dict(date_range),
-                "gate": gate_trace,
-            },
+        return _with_trace(
+            RecallResult(
+                materials=materials,
+                degraded=degraded,
+                partial=partial,
+                trace={
+                    "empty_reason": None,
+                    "top_k_decision": decision.to_trace(),
+                    "channels": {k: len(v) for k, v in channels.items()},
+                    "errors": errors,
+                    "date_range": _range_dict(date_range),
+                    "gate": gate_trace,
+                },
+            ),
+            trace_store=trace_store, namespace=namespace, query=query,
         )
     finally:
         if owns_store:
@@ -335,6 +354,36 @@ def recall(
 
 
 # ---------------- 辅助 ----------------
+
+
+def _with_trace(
+    result: RecallResult,
+    *,
+    trace_store: Any | None,
+    namespace: str,
+    query: str,
+) -> RecallResult:
+    """记一次返回快照并附上 `trace_id`。
+
+    空结果**也要记** —— 否则 LLM 无法上报「这次一条都没用」，
+    而「召回了却没用」恰恰是有价值的负反馈。
+
+    落库失败只 warn：trace 是辅助数据，不能因为它挂掉就毁掉整次召回。
+    """
+    if trace_store is None:
+        return result
+    ids = [
+        m.get("event_id")
+        for m in result.materials
+        if isinstance(m, dict) and m.get("event_id")
+    ]
+    try:
+        result.trace_id = trace_store.record_trace(
+            namespace=namespace, query=query, material_ids=ids
+        )
+    except Exception as exc:  # noqa: BLE001 - 凭据是派生数据
+        logger.warning("召回 trace 落库失败（已忽略）: %s", exc)
+    return result
 
 
 def _default_embedder(text: str, settings: Settings):

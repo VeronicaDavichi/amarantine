@@ -18,8 +18,10 @@ from typing import Any
 from memory.config import Settings, load_settings
 from memory.core.logging import fatal, setup_logging
 from memory.core.tools import INSTRUCTIONS, PROTOCOL_VERSION, SERVER_NAME, SERVER_VERSION, TOOLS
+from memory.services.feedback import submit_feedback
 from memory.services.forget import forget_event
 from memory.services.recall import recall
+from memory.services.recall_trace import trace_store_from_settings
 from memory.services.remember import remember_event
 
 log = logging.getLogger("memory.mcp")
@@ -71,7 +73,21 @@ def _tool_recall(settings: Settings, args: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(query, str) or not query.strip():
         raise ValueError("query 必须是非空字符串")
 
-    result = recall(query, namespace=namespace, settings=settings)
+    # 传 trace_store 才会产出 trace_id —— 这是 memory_feedback 的前置凭据。
+    # **但存储初始化必须容错**：trace 是辅助数据，不能让「账本写不了」
+    # 连累「查记忆」这件正事。真踩过：目录不可写时整个 recall 变 isError。
+    try:
+        trace_store = trace_store_from_settings(settings)
+    except Exception as exc:  # noqa: BLE001 - 放弃 feedback 能力，召回照常
+        log.warning("引用凭据存储不可用，本次召回不带 trace_id: %s", exc)
+        trace_store = None
+
+    result = recall(
+        query,
+        namespace=namespace,
+        settings=settings,
+        trace_store=trace_store,
+    )
     return result.to_payload()
 
 
@@ -118,7 +134,30 @@ def _tool_forget(settings: Settings, args: dict[str, Any]) -> dict[str, Any]:
 
 
 def _tool_feedback(settings: Settings, args: dict[str, Any]) -> dict[str, Any]:
-    raise NotImplementedError("memory_feedback 尚未实现（阶段 E2）")
+    """E2 引用上报：告诉服务端本次召回里哪些材料真的被用了。
+
+    `confirmed_by_use` 的**唯一**写入通道（C.B6 禁止自动判定）。
+    参数不合法 → `FeedbackError` → 外层转 `isError`，让调用方自己修正重试。
+    """
+    namespace = settings.MEMORY_NAMESPACE
+    if namespace is None:  # 防御性：main 已拦截
+        raise RuntimeError("MEMORY_NAMESPACE 未设置")
+
+    trace_id = args.get("trace_id")
+    if not isinstance(trace_id, str) or not trace_id.strip():
+        raise ValueError("trace_id 必须是非空字符串")
+
+    used = args.get("used_material_ids")
+    if not isinstance(used, list) or not used:
+        raise ValueError("used_material_ids 必须是非空数组")
+
+    outcome = submit_feedback(
+        namespace=namespace,
+        trace_id=trace_id,
+        used_material_ids=used,
+        settings=settings,
+    )
+    return outcome.to_tool_result()
 
 
 HANDLERS = {

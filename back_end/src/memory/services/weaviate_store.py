@@ -325,6 +325,34 @@ class WeaviateStore:
                 f"标记软删失败: HTTP {resp.status_code} {resp.text[:200]}"
             )
 
+    def set_confirmed_by_use(
+        self, event_id: str, namespace: str, *, count: int
+    ) -> None:
+        """把 `confirmed_by_use` 设成**绝对值**（不是自增）。
+
+        为什么用绝对值：Weaviate 没有原子自增，读-改-写在并发下会丢更新。
+        真值在 SQLite 的 `recall_feedback` 表里（幂等键保证不重复计数），
+        这里只是把真值镜像过去。下次 feedback 会用新的绝对值覆盖，
+        所以偶发的丢失能自愈 —— 换成 `+1` 就永远丢掉了。
+        """
+        self.ensure_collection()
+        uid = deterministic_uuid(namespace, event_id)
+        url = f"{self._base}/v1/objects/{COLLECTION}/{uid}"
+        try:
+            resp = self._http.patch(
+                url,
+                json={
+                    "class": COLLECTION,
+                    "properties": {"confirmed_by_use": max(0, int(count))},
+                },
+            )
+        except httpx.HTTPError as exc:
+            raise WeaviateStoreError(f"写 confirmed_by_use 失败: {exc}") from exc
+        if resp.status_code not in (200, 204):
+            raise WeaviateStoreError(
+                f"写 confirmed_by_use 失败: HTTP {resp.status_code} {resp.text[:200]}"
+            )
+
     # ---------- 检索（M3 召回用） ----------
 
     def _graphql(self, query: str, variables: dict[str, Any] | None = None) -> dict[str, Any]:
