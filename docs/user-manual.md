@@ -125,6 +125,16 @@ curl -s http://127.0.0.1:8765/health
 curl -s -H "Authorization: Bearer $TOKEN" \
   "http://127.0.0.1:8765/admin/review?bucket=NEED_REVIEW&namespace=work"
 
+# 看「打标打得对不对」的待办（注意：和上一条是**两条不同的队列**）
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "http://127.0.0.1:8765/admin/label-review?namespace=work"
+
+# 标掉一条打标分歧
+curl -s -X POST -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"resolution":"kept_llm","namespace":"work"}' \
+  http://127.0.0.1:8765/admin/label-review/evt_xxx/resolve
+
 # 看即将被清理的记忆（只出报告，不删）
 curl -s -X POST -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
@@ -197,6 +207,49 @@ curl -s -X POST -H "Authorization: Bearer $TOKEN" \
 
 拿它做一票否决，等于把误删风险藏起来。所以它只能让一条记忆
 **进人工复核**，不能让系统默默放过它，也不能让它被默默删掉。
+
+### 两条复核队列，别再搞混了
+
+系统里有**两个**「人工看一眼」的队列，它们问的是完全不同的问题：
+
+| | `NEED_REVIEW` | `LABEL_REVIEW` |
+|---|---|---|
+| 问什么 | 这张卡**该不该留** | 这张卡**打得对不对** |
+| 什么时候进 | 闲置很久但 importance 高 | 规则层和 LLM 打标分歧 |
+| 怎么看 | `GET /admin/review?bucket=NEED_REVIEW` | `GET /admin/label-review` |
+| 怎么清 | （待实现） | `POST /admin/label-review/{id}/resolve` |
+| 清掉会怎样 | 留 / 删 | 只记「人看过了」，不动卡 |
+
+**它们永远不合并**（ADR A24）。一个是存储策略，一个是标注质量，
+混在一起会让人分不清「该删」和「标错了」。
+
+### 打标分歧是怎么来的
+
+每次写入都会跑两层：
+
+1. **规则层**按关键词匹配，命中不了就给 `general`
+2. **LLM 层**自己判断
+
+两层结果用 Jaccard 相似度比较，低于 `LABEL_DUAL_RUN_JACCARD`（默认 0.8）
+就进 `LABEL_REVIEW`。
+
+实测例子（真跑出来的）：
+
+| 事件 | 规则层 | LLM | 相似度 | 结果 |
+|---|---|---|---|---|
+| 张三决定项目A延期到六月 | `decision, work` | `decision, work` | 1.0 | 不入队 |
+| 今天背了五十个单词 | `general` | `study` | 0.0 | 入队 |
+| 老板批评进度太慢 | `general` | `work` | 0.0 | 入队 |
+
+规则层对没有明显关键词的句子只能给 `general`，这正是 LLM 能补的地方。
+
+> **写卡的 `types` 永远用规则层结果**，不用 LLM 的。
+> 因为 `types` 参与 `event_id` 哈希 —— 让 LLM 决定 types 会导致
+> 同一条事件重写时 `event_id` 变化，**幂等直接失效**。
+>
+> 实测：带 LLM 和不带 LLM 写同一条，`event_id` 完全一致，第二次 `created=false`。
+
+关掉双跑：`LABEL_DUAL_RUN=false`（省一次 LLM 调用）。
 
 ---
 

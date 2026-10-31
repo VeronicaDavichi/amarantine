@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 
@@ -31,11 +32,77 @@ from memory.models.event_card import EventCard
 from memory.services.directive_counter import DirectiveCounter
 from memory.services.embedding import EmbeddingError, embed_one
 from memory.services.graph_outbox import write_event_node
-from memory.services.labeler import label_event
+from memory.services.labeler import label_by_rules
 from memory.services.weaviate_store import WeaviateStore, WeaviateStoreError
+
+logger = logging.getLogger("memory.remember")
 
 #: 未给出任何重要性信号时的基础分（B6 的四档 rubrics 在 P1 细化）
 BASE_IMPORTANCE = 0.5
+
+
+def _run_dual_check(
+    *,
+    namespace: str,
+    summary: str,
+    rules: object,
+    date_range: object,
+    settings: Settings,
+    llm_labeler: object,
+) -> None:
+    """B5 双跑：规则层与 LLM 层对同一句话各打一次标，分歧进复核队列。
+
+    **只观察，不改写卡内容**。写卡用的仍是 `rules`，理由见调用处注释：
+    `types` 参与 `event_id`，让 LLM 改写会让幂等失效。
+
+    整个函数**吞掉所有异常**：复核队列是旁路诊断，
+    它挂了不该让「记住这件事」失败。LLM 超时同理。
+    """
+    try:
+        from memory.services.label_review import queue_from_settings
+        from memory.services.llm_labeler import compare_labels
+
+        rule_types = list(getattr(rules, "types", []) or [])
+        refined = llm_labeler(summary, rule_types)  # type: ignore[operator]
+        if refined is None or not getattr(refined, "types", None):
+            logger.debug("双跑：LLM 无结果，跳过复核")
+            return
+
+        cmp = compare_labels(
+            rules,  # type: ignore[arg-type]
+            refined,  # type: ignore[arg-type]
+            agreement_min=settings.LABEL_DUAL_RUN_JACCARD,
+        )
+        if not cmp.needs_review:
+            logger.debug("双跑一致 | agreement=%.2f | %s", cmp.agreement, summary[:24])
+            return
+
+        # event_id 由规则层 types 决定（与写入完全同参），保证能对上那张卡
+        event_id = make_event_id(
+            namespace=namespace,
+            date_start=date_range.start,  # type: ignore[attr-defined]
+            date_end=getattr(date_range, "end", None),
+            types=rule_types,
+            entity_names=[e.name for e in getattr(rules, "entities", [])],
+            summary=summary,
+        )
+        queue_from_settings(settings).push(
+            namespace=namespace,
+            event_id=event_id,
+            summary=summary,
+            rules_types=rule_types,
+            llm_types=list(refined.types),
+            agreement=cmp.agreement,
+        )
+        logger.info(
+            "双跑分歧入队 | agreement=%.2f | rules=%s llm=%s | %s",
+            cmp.agreement,
+            rule_types,
+            list(refined.types),
+            summary[:24],
+        )
+    except Exception as exc:  # noqa: BLE001 - 旁路诊断，绝不影响写入
+        logger.warning("双跑复核失败（已忽略）: %s", exc)
 
 
 @dataclass(frozen=True)
@@ -125,12 +192,22 @@ def remember_event(
         emotion_boost=settings.EMOTION_BOOST,
     )
 
-    # 4) 打标（规则层必定产出非空 types）
-    labels = label_event(
-        summary,
-        vocab=settings.TYPES_VOCAB or None,
-        llm_labeler=llm_labeler,
-    )
+    # 4) 打标
+    #    **规则层决定写什么，LLM 只做复核参考**（B5）。
+    #    原因：types 参与 event_id 哈希（D1）。若让 LLM 改写 types，
+    #    同一条事件重写就会得到不同 event_id —— 幂等直接失效，
+    #    而幂等是「重复上报不产生第二份」的唯一保障。
+    #    所以这里**不**把 llm_labeler 传给 label_event（那会覆盖 types）。
+    labels = label_by_rules(summary, vocab=settings.TYPES_VOCAB or None)
+    if llm_labeler is not None and settings.LABEL_DUAL_RUN:
+        _run_dual_check(
+            namespace=namespace,
+            summary=summary,
+            rules=labels,
+            date_range=date_range,
+            settings=settings,
+            llm_labeler=llm_labeler,
+        )
 
     # 5) 重要度：基础分 → 下限 → 情绪加成（封顶 1.0）
     importance = merge_importance(

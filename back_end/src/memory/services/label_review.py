@@ -59,7 +59,7 @@ CREATE INDEX IF NOT EXISTS idx_label_review_pending
 
 
 @dataclass
-class ReviewItem:
+class LabelReviewItem:
     """一条待复核的打标分歧。"""
 
     namespace: str
@@ -175,7 +175,7 @@ class LabelReviewQueue:
 
     def list_pending(
         self, namespace: str, *, limit: int = 50
-    ) -> list[ReviewItem]:
+    ) -> list[LabelReviewItem]:
         with self._lock, self._connect() as conn:
             rows = conn.execute(
                 "SELECT * FROM label_review"
@@ -194,7 +194,7 @@ class LabelReviewQueue:
             ).fetchone()
         return int(row["n"]) if row else 0
 
-    def get(self, namespace: str, event_id: str) -> ReviewItem | None:
+    def get(self, namespace: str, event_id: str) -> LabelReviewItem | None:
         with self._lock, self._connect() as conn:
             row = conn.execute(
                 "SELECT * FROM label_review WHERE namespace = ? AND event_id = ?",
@@ -205,7 +205,7 @@ class LabelReviewQueue:
     # ---------------------------------------------------------------- 工具
 
     @staticmethod
-    def _row_to_item(row: sqlite3.Row) -> ReviewItem:
+    def _row_to_item(row: sqlite3.Row) -> LabelReviewItem:
         def _loads(raw: str) -> list[str]:
             try:
                 val = json.loads(raw)
@@ -213,7 +213,7 @@ class LabelReviewQueue:
             except (json.JSONDecodeError, TypeError):
                 return []
 
-        return ReviewItem(
+        return LabelReviewItem(
             namespace=row["namespace"],
             event_id=row["event_id"],
             summary=row["summary"],

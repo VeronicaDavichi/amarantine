@@ -218,3 +218,123 @@ def test_forget_missing_event_is_404(client: TestClient, monkeypatch) -> None:
         "/admin/forget", json={"event_id": "evt_missing"}, headers=AUTH
     )
     assert r.status_code == 404
+
+
+# ---------------- B5 打标复核队列（A24：与 NEED_REVIEW 分开）----------------
+
+
+@pytest.fixture()
+def label_client(tmp_path, monkeypatch) -> TestClient:
+    """打标复核队列用独立 SQLite，不碰真实数据。"""
+    settings = Settings()
+    settings.MEMORY_NAMESPACE = "work"
+    settings.ADMIN_TOKEN = TOKEN
+    db = (tmp_path / "label.sqlite3").as_posix()
+    settings.DATABASE_URL = f"sqlite:///{db}"
+
+    # /admin/review 会实时扫 Weaviate，这里给空集，只测「两条队列互不串味」
+    import memory.entrypoints.admin_http as mod
+
+    monkeypatch.setattr(mod, "_load_all", lambda cfg, ns: [])
+
+    app = create_app(settings)
+    app.state.label_db_url = settings.DATABASE_URL
+    return TestClient(app)
+
+
+def _seed_label(client: TestClient, event_id: str = "evt_" + "a" * 16) -> None:
+    from memory.services.label_review import LabelReviewQueue
+
+    url = client.app.state.label_db_url
+    queue = LabelReviewQueue(url.split("///", 1)[-1])
+    queue.push(
+        namespace="work",
+        event_id=event_id,
+        summary="张三决定项目A延期到六月",
+        rules_types=["work"],
+        llm_types=["decision", "work"],
+        agreement=0.5,
+    )
+
+
+def test_label_review_requires_token(label_client: TestClient) -> None:
+    assert label_client.get("/admin/label-review").status_code == 401
+
+
+def test_label_review_empty(label_client: TestClient) -> None:
+    r = label_client.get("/admin/label-review", headers=AUTH)
+    assert r.status_code == 200
+    assert r.json() == {"items": [], "total": 0}
+
+
+def test_label_review_lists_pending(label_client: TestClient) -> None:
+    _seed_label(label_client)
+    r = label_client.get("/admin/label-review", headers=AUTH)
+    assert r.status_code == 200
+    body = r.json()
+    assert body["total"] == 1
+    item = body["items"][0]
+    assert item["rules_types"] == ["work"]
+    assert item["llm_types"] == ["decision", "work"]
+    assert item["agreement"] == 0.5
+    # 关键：这个响应里**没有** bucket / idle_days —— 那是 NEED_REVIEW 的字段
+    assert "bucket" not in item
+    assert "idle_days" not in item
+
+
+def test_label_review_resolve(label_client: TestClient) -> None:
+    eid = "evt_" + "a" * 16
+    _seed_label(label_client, eid)
+    r = label_client.post(
+        f"/admin/label-review/{eid}/resolve",
+        json={"resolution": "kept_rules"},
+        headers=AUTH,
+    )
+    assert r.status_code == 200
+    assert r.json() == {"event_id": eid, "resolved": True, "resolution": "kept_rules"}
+
+    # 处理完就不在待办里了
+    assert label_client.get("/admin/label-review", headers=AUTH).json()["total"] == 0
+
+
+def test_label_review_resolve_missing_is_404(label_client: TestClient) -> None:
+    r = label_client.post(
+        "/admin/label-review/evt_nope/resolve", json={}, headers=AUTH
+    )
+    assert r.status_code == 404
+
+
+def test_label_review_resolve_twice_is_404(label_client: TestClient) -> None:
+    eid = "evt_" + "a" * 16
+    _seed_label(label_client, eid)
+    assert label_client.post(
+        f"/admin/label-review/{eid}/resolve", json={}, headers=AUTH
+    ).status_code == 200
+    assert label_client.post(
+        f"/admin/label-review/{eid}/resolve", json={}, headers=AUTH
+    ).status_code == 404
+
+
+def test_label_review_two_queues_are_separate(label_client: TestClient) -> None:
+    """A24：LABEL_REVIEW 不能出现在 NEED_REVIEW 的 bucket，反之亦然。"""
+    _seed_label(label_client)
+
+    # NEED_REVIEW 队列看不到打标分歧
+    r = label_client.get("/admin/review?bucket=NEED_REVIEW", headers=AUTH)
+    assert r.status_code == 200
+    ids = {i["event_id"] for i in r.json()["items"]}
+    assert "evt_" + "a" * 16 not in ids
+
+    # LABEL_REVIEW 队列返回的条目没有 bucket 字段
+    label_items = label_client.get("/admin/label-review", headers=AUTH).json()["items"]
+    assert label_items
+    assert all("bucket" not in i for i in label_items)
+
+
+def test_label_review_limit(label_client: TestClient) -> None:
+    for i in range(5):
+        _seed_label(label_client, f"evt_{i:016x}")
+    r = label_client.get("/admin/label-review?limit=2", headers=AUTH)
+    assert len(r.json()["items"]) == 2
+    assert r.json()["total"] == 5
+

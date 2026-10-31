@@ -34,6 +34,7 @@ from memory.core.forget_policy import (
     sweep,
 )
 from memory.services.forget import ALLOWED_REASONS, ForgetError, forget_event
+from memory.services.label_review import LabelReviewQueue, queue_from_settings
 from memory.services.recall_count import RecallCounter, db_path_from_settings
 from memory.services.weaviate_store import WeaviateStore, WeaviateStoreError
 
@@ -87,6 +88,47 @@ class SweepResponse(BaseModel):
     buckets: dict[str, int]
     dry_run: bool
     sample: list[ReviewItem]
+
+
+# ---- 打标复核（A24：与上面的 NEED_REVIEW 是**两条独立队列**，字段刻意不同）----
+
+
+class LabelReviewEntry(BaseModel):
+    """一条打标分歧。
+
+    与 `ReviewItem` 的区别（A24 要求两者永不混用）：
+
+    | 字段 | `LabelReviewEntry` | `ReviewItem` |
+    |---|---|---|
+    | 问题 | 这张卡**打得对不对** | 这张卡**该不该留** |
+    | 依据 | `rules_types` vs `llm_types` | 闲置天数 / 硬信号 |
+    | 动作 | 采纳哪一方的标签 | 删 / 留 |
+    """
+
+    event_id: str
+    summary: str | None = None
+    rules_types: list[str]
+    llm_types: list[str]
+    agreement: float
+    created_at: str
+
+
+class LabelReviewListResponse(BaseModel):
+    items: list[LabelReviewEntry]
+    total: int
+
+
+class LabelReviewResolveRequest(BaseModel):
+    #: 人工判定结果，自由文本；建议 `kept_rules` / `kept_llm` / `merged`
+    resolution: str = "accepted"
+    #: 不填则用 `MEMORY_NAMESPACE`
+    namespace: str | None = None
+
+
+class LabelReviewResolveResponse(BaseModel):
+    event_id: str
+    resolved: bool
+    resolution: str
 
 
 # ---------------------------------------------------------------- 应用工厂
@@ -194,6 +236,66 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             for v in picked[:limit]
         ]
         return ReviewResponse(bucket=bucket, items=items, total=len(picked))
+
+    # ------------------------------------------------------ label review（B5）
+
+    @app.get(
+        "/admin/label-review",
+        response_model=LabelReviewListResponse,
+        dependencies=[Depends(require_token)],
+    )
+    def list_label_review(
+        limit: int = Query(default=50, ge=1, le=500),
+        namespace: str | None = Query(default=None),
+    ) -> LabelReviewListResponse:
+        """列出待复核的**打标分歧**（B5）。
+
+        注意这和 `GET /admin/review?bucket=need_review` 不是一回事（A24）：
+        那边问「该不该留」，这边问「打得对不对」。两个队列不合并。
+
+        数据来自 `LABEL_REVIEW` 表（规则层与 LLM 层不一致时才入队），
+        不需要实时扫 Weaviate，所以比 `/admin/review` 便宜。
+        """
+        ns = _namespace(namespace)
+        queue = queue_from_settings(cfg)
+        items = [
+            LabelReviewEntry(
+                event_id=it.event_id,
+                summary=it.summary,
+                rules_types=it.rules_types,
+                llm_types=it.llm_types,
+                agreement=it.agreement,
+                created_at=it.created_at,
+            )
+            for it in queue.list_pending(ns, limit=limit)
+        ]
+        return LabelReviewListResponse(items=items, total=queue.count_pending(ns))
+
+    @app.post(
+        "/admin/label-review/{event_id}/resolve",
+        response_model=LabelReviewResolveResponse,
+        dependencies=[Depends(require_token)],
+    )
+    def resolve_label_review(
+        event_id: str, body: LabelReviewResolveRequest
+    ) -> LabelReviewResolveResponse:
+        """把一条打标分歧标记为已处理。
+
+        **只标记，不改卡**。理由：`types` 参与 `event_id` 哈希（D1），
+        改标签等于换一张卡 —— 那需要重新走写入链路，不是这里该做的事。
+        这里记录「人看过并做了决定」，真正的修正由调用方重新 remember。
+        """
+        ns = _namespace(body.namespace)
+        queue = queue_from_settings(cfg)
+        ok = queue.resolve(ns, event_id, resolution=body.resolution)
+        if not ok:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"没有待复核的打标分歧：{event_id}（可能已处理或从未入队）",
+            )
+        return LabelReviewResolveResponse(
+            event_id=event_id, resolved=True, resolution=body.resolution
+        )
 
     # ------------------------------------------------------------ forget
 
