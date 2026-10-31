@@ -28,6 +28,7 @@ from typing import Any
 import httpx
 
 from memory.config import Settings
+from memory.core.tokenize import tokenize_for_index, tokenize_for_query
 from memory.models.event_card import EventCard
 
 #: 单 collection（ADR D1：namespace 用属性隔离，不拆 collection）
@@ -85,6 +86,18 @@ SCHEMA_PROPERTIES: list[dict[str, Any]] = [
     # 护栏降级留痕（A33）
     {"name": "anomaly", "dataType": ["text"]},
     # 派生片段层软删标记（事件卡本身永不软删）
+    # 检索分词字段（BM25 中文召回靠它，见 core/tokenize.py 的说明）
+    # `tokenization: word` + 空格分隔的 bigram → 2 字查询也能命中
+    {
+        "name": "summary_tokens",
+        "dataType": ["text"],
+        "tokenization": "word",
+    },
+    {
+        "name": "conclusion_tokens",
+        "dataType": ["text"],
+        "tokenization": "word",
+    },
     # 派生片段层软删标记（事件卡本身永不软删）
     # 用 `is_deleted` 布尔而不是靠 `deleted_at IsNull`：Weaviate 的 property 级
     # `invertedIndexConfig`（indexNullState）在 1.28 的建表请求里会被静默忽略，
@@ -115,6 +128,8 @@ def to_properties(card: EventCard, *, anomaly: str | None = None) -> dict[str, A
         "recall_count": card.recall_count,
         "confirmed_by_use": card.confirmed_by_use,
         "ingested_at": _rfc3339(card.ingested_at),
+        # 检索分词：BM25 中文召回靠它（见 core/tokenize.py）
+        "summary_tokens": tokenize_for_index(card.summary),
         # 新对象一律未删 —— 检索侧的 `is_deleted = false` 过滤依赖它存在且为 false
         "is_deleted": False,
     }
@@ -122,6 +137,7 @@ def to_properties(card: EventCard, *, anomaly: str | None = None) -> dict[str, A
         props["date_end"] = _rfc3339(card.date_end)
     if card.conclusion is not None:
         props["conclusion"] = card.conclusion
+        props["conclusion_tokens"] = tokenize_for_index(card.conclusion)
     if card.emotion is not None:
         props["emotion"] = card.emotion
     if card.emotion_intensity is not None:
@@ -393,6 +409,10 @@ class WeaviateStore:
       recall_count
       confirmed_by_use"""
 
+    #: 两路都要请求：`distance` 给向量通道，`score` 给 BM25 通道。
+    #: 缺失的那个 Weaviate 会返回 null，不影响。
+    #: **踩过的坑**：只请求 `distance` 时 BM25 的分恒为 0，下游 `score > 0`
+    #: 的过滤会把整个关键词通道静默清空 —— 表现是「查词命中但排序不对」。
     _FIELDS = """
       event_id
       namespace
@@ -402,7 +422,7 @@ class WeaviateStore:
       pinned
       unresolved
       entity_names
-      _additional { distance }"""
+      _additional { distance score }"""
 
     @staticmethod
     def _extract_hits(data: dict[str, Any]) -> list[dict[str, Any]]:
@@ -434,8 +454,15 @@ class WeaviateStore:
         out = []
         for obj in self._extract_hits(data):
             distance = (obj.get("_additional") or {}).get("distance") or 0.0
-            out.append(self._to_hit(obj, score=1.0 / (1.0 + float(distance))))
+            # `distance` 对 cosine 度量是 `1 - cosine`，所以余弦就是 `1 - distance`。
+            # **不要用 `1/(1+d)`** —— 那会把 0.68/0.42 压成 0.757/0.632，
+            # 区分度掉一半，无关查询的候选就再也过滤不掉了。
+            out.append(self._to_hit(obj, score=max(0.0, 1.0 - float(distance))))
         return out
+
+    #: BM25 检索的字段。**必须用分词字段**，不能用 `summary` 原文：
+    #: `summary` 的 word tokenizer 把整句中文当单个 token，2 字查询永远 0 命中。
+    _BM25_PROPERTIES = ("summary_tokens", "conclusion_tokens")
 
     def search_bm25(
         self,
@@ -445,16 +472,25 @@ class WeaviateStore:
         limit: int = 50,
         date_from: str | None = None,
     ) -> list[dict[str, Any]]:
-        """BM25 关键词召回。Weaviate 的 bm25 分没有上界，这里保留原分。"""
+        """BM25 关键词召回。Weaviate 的 bm25 分没有上界，这里保留原分。
+
+        查询词先过 `tokenize_for_query`（与索引侧同一套 bigram 规则），
+        再只在这些 `*_tokens` 字段上做 BM25 —— 这样中文 2 字查询也能命中。
+        """
         self.ensure_collection()
+        query_tokens = tokenize_for_query(text)
+        if not query_tokens:
+            return []
+        props = ", ".join(f'"{p}"' for p in self._BM25_PROPERTIES)
         query = (
             "query ($query: String!) {"
             " Get { MemoryEvent("
-            f"bm25: {{query: $query}}, limit: {int(limit)}, where: "
+            f"bm25: {{query: $query, properties: [{props}]}}, "
+            f"limit: {int(limit)}, where: "
             + self._where_graphql(namespace, date_from=date_from)
             + f") {{{self._FIELDS}}} }} }}"
         )
-        data = self._graphql(query, {"query": text})
+        data = self._graphql(query, {"query": query_tokens})
         return [
             self._to_hit(
                 obj, score=float((obj.get("_additional") or {}).get("score") or 0.0)

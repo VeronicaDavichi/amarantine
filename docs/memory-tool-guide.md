@@ -232,6 +232,7 @@
 | `RECALL_TOP_K_MIN` | 3 | 返回条数下限（**不补低分凑数**） |
 | `RECALL_TOP_K_MAX` | 30 | 返回条数上限 |
 | `RECALL_COUNT_MIN_SCORE` | 0.5 | 计入「有效召回」的分数门槛 |
+| `RECALL_VECTOR_MIN_SIM` | 0.5 | 向量绝对余弦闸门（融合**前**过滤无关候选） |
 | `RECALL_DROP_RATIO` | 0.6 | 相对衰减：低于最高分 60% 的丢弃 |
 | `RECALL_GAP_RATIO` | 0.15 | 断崖比例 |
 | `CONTEXT_TOKEN_BUDGET` | 3000 | 单次召回 token 预算 |

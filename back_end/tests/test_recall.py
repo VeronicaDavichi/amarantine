@@ -52,7 +52,21 @@ class FakeStore:
         pass
 
 
-def _hit(eid: str, summary: str = "摘要", *, days_ago: int = 30, importance=0.5, pinned=False):
+def _hit(
+    eid: str,
+    summary: str = "摘要",
+    *,
+    days_ago: int = 30,
+    importance=0.5,
+    pinned=False,
+    score: float = 0.9,
+):
+    """构造一条候选。
+
+    `score` 默认 0.9 —— 向量通道的绝对余弦闸门（`RECALL_VECTOR_MIN_SIM`）
+    要求 ≥ 0.5 才进融合，所以「正常相关」的候选必须给高分。
+    要测被闸门挡掉的场景，显式传 `score=<0.5`。
+    """
     from datetime import timedelta
 
     d = TODAY - timedelta(days=days_ago)
@@ -64,6 +78,7 @@ def _hit(eid: str, summary: str = "摘要", *, days_ago: int = 30, importance=0.
         "importance": importance,
         "pinned": pinned,
         "unresolved": [],
+        "score": score,
     }
 
 
@@ -178,6 +193,63 @@ def test_below_threshold_is_explicit() -> None:
     assert result.materials == []
     assert result.trace["empty_reason"] == "below_threshold"
     assert "top_score" in result.trace
+
+
+# ---------------- 向量绝对相似度闸门（融合前） ----------------
+
+
+def test_vector_gate_drops_unrelated_candidates() -> None:
+    """无关查询的候选绝对余弦太低 → 融合前就被挡掉，返回空。
+
+    这是「完全不相关的话题xyz 也返回 3 条高分」那个 bug 的回归测试。
+    RRF 只看排名、`normalize_relevance` 又把 top-1 归一成 1.0，
+    所以绝对余弦是唯一还能区分相关性的信号，必须在融合前用。
+    """
+    hits = [_hit("a", score=0.42), _hit("b", score=0.38), _hit("c", score=0.36)]
+    result = _run(store=FakeStore(vector_hits=hits))
+    assert result.materials == []
+    assert result.trace["empty_reason"] == "below_threshold"
+    gate = result.trace["gate"]
+    assert gate["vector_candidates"] == 3
+    assert gate["vector_dropped"] == 3
+
+
+def test_vector_gate_keeps_relevant_candidates() -> None:
+    """相关查询的 cos 0.68 > 0.5 → 保留。"""
+    hits = [_hit("a", score=0.68), _hit("b", score=0.42)]
+    result = _run(store=FakeStore(vector_hits=hits))
+    ids = [m["event_id"] for m in result.materials]
+    assert "a" in ids
+    assert "b" not in ids            # 被闸门挡掉
+    assert result.trace["gate"]["vector_dropped"] == 1
+
+
+def test_vector_gate_threshold_is_configurable() -> None:
+    settings = load_settings().model_copy(
+        update={"RECALL_VECTOR_MIN_SIM": 0.9}
+    )
+    result = _run(settings=settings, store=FakeStore(vector_hits=[_hit("a", score=0.68)]))
+    assert result.materials == []
+    assert result.trace["empty_reason"] == "below_threshold"
+
+
+def test_bm25_survives_vector_gate() -> None:
+    """向量全被挡，但 BM25 命中 → 仍然有结果（关键词通道兜底）。"""
+    result = _run(
+        store=FakeStore(
+            vector_hits=[_hit("a", score=0.40)],
+            bm25_hits=[_hit("b", score=3.2)],
+        )
+    )
+    ids = [m["event_id"] for m in result.materials]
+    assert ids == ["b"]
+
+
+def test_no_candidate_when_nothing_returned() -> None:
+    """一路都没返回 → no_candidate（不是 below_threshold）。"""
+    result = _run(store=FakeStore())
+    assert result.materials == []
+    assert result.trace["empty_reason"] == "no_candidate"
 
 
 # ---------------- 动态 K 与强制保留 ----------------

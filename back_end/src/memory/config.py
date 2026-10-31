@@ -66,6 +66,12 @@ class Settings(BaseSettings):
     CONTEXT_TOKEN_BUDGET: int = 3000
     RECALL_COUNT_MIN_SCORE: float = 0.5
     RECALL_EMPTY_THRESHOLD: float = 0.35
+    #: 向量通道的绝对余弦闸门。
+    #: **必须在融合前过滤**：RRF 只保留排名，`normalize_relevance` 又把 top-1
+    #: 归一成 1.0，于是无关查询也会拿到接近满分。绝对相似度是唯一还能区分
+    #: 「真相关」和「矮子里拔将军」的信号。
+    #: bge-m3 中文短句实测：相关 0.6–0.8，无关 0.35–0.50，故取 0.5。
+    RECALL_VECTOR_MIN_SIM: float = 0.5
 
     # ---------- 召回：超时 ----------
     GRAPH_TIMEOUT_MS: int = 200

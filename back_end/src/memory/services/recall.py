@@ -171,34 +171,64 @@ def recall(
             degraded = True
 
         # 5) 组装通道排名（空通道直接不放进去——ADR：移除而非补偿）
+        #
+        # ⚠️ 这里必须先做**绝对相似度闸门**，再交给 RRF。
+        # 原因：RRF 只用排名，`normalize_relevance` 又把 top-1 归一成 1.0，
+        # 于是「矮子里拔将军」的候选也会拿到接近满分的融合分。绝对余弦是
+        # 唯一还能区分「真的像」和「都不像」的信号，只能在融合前用。
         channels: dict[str, list[str]] = {}
         vector_hits = channel_results.get("vector") or []
         bm25_hits = channel_results.get("bm25") or []
-        if vector_hits:
-            channels["vector"] = [h["event_id"] for h in vector_hits if h.get("event_id")]
-        if bm25_hits:
-            channels["bm25"] = [h["event_id"] for h in bm25_hits if h.get("event_id")]
+        sim_floor = settings.RECALL_VECTOR_MIN_SIM
+        kept_vector = [
+            h for h in vector_hits
+            if h.get("event_id") and float(h.get("score") or 0.0) >= sim_floor
+        ]
+        dropped_vector = len(vector_hits) - len(kept_vector)
+        # BM25 分没有上界，>0 就表示真的命中过词；不设额外阈值
+        kept_bm25 = [
+            h for h in bm25_hits
+            if h.get("event_id") and float(h.get("score") or 0.0) > 0.0
+        ]
+        if kept_vector:
+            channels["vector"] = [h["event_id"] for h in kept_vector]
+        if kept_bm25:
+            channels["bm25"] = [h["event_id"] for h in kept_bm25]
+        # 图通道是实体扩展，天然带有相关性假设，不额外设闸
         if graph_hits is not None and getattr(graph_hits, "event_ids", None):
             channels["graph"] = list(graph_hits.event_ids)
 
+        # 通道被闸门清空 → 是「有候选但都不够像」，不是「完全没有」
+        gate_filtered = bool(dropped_vector) and not channels
+        # 闸门诊断始终上报：排查「为什么召回不到」时第一个要看的就是它
+        gate_trace = {
+            "vector_min_sim": sim_floor,
+            "vector_candidates": len(vector_hits),
+            "vector_dropped": dropped_vector,
+            "bm25_candidates": len(bm25_hits),
+        }
         if not channels:
             return RecallResult(
                 materials=[],
                 degraded=degraded,
                 partial=partial,
                 trace={
-                    "empty_reason": "no_candidate",
+                    "empty_reason": (
+                        "below_threshold" if gate_filtered else "no_candidate"
+                    ),
                     "channels": {},
                     "errors": errors,
                     "date_range": _range_dict(date_range),
+                    "gate": gate_trace,
                 },
             )
 
         # 6) RRF 融合
         ranked = rrf_fuse(channels)
         # 元数据索引：只有 vector/bm25 带回完整属性，图通道只给 id
+        # 用 kept_* —— 被闸门丢掉的不该再提供元数据（否则图通道会把它救回来）
         meta: dict[str, dict[str, Any]] = {}
-        for hit in [*bm25_hits, *vector_hits]:
+        for hit in [*kept_bm25, *kept_vector]:
             eid = hit.get("event_id")
             if eid and eid not in meta:
                 meta[eid] = hit
@@ -296,6 +326,7 @@ def recall(
                 "channels": {k: len(v) for k, v in channels.items()},
                 "errors": errors,
                 "date_range": _range_dict(date_range),
+                "gate": gate_trace,
             },
         )
     finally:
