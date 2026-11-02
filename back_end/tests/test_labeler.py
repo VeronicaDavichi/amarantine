@@ -98,9 +98,14 @@ def test_no_person_in_middle_of_noun() -> None:
 
 
 def test_org_extracted_by_suffix() -> None:
-    assert _names("我在上海出差见了腾讯公司的产品团队") == [
-        ("腾讯公司", "org"),
-    ]
+    """`腾讯公司` 要抽成 org，`上海` 顺手抽成 place。
+
+    正则版会漏掉 `上海`（它只认 `市/区/路/街` 后缀，裸城市名抓不到）；
+    jieba 有 `ns` 标注，能直接认出来。
+    """
+    names = _names("我在上海出差见了腾讯公司的产品团队")
+    assert ("腾讯公司", "org") in names
+    assert ("上海", "place") in names
 
 
 def test_org_not_swallowing_prefix() -> None:
@@ -156,6 +161,88 @@ def test_long_text_does_not_hang() -> None:
     text = "张三决定项目A延期到六月" * 200
     result = extract_entities(text)
     assert isinstance(result, list)
+
+
+# ---------------- jieba 分词路径 ----------------
+#
+# 下面这些是正则**做不到**的。jieba 有词边界，正则没有 ——
+# 正则会把 `张三让李四去做项目A` 从「张三」一路吞到「项目」。
+
+
+def test_two_persons_with_preposition() -> None:
+    """`张三让李四去做项目A` —— 两个人和一个项目全要拿到。
+
+    正则版这里必挂：姓氏表里 `让` 不在停用字表，会抽出 `张三让李四`。
+    """
+    names = _names("张三让李四去做项目A")
+    assert ("张三", "person") in names
+    assert ("李四", "person") in names
+    assert ("项目A", "topic") in names
+
+
+def test_person_after_verb() -> None:
+    """`告诉张三` —— 人名不在句首也不在常见介词后，正则抓不到。"""
+    assert ("张三", "person") in _names("告诉张三这个月要交报告")
+
+
+def test_person_tail_function_word_trimmed() -> None:
+    """jieba 会把 `张三让` 标成一个 nr，尾部函数词要裁掉。"""
+    names = [n for n, k in _names("张三让李四去做项目A") if k == "person"]
+    assert "张三让" not in names
+    assert "张三" in names
+
+
+def test_single_char_person_rejected() -> None:
+    """`周会上` 被切成 `周`(nr) + `会上`(t) —— 单字人名一律不要。"""
+    persons = [n for n, k in _names("周会上讨论了明年的预算分配方案") if k == "person"]
+    assert persons == []
+
+
+def test_city_without_suffix_extracted() -> None:
+    """裸城市名（`北京` / `上海`）没有 `市/区/路` 后缀，只有 jieba 的 ns 能认。"""
+    assert ("北京", "place") in _names("王五和赵六在北京见面")
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "周会上讨论了明年的预算分配方案",
+        "今天背了五十个单词",
+        "老板批评进度太慢",
+        "时间定在下周三",
+    ],
+)
+def test_jieba_also_has_no_ghost_persons(text: str) -> None:
+    """换成分词也不能凭空造人。"""
+    persons = [n for n, k in _names(text) if k == "person"]
+    assert persons == [], f"不该抽出人名，实际 {persons}"
+
+
+# ---------------- 降级路径 ----------------
+
+def test_fallback_when_jieba_unavailable(monkeypatch) -> None:
+    """jieba 不可用时必须降级到正则，不能崩。
+
+    抽取失败会直接阻断写卡，所以这条是硬要求。
+    """
+    from memory.services import labeler as L
+
+    monkeypatch.setattr(L, "_JIEBA_OK", False)
+    names = L.extract_entities("张三决定项目A延期到六月")
+    got = [(e.name, e.kind) for e in names]
+    assert ("张三", "person") in got
+    assert ("项目A", "topic") in got
+
+
+def test_jieba_probe_is_cached(monkeypatch) -> None:
+    """探测结果要缓存，否则每次抽取都去 import。"""
+    from memory.services import labeler as L
+
+    L.reset_jieba_probe()
+    first = L._jieba_ready()
+    second = L._jieba_ready()
+    assert first is second
+    assert L._JIEBA_OK is not None
 
 
 # ---------------- 动作抽取 ----------------

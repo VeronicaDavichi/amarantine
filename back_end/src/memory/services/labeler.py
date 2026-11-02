@@ -177,6 +177,121 @@ _VERB_SYNONYMS: dict[str, str] = {
 #: 一个事件最多保留几个动作（防长文本抽出一串动词把图打散）
 MAX_ACTIONS = 5
 
+#: 虚化动词：抽到也不要。`到`/`去`/`做`/`要`/`有` 这些不承载事件语义，
+#: 建成 Action 节点只会污染图，让「延期」这类真动词淹没在噪声里。
+WEAK_VERBS = frozenset(
+    {
+        "到", "去", "做", "要", "有", "是", "在", "来", "过", "对", "给", "让",
+        "被", "把", "从", "向", "为", "和", "与", "跟", "及", "或", "但", "而",
+        "能", "会", "可", "该", "将", "才", "就", "都", "也", "还", "又",
+        "说", "想", "看", "见", "用", "开", "起", "下", "上", "出", "进", "成",
+        "见", "算", "完", "好", "没", "不", "很", "太", "更", "最",
+    }
+)
+
+#: jieba 人名尾部常被误吞的函数词（`张三让` → `张三`）
+_PERSON_TAIL_CHARS = frozenset("让的被给和与跟对把向从在是有个这那也都还又就")
+
+#: 人名最短长度。单字人名噪声太大（`周会上` 的 `周` 会被标成 nr）
+MIN_PERSON_LEN = 2
+
+#: jieba 是否可用。`None` = 还没探测过。
+_JIEBA_OK: bool | None = None
+
+
+def _jieba_ready() -> bool:
+    """探测 jieba 是否可用（只探测一次，结果缓存）。
+
+    首次 `import jieba.posseg` 要加载词典，约 1s。放在第一次抽取时发生，
+    而不是模块导入时——否则 `import memory.services.labeler` 会拖慢所有冷启动。
+    """
+    global _JIEBA_OK
+    if _JIEBA_OK is None:
+        try:
+            import jieba.posseg  # noqa: F401
+
+            _JIEBA_OK = True
+        except Exception:  # noqa: BLE001 - 装了但坏了也要能降级
+            _JIEBA_OK = False
+    return _JIEBA_OK
+
+
+def reset_jieba_probe() -> None:
+    """清掉 jieba 探测缓存（测试用，模拟「jieba 不可用」）。"""
+    global _JIEBA_OK
+    _JIEBA_OK = None
+
+
+def _suffix_kind(suffix: str) -> str:
+    if suffix in ("公司", "团队", "部门", "集团", "工作室"):
+        return "org"
+    return "topic"
+
+
+def _extract_with_jieba(text: str) -> list[Entity]:
+    """jieba 词性标注抽取。
+
+    词性表：`nr` 人名 / `ns` 地名 / `nt` 机构 / `n`·`nz` 普通名词 / `v` 动词。
+
+    比分词前的正则强在**有词边界**：`张三让李四去做项目A` 能被切成
+    `张三/nr 让/v 李四/nr 去/v 做/v 项目/n A/x` —— 两个人和一个项目都拿得到，
+    正则做不到（它会从「张三」一路吞到「项目」）。
+    """
+    import jieba.posseg as pseg
+
+    tokens = [(w.word, w.flag) for w in pseg.cut(text)]
+    persons: list[str] = []
+    entities: list[Entity] = []
+    seen: set[str] = set()
+
+    def _add(name: str, kind: str) -> None:
+        name = name.strip()
+        if len(name) < 2 or name in seen or name in _STOP_ENTITIES:
+            return
+        seen.add(name)
+        entities.append(Entity(name=name, kind=kind))  # type: ignore[arg-type]
+
+    i = 0
+    while i < len(tokens):
+        word, flag = tokens[i]
+
+        # 人名：裁掉尾部被误吞的函数词（`张三让` → `张三`）
+        if flag == "nr":
+            name = word
+            while len(name) > MIN_PERSON_LEN and name[-1] in _PERSON_TAIL_CHARS:
+                name = name[:-1]
+            if len(name) >= MIN_PERSON_LEN and name not in persons:
+                persons.append(name)
+            i += 1
+            continue
+
+        if flag == "ns":
+            _add(word, "place")
+            i += 1
+            continue
+
+        if flag == "nt":
+            _add(word, "org")
+            i += 1
+            continue
+
+        # 名词 + 编号：`项目` + `A` → `项目A`
+        if flag in ("n", "nz", "vn") and i + 1 < len(tokens):
+            nxt, nxt_flag = tokens[i + 1]
+            if nxt_flag in ("x", "m", "eng") and nxt.isalnum() and len(nxt) <= 2:
+                _add(word + nxt, "topic")
+                i += 2
+                continue
+            # `腾讯` + `公司` → `腾讯公司`
+            if nxt in ("公司", "团队", "部门", "集团", "工作室", "项目", "系统", "平台"):
+                _add(word + nxt, _suffix_kind(nxt))
+                i += 2
+                continue
+
+        i += 1
+
+    return [Entity(name=n, kind="person") for n in persons] + entities
+
 
 @dataclass(frozen=True)
 class ActionMatch:
@@ -311,6 +426,21 @@ def extract_entities(text: str) -> list[Entity]:
 
     与打标共用同一套规则，保证「写入时抽到的实体」和「查询时抽到的实体」
     口径一致——否则图通道会系统性漏检。
+
+    **优先走 jieba 分词**（有词性标注，人名/地名/机构名一步到位），
+    jieba 不可用时降级到下面那套正则。降级路径必须可用——
+    抽取失败会直接阻断写卡。
+    """
+    if _jieba_ready():
+        return _extract_with_jieba(text)
+    return _extract_with_rules(text)
+
+
+def _extract_with_rules(text: str) -> list[Entity]:
+    """正则兜底路径（jieba 不可用时）。
+
+    能力明显弱于分词：`张三让李四去做项目A` 这种含两个人和一个项目，
+    靠姓氏 + 位置约束抽不全。但它是**零依赖**的，必须保底可用。
     """
     persons = _extract_persons(text)
     entities = _extract_entities(text, skip=set(persons))
