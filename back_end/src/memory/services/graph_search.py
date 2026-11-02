@@ -91,12 +91,22 @@ WHERE ANY(name IN $names WHERE e.summary CONTAINS name)
 WITH DISTINCT e
 RETURN e.event_id AS event_id
 LIMIT $limit
+
+UNION
+
+// 别名主人直连（同分流版的第 7 条路）。老调用方也要能吃到别名。
+MATCH (e:Event {namespace: $namespace})-[:INVOLVES|MENTIONS]->(host)
+WHERE host.name IN $alias_hosts
+WITH DISTINCT e
+RETURN e.event_id AS event_id
+LIMIT $limit
 """
 
 #: 人跟实体分流的版本。
 #:
 #: `$person_names` 只走路 1，**绝不进动作扩展**；
-#: `$entity_names` 走「命中 → 挖动作/人 → 再扩一层」。
+#: `$entity_names` 走「命中 → 挖动作/人 → 再扩一层」；
+#: `$alias_hosts` 走路 7，**只直连、不扩展**。
 _SEARCH_CYPHER = """
 // 路 1：人直连 —— 终点，不碰动作
 MATCH (e:Event {namespace: $namespace})-[:INVOLVES]->(p:Person)
@@ -154,6 +164,26 @@ UNION
 // 路 6：兜底——加边之前的旧数据只能靠文本匹配
 MATCH (e:Event {namespace: $namespace})
 WHERE ANY(name IN $names WHERE e.summary CONTAINS name)
+WITH DISTINCT e
+RETURN e.event_id AS event_id
+LIMIT $limit
+
+UNION
+
+// 路 7：别名主人直连 —— 人还是物都走
+//
+// 别名解析出来的主人（`糖包` → `豆包`）可能只有 `:Entity` 标签：
+// 别名声明不说明那个东西是什么，实体抽取也可能还没把它判定成人。
+// 路 1 要求终点是 `:Person`、路 2 要求 `:Entity` 且查 `$entity_names`，
+// 两条都进不去 —— 别名解析出来了，图通道却接不上。
+//
+// 所以单独一条：**终点不限定标签**，`INVOLVES` 和 `MENTIONS` 都认。
+//
+// **只直连，不扩展。** 别名大多是 uncertain，拿弱证据去挖动作/同僚
+// 会把噪声指数放大；而且别名声明本来就不构成「提到」——
+// 它只说明「这两个名字指同一个东西」，不说明这句话跟那个东西有关。
+MATCH (e:Event {namespace: $namespace})-[:INVOLVES|MENTIONS]->(host)
+WHERE host.name IN $alias_hosts
 WITH DISTINCT e
 RETURN e.event_id AS event_id
 LIMIT $limit
@@ -288,6 +318,8 @@ def search_by_entities(
         # 单独一次查询而不是塞进上面的大 UNION：UNION 要求每路列数一致，
         # 别名路还要额外带回置信度，混在一起会把所有路的返回结构撑大。
         alias_hits: list[AliasHit] = []
+        #: 别名解析出的主人，专供路 7。跟 `persons` / `entities` 都不混。
+        alias_hosts: list[str] = []
         with drv.session() as session:
             if all_names:
                 for row in session.run(
@@ -301,12 +333,20 @@ def search_by_entities(
                             confidence=float(row["confidence"] or 0.4),
                         )
                     )
-                # 别名的主人要并入人名集合，才能走 INVOLVES 直连。
-                # 一个别名可能解析出多个主人（`三哥` 的歧义），全部并入 ——
+                # 别名的主人**不进 `persons`**，走独立的路 7。
+                #
+                # 塞进 persons 会让路 1 去匹配 `(p:Person)`，而别名宿主
+                # 常常只有 `:Entity` 标签（别名声明不说明那东西是什么），
+                # 路 1 直接落空 —— 别名解析出来了，图通道却接不上。
+                #
+                # 塞进 entity_names 更糟：那会触发路 3（挖同僚人）和
+                # 路 4（挖同动作），拿 uncertain 的弱证据去扩散。
+                #
+                # 一个别名可能解析出多个主人（`三哥` 的歧义），全部带上 ——
                 # 宁可多召回，也不能替用户挑一个。
                 resolved = _clean_names([h.canonical for h in alias_hits])
                 if resolved:
-                    persons = _clean_names(persons + resolved)
+                    alias_hosts = list(resolved)
                     all_names = _clean_names(all_names + resolved)
 
             cypher = _SEARCH_CYPHER if use_split else _ALL_NAMES_CYPHER
@@ -315,6 +355,7 @@ def search_by_entities(
                 "names": all_names,
                 "person_names": persons,
                 "entity_names": entities,
+                "alias_hosts": alias_hosts,
                 "limit": int(limit),
                 "timeout": timeout_s,
             }

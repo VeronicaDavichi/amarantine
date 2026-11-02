@@ -16,6 +16,7 @@ from typing import Any
 import pytest
 
 from memory.services.graph_search import (
+    _ALL_NAMES_CYPHER,
     _SEARCH_CYPHER,
     GraphHits,
     search_by_entities,
@@ -209,3 +210,98 @@ def test_driver_not_closed_when_injected(driver: FakeDriver) -> None:
     _search(driver, ["项目A"], ["张三"])
     # FakeDriver.close 什么都不做；这里断言的是「没有抛异常」
     assert driver.session_obj.calls
+
+
+# ---------------- 别名路（路 7） ----------------
+
+def _driver_with_alias(alias: str, canonical: str) -> FakeDriver:
+    alias_row = {
+        "alias": alias,
+        "canonical": canonical,
+        "label": "probable",
+        "confidence": 0.8,
+        "source_event_id": "evt_x",
+    }
+    return FakeDriver(["evt_a"], [alias_row])
+
+
+def test_alias_hosts_passed_as_separate_param() -> None:
+    """别名主人走独立参数，不跟人名/实体名混。"""
+    drv = _driver_with_alias("糖包", "豆包")
+    _search(drv, ["糖包"], [])
+    _cypher, params = _main_call(drv)
+    assert params["alias_hosts"] == ["豆包"]
+
+
+def test_alias_host_not_in_person_names() -> None:
+    """别名主人**不能**进 person_names。
+
+    路 1 要求终点是 `:Person`，而别名宿主常常只有 `:Entity` 标签
+    （别名声明不说明那东西是什么）—— 塞进去只会落空。
+    """
+    drv = _driver_with_alias("糖包", "豆包")
+    _search(drv, ["糖包"], [])
+    _cypher, params = _main_call(drv)
+    assert "豆包" not in params["person_names"], (
+        "别名主人进 person_names 会走路 1，纯 Entity 宿主必然落空"
+    )
+
+
+def test_alias_host_not_in_entity_names() -> None:
+    """也不能进 entity_names —— 那会触发路 3/4 的动作扩展。
+
+    别名大多是 uncertain，拿弱证据去挖同动作/同僚，噪声会指数放大。
+    """
+    drv = _driver_with_alias("糖包", "豆包")
+    _search(drv, ["糖包"], [])
+    _cypher, params = _main_call(drv)
+    assert "豆包" not in params["entity_names"], (
+        "别名主人进 entity_names 会让路 3/4 拿弱证据去扩散"
+    )
+
+
+def test_alias_host_still_in_all_names() -> None:
+    """但 `$names` 里要保留 —— 路 6 的文本兜底还得靠它。"""
+    drv = _driver_with_alias("糖包", "豆包")
+    _search(drv, ["糖包"], [])
+    _cypher, params = _main_call(drv)
+    assert "豆包" in params["names"]
+
+
+def _strip_comments(cypher: str) -> str:
+    """去掉 `//` 注释行 —— 注释里会提到 `:Person` 之类的字眼，会干扰断言。"""
+    return "\n".join(
+        line for line in cypher.splitlines() if not line.strip().startswith("//")
+    )
+
+
+def test_alias_leg_exists_in_split_cypher() -> None:
+    """路 7 必须存在，且终点不限定标签。"""
+    legs = _SEARCH_CYPHER.split("UNION")
+    alias_legs = [leg for leg in legs if "$alias_hosts" in leg]
+    assert len(alias_legs) == 1, f"应恰好一条别名路，实际 {len(alias_legs)}"
+    leg = _strip_comments(alias_legs[0])
+    assert ":Person" not in leg and ":Entity" not in leg, (
+        "别名路的终点不能限定标签 —— 这就是纯 Entity 宿主接不上的原因"
+    )
+    assert "INVOLVES" in leg and "MENTIONS" in leg
+
+
+def test_alias_leg_has_no_action_expansion() -> None:
+    """别名路只直连：不能出现 ACTION，也不能顺着人再扩一跳。"""
+    legs = [leg for leg in _SEARCH_CYPHER.split("UNION") if "$alias_hosts" in leg]
+    leg = _strip_comments(legs[0])
+    assert "ACTION" not in leg, "别名路不能挖动作"
+    assert "<-[:INVOLVES]-" not in leg, "别名路不能反向扩一跳"
+
+
+def test_text_fallback_cypher_also_has_alias_leg() -> None:
+    """老调用方（不分流）也要能吃到别名。"""
+    assert "$alias_hosts" in _ALL_NAMES_CYPHER
+
+
+def test_no_alias_means_empty_alias_hosts(driver: FakeDriver) -> None:
+    """没有别名时传空列表，不能漏传（Cypher 会报参数缺失）。"""
+    _search(driver, ["项目A"], ["张三"])
+    _cypher, params = _main_call(driver)
+    assert params["alias_hosts"] == []
