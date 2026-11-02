@@ -543,10 +543,53 @@ def extract_entities(text: str) -> list[Entity]:
     **优先走 jieba 分词**（有词性标注，人名/地名/机构名一步到位），
     jieba 不可用时降级到下面那套正则。降级路径必须可用——
     抽取失败会直接阻断写卡。
+
+    最后补一道**别名声明**：`糖包就是豆包` 里的两个词都是名字，
+    但 jieba 会把「糖包」标成普通名词 `n`，任何合并规则都收不到它。
+    别名声明是规则层唯一**能确定**「这是个名字」的地方 —— 不是靠位置猜，
+    是用户自己把它跟另一个名字连了等号。
     """
     if _jieba_ready():
-        return _extract_with_jieba(text)
-    return _extract_with_rules(text)
+        entities = _extract_with_jieba(text)
+    else:
+        entities = _extract_with_rules(text)
+    return _merge_alias_names(text, entities)
+
+
+def _merge_alias_names(text: str, entities: list[Entity]) -> list[Entity]:
+    """把别名声明两侧的干净名字并进实体列表。
+
+    **为什么只收这一处**：实体纠错机制目前约等于不存在 ——
+    没有任何 API 能删掉一个错误的 `(:Entity)` 节点，唯一手段是
+    连整张卡一起 `memory_forget`，代价比错误本身还大。
+    所以规则层宁可漏，也不能靠「句首名词」「4 字以内」这种位置特征去猜。
+
+    别名声明是唯一的高可靠来源：用户说 `A 就是 B`，
+    等于亲口断言 A 和 B 都是名字。这个不需要猜。
+
+    描述性的不收（`那个AI里最弱智的`）—— 那本来就不是名字，
+    走 `_looks_like_name` 同一个判据。
+    """
+    claims = extract_alias_claims(text)
+    if not claims:
+        return entities
+
+    seen = {e.name for e in entities}
+    merged = list(entities)
+    for claim in claims:
+        for name in (claim.alias, claim.canonical):
+            if not name or name in seen:
+                continue
+            if not _looks_like_name(name):
+                continue
+            if _has_stop_char(name):
+                continue
+            seen.add(name)
+            # 别名声明说的是「这两个称呼指同一类东西」，分不出人还是物。
+            # 标 topic 而不是 person：宁可让它作为泛实体参与召回，
+            # 也不要凭空把「豆包」认成一个人。
+            merged.append(Entity(name=name, kind="topic"))
+    return merged
 
 
 def _extract_with_rules(text: str) -> list[Entity]:

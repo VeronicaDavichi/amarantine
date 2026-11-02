@@ -332,3 +332,69 @@ def test_report_to_dict() -> None:
     assert d["event_id"] == "evt_a"
     assert d["resolved"][0]["canonical"] == "豆包"
     assert d["resolved"][0]["source"] == "llm_inferred"
+
+
+# ---------------- 重复推断 ----------------
+
+def test_second_run_skips_already_inferred(monkeypatch) -> None:
+    """规则层的原 claim 永远停在 uncertain，所以每跑一次都会重推。
+
+    不拦的话，第二次推出来的置信度可能不同（LLM 不确定），
+    卡上就会长出 `uncertain` + `probable` 两条同名记录。
+    """
+    _patch(monkeypatch)
+    fake = _llm(monkeypatch)
+    store = FakeStore(
+        {
+            "evt_a": _card(
+                claims=[
+                    UNCERTAIN,
+                    {
+                        "alias": "糖包",
+                        "canonical": "豆包",
+                        "label": "probable",
+                        "source": "llm_inferred",
+                    },
+                ]
+            )
+        }
+    )
+    report = resolve_event_aliases(
+        "work", "evt_a", settings=_settings(), store=store  # type: ignore[arg-type]
+    )
+    assert report.resolved == []
+    assert store.appended == []
+    assert fake.calls == 0, "已经推断过的不该再问 LLM"
+
+
+def test_different_alias_still_resolved(monkeypatch) -> None:
+    """推断过「糖包」，不代表「小张」也推断过了。"""
+    _patch(monkeypatch)
+    fake = _llm(monkeypatch)
+    store = FakeStore(
+        {
+            "evt_a": _card(
+                claims=[
+                    UNCERTAIN,
+                    {
+                        "alias": "糖包",
+                        "canonical": "豆包",
+                        "label": "probable",
+                        "source": "llm_inferred",
+                    },
+                    {
+                        "alias": "小张",
+                        "canonical": "那谁",
+                        "label": "uncertain",
+                        "source": "user_declared",
+                    },
+                ]
+            )
+        }
+    )
+    report = resolve_event_aliases(
+        "work", "evt_a", settings=_settings(), store=store  # type: ignore[arg-type]
+    )
+    assert len(report.resolved) == 1
+    assert report.resolved[0].alias == "小张"
+    assert fake.calls == 1

@@ -135,10 +135,16 @@ RETURN a.name AS alias, p.name AS canonical,
 #: **只取 Person 和 Entity**：`(:Alias)` 不能当候选 —— 让 LLM 在别名里选，
 #: 会把「糖包 -> 豆包」推成「糖包 -> 小豆包」，链路越绕越偏。
 #: `(:Time)` 更不行，日期不可能是谁的别名。
+#:
+#: `DISTINCT` 不能省：同一个名字可能同时存在 `:Person` 和 `:Entity` 两个节点 ——
+#: `APPEND_ALIAS_CYPHER` 为了建 `ALIAS_OF` 边会 `MERGE (p:Person)`，
+#: 而实体抽取又会把同名名字建成 `:Entity`。这是图模型的既有问题
+#: （别名的主人被硬绑成 Person，但「豆包」显然不是人），
+#: 不是这里能修的。至少在候选列表里去重，别让 LLM 看到两个「豆包」。
 LIST_KNOWN_NAMES_CYPHER = """
 MATCH (n {namespace: $namespace})
 WHERE n:Person OR n:Entity
-RETURN n.name AS name
+RETURN DISTINCT n.name AS name
 ORDER BY name
 LIMIT $limit
 """

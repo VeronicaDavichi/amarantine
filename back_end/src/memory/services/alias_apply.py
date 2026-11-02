@@ -126,9 +126,22 @@ def resolve_event_aliases(
         if not claims:
             return report
 
-        # 已经 exact / probable 的不用再问，只有 uncertain 值得推断
-        todo = [c for c in claims if c.label == "uncertain"]
+        # 规则层的原 claim 永远停在 `uncertain` —— 它不会被推断结果改写。
+        # 所以每跑一次就会重新推断一次，第二次推出来的置信度可能跟第一次
+        # 不一样（LLM 不是确定性的），于是卡上长出
+        # `糖包 -> 豆包 uncertain` + `糖包 -> 豆包 probable` 两条。
+        #
+        # 判据是「这个 alias 已经推断过了」而不是「这个 canonical 推过了」：
+        # 推断前根本不知道会落到哪个 canonical 上。
+        already = {c.alias for c in claims if c.source == "llm_inferred"}
+        todo = [
+            c for c in claims if c.label == "uncertain" and c.alias not in already
+        ]
         if not todo:
+            if already:
+                logger.info(
+                    "别名已推断过，跳过 | event_id=%s | %s", event_id, sorted(already)
+                )
             return report
 
         candidates = (

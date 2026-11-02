@@ -137,3 +137,65 @@ def test_multiple_claims_in_one_sentence() -> None:
     got = {(c.alias, c.canonical) for c in claims}
     assert ("小张", "张三") in got
     assert ("老李", "李总") in got
+
+
+# ================================================================
+# 别名声明两侧的名字要进实体列表
+#
+# 背景：`豆包` 这类产品名被 jieba 标成普通名词 `n`，任何合并规则都收不到。
+# 但实体纠错机制目前约等于不存在（没有 API 能删单个实体节点），
+# 所以规则层宁可漏 —— 只有别名声明这种**用户亲口断言**的场景才补收。
+# ================================================================
+
+
+def test_alias_left_side_becomes_entity() -> None:
+    """`糖包` 是 jieba 的普通名词，靠别名声明才进得来。"""
+    from memory.services.labeler import extract_entities
+
+    names = {e.name for e in extract_entities("糖包就是豆包")}
+    assert "糖包" in names, f"别名声明的左值应进实体，实际 {names}"
+    assert "豆包" in names
+
+
+def test_descriptive_right_side_not_entity() -> None:
+    """描述性右值不是名字，不该进实体列表。"""
+    from memory.services.labeler import extract_entities
+
+    names = {e.name for e in extract_entities("糖包就是那个AI里最弱智的")}
+    assert "糖包" in names
+    assert not any("最弱智" in n for n in names), f"描述被当成实体了: {names}"
+
+
+def test_plain_sentence_still_misses_product_names() -> None:
+    """**故意保留的漏**：`豆包是我们组用的AI助手` 抽不到「豆包」。
+
+    这不是 bug，是取舍：没有实体纠错能力，就不能靠「句首名词」去猜。
+    哪天加了实体纠错，这条测试应该跟着改。
+    """
+    from memory.services.labeler import extract_entities
+
+    names = {e.name for e in extract_entities("豆包是我们组用的AI助手")}
+    assert "豆包" not in names, (
+        "如果这条开始通过了，说明实体抽取已放开精度 —— "
+        "请先确认实体纠错能力已经存在，再改这条测试"
+    )
+
+
+def test_alias_entities_are_topic_not_person() -> None:
+    """声明说的是「两个称呼等价」，分不出人还是物 —— 标 topic。
+
+    凭空把「豆包」认成一个人比漏掉更糟。
+    """
+    from memory.services.labeler import extract_entities
+
+    kinds = {e.name: e.kind for e in extract_entities("糖包就是豆包")}
+    assert kinds["糖包"] == "topic"
+    assert kinds["豆包"] == "topic"
+
+
+def test_alias_entities_do_not_duplicate() -> None:
+    """`张三也叫张三` 不该冒出两个张三。"""
+    from memory.services.labeler import extract_entities
+
+    names = [e.name for e in extract_entities("小张也叫张三")]
+    assert len(names) == len(set(names)), f"实体重复: {names}"
