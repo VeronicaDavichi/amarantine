@@ -113,6 +113,8 @@ def main() -> int:
         "LIST_KNOWN_NAMES_CYPHER",
         # 非配置项：labeler 里的分词常量（文档里讲称谓词典时会提到）
         "RANK_DIGITS", "RANK_SUFFIXES",
+        # 非配置项：labeler 里的「X人」判据（文档里讲别名右值时会提到）
+        "DESCRIPTIVE_BEFORE_REN",
     }
     unknown = [v for v in unknown if v not in allowed_extra]
     for v in unknown:

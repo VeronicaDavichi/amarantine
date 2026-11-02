@@ -498,6 +498,16 @@ def append_alias_edges(
             "source": c.source,
         }
         for c in claims
+        # **右值是描述性短语时不建边，但 claim 留在卡上。**
+        #
+        # 这个过滤是「预期内的丢弃」，不是兜底：`糖包就是那个ai中最弱智的`
+        # 会留下 `canonical="AI里最弱智的"`，等 LLM 层去解析出到底是谁，
+        # 规则层不猜。数据没丢 —— `card.alias_claims` 里还在。
+        #
+        # 代价是这个过滤**不说一句话**：判据要是把真名字误判成描述
+        # （曾经 `印度人` 就因为 `_DESCRIPTIVE_MARKERS` 里有「人」被丢掉），
+        # 边会一条建不出来而毫无痕迹。所以名字判据必须是对的 ——
+        # 见 `labeler._looks_like_name`。
         if _is_clean_name(c.canonical) and c.alias
     ]
     if not items:

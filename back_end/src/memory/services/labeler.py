@@ -235,9 +235,47 @@ _ALIAS_PATTERN = re.compile(
 _DESCRIPTIVE_MARKERS = frozenset(
     {
         "那个", "这个", "最", "很", "特别", "非常", "比较", "之一",
-        "东西", "家伙", "人", "家", "位", "个", "种",
+        "东西", "家伙", "家", "位", "个", "种",
     }
 )
+
+#: 「X 人」里 X 是形容词时，整个短语是**评价**而不是名字。
+#:
+#: `人` 曾经直接在 `_DESCRIPTIVE_MARKERS` 里，一刀切拦掉了所有
+#: 带「人」的串 —— 包括 `印度人`。但 `人` 是**名词后缀**，不是描述标记：
+#:
+#:     名字（该放行）              描述（该拦）
+#:     ─────────────────────      ─────────────────
+#:     印度人 / 中国人 / 上海人     老实人 / 聪明人 / 坏人
+#:     主持人 / 负责人 / 介绍人     懒人 / 陌生人 / 什么人
+#:
+#: 区别不在「有没有人」，而在**「人」前面那个词是名词还是形容词**。
+#: 所以只在形容词前缀时才拦，名词前缀一律放行。
+#:
+#: 为什么不能干脆不拦：`小明就是个老实人` 会建出
+#: `(:Entity {name:"老实人"})` —— 评价词进了图，比漏掉一个名字脏得多。
+_DESCRIPTIVE_BEFORE_REN = frozenset(
+    {
+        # 评价类形容词
+        "好", "坏", "笨", "傻", "呆", "懒", "聪明", "老实", "勤快", "靠谱",
+        "漂亮", "丑", "帅", "可爱", "讨厌", "善良", "恶毒", "虚伪", "实在",
+        "正经", "普通", "一般", "厉害", "牛逼", "有钱", "没钱", "穷", "富",
+        "陌生", "熟悉", "年轻", "老", "小", "胖", "瘦", "高", "矮", "弱", "强",
+        # 限定词 —— `什么人` / `那种人` 同样不是名字
+        "什么", "任何", "别的", "其他", "有些", "很多", "个别",
+        "这种", "那种", "哪种", "每", "所有", "全部",
+    }
+)
+
+
+def _is_descriptive_ren(candidate: str) -> bool:
+    """`老实人` 是评价，`印度人` 是名字。
+
+    判的是 `人` 前面那个词：形容词 → 描述，名词 → 放行。
+    """
+    if len(candidate) < 2 or not candidate.endswith("人"):
+        return False
+    return candidate[:-1] in _DESCRIPTIVE_BEFORE_REN
 
 
 #: 别名左侧常被误带进来的前缀（`我说的豆包` → `豆包`）
@@ -259,6 +297,15 @@ def _looks_like_name(candidate: str) -> bool:
 
     `印度人` 像名字（虽然它是个类别，但至少是个名词短语），
     `那个ai中最弱智的` 不像 —— 它是描述，不是名字。
+    `老实人` 也不像 —— `人` 前面是形容词，那是评价。
+
+    ## 为什么 `人` 不能一刀切
+
+    `人` 是名词后缀，`印度人` / `主持人` / `负责人` 都是名词短语。
+    把它放进 `_DESCRIPTIVE_MARKERS` 会连这些一起拦掉 —— 曾经就是
+    这样：`三哥就是印度人` 抽得出 claim，但 `append_alias_edges`
+    用 `_is_clean_name(canonical)` 过滤时把它丢了，边一条建不出来。
+    现在只看 `人` 前面是不是形容词（`_is_descriptive_ren`）。
 
     ## 为什么要卡左侧
 
@@ -275,6 +322,8 @@ def _looks_like_name(candidate: str) -> bool:
     if len(candidate) > 6:
         return False
     if any(marker in candidate for marker in _DESCRIPTIVE_MARKERS):
+        return False
+    if _is_descriptive_ren(candidate):
         return False
     # 以助词/描述词结尾的不是名字（`三哥主打的` / `前面说的`）
     if candidate[-1:] in ("的", "者", "地", "了", "呢", "吧", "啊"):
@@ -309,8 +358,13 @@ def _alias_label(canonical: str) -> str:
 
     描述性右边界**不直接丢弃** —— 它仍是线索，只是要打上存疑标记，
     召回时让调用方自己去判断。
+
+    `印度人` 这种名词短语是 ``exact``：用户用「就是」把等价关系说死了。
+    `老实人` 是评价，退回 ``uncertain``（`_is_descriptive_ren`）。
     """
     if any(marker in canonical for marker in _DESCRIPTIVE_MARKERS):
+        return ALIAS_UNCERTAIN
+    if _is_descriptive_ren(canonical):
         return ALIAS_UNCERTAIN
     if _has_stop_char(canonical):
         return ALIAS_UNCERTAIN

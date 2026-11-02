@@ -289,3 +289,150 @@ def test_clean_name_accepts_short_products() -> None:
 
     assert _is_clean_name("豆包")
     assert _is_clean_name("糖包")
+
+
+# ---------------- 「X 人」：名词后缀不是描述标记 ----------------
+#
+# `人` 曾经直接在 `_DESCRIPTIVE_MARKERS` 里，一刀切拦掉所有带「人」的串。
+# 结果 `三哥就是印度人` 抽得出 claim，但 `append_alias_edges` 用
+# `_is_clean_name(canonical)` 过滤时把它丢掉了 —— 边一条建不出来，
+# 而且没有任何日志。判据改成只看 `人` 前面是不是形容词。
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "印度人",   # 用户报的那个
+        "中国人",
+        "上海人",
+        "东北人",
+        "外国人",   # 「外国」是地点性质，不是评价
+        "主持人",   # 名词 + 人：职业
+        "负责人",
+        "介绍人",
+    ],
+)
+def test_person_noun_with_nominal_prefix_is_a_name(name: str) -> None:
+    """名词 + 「人」是名词短语，不是描述。"""
+    from memory.services.labeler import _is_clean_name
+
+    assert _is_clean_name(name), f"{name} 是名词短语，不该被当成描述"
+
+
+@pytest.mark.parametrize(
+    "desc",
+    [
+        "老实人",
+        "聪明人",
+        "坏人",
+        "好人",
+        "懒人",
+        "陌生人",
+        "什么人",
+        "那种人",
+        "老人",
+    ],
+)
+def test_person_noun_with_adjectival_prefix_is_a_description(desc: str) -> None:
+    """形容词 + 「人」是评价 —— 进了图就是垃圾实体。"""
+    from memory.services.labeler import _is_clean_name
+
+    assert not _is_clean_name(desc), f"{desc} 是评价，不该过"
+
+
+def test_sange_is_indian_claim_is_created_and_clean() -> None:
+    """`三哥就是印度人` 要能抽出 claim，且右值过得了建边判据。
+
+    这两步原来各断一次：claim 抽得出来，但
+    `graph_outbox.append_alias_edges` 的 `_is_clean_name(canonical)`
+    过滤把它丢了 —— 所以「claim 存在」不等于「边建得出来」，
+    两个断言都得有。
+    """
+    from memory.services.labeler import _is_clean_name
+
+    claims = extract_alias_claims("三哥就是印度人")
+    assert len(claims) == 1, claims
+    c = claims[0]
+    assert (c.alias, c.canonical) == ("三哥", "印度人")
+    # 用户用「就是」说死了等价关系 → exact
+    assert c.label == "exact"
+    assert _is_clean_name(c.canonical), "右值必须过得了建边判据"
+
+
+def test_sange_is_indian_actually_reaches_graph_items() -> None:
+    """真的走到 `append_alias_edges`，确认 item 列表里有它。
+
+    不走这一步的话，改完判据也不知道边到底建没建 —— 过滤发生在
+    函数内部，只看 claim 是看不出来的。
+    """
+    from typing import Any
+
+    from memory.services import graph_outbox as GO
+
+    class _Session:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, dict[str, Any]]] = []
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def run(self, cypher: str, **params: Any) -> Any:
+            self.calls.append((cypher, params))
+
+            class _R:
+                def __iter__(self):
+                    return iter([])
+
+                def consume(self):
+                    return None
+
+            return _R()
+
+    class _Driver:
+        def __init__(self) -> None:
+            self.s = _Session()
+
+        def session(self):
+            return self.s
+
+        def close(self) -> None:
+            pass
+
+    class _Cfg:
+        NEO4J_URI = "bolt://fake:7687"
+        NEO4J_USER = "neo4j"
+        NEO4J_PASSWORD = "pw"
+
+    drv = _Driver()
+    claims = extract_alias_claims("三哥就是印度人")
+    written = GO.append_alias_edges(
+        "evt_0000000000000001",
+        "work",
+        claims,
+        settings=_Cfg(),
+        created_at="2026-11-02T08:00:00+00:00",
+        driver=drv,
+    )
+    assert written == 1, "`印度人` 这条边必须真的建出来"
+    params = drv.s.calls[0][1]
+    aliases = [item["alias"] for item in params["aliases"]]
+    canonicals = [item["canonical"] for item in params["aliases"]]
+    assert aliases == ["三哥"]
+    assert canonicals == ["印度人"]
+
+
+def test_description_stays_on_card_but_never_reaches_graph() -> None:
+    """`小明就是老实人` —— claim 留着（LLM 层还有用），边不建。
+
+    这是「右值可以是描述」的设计：不猜，但也不丢。
+    """
+    from memory.services.labeler import _is_clean_name
+
+    claims = extract_alias_claims("小明就是老实人")
+    assert len(claims) == 1
+    assert claims[0].canonical == "老实人"
+    assert claims[0].label == "uncertain", "评价性右值要标存疑"
+    assert not _is_clean_name(claims[0].canonical), "不能建边"
