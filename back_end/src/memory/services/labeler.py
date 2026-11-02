@@ -11,6 +11,7 @@ P0 决定：规则层**必须**独立可用（LLM 挂了也能写卡），LLM �
 
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass, field
 
@@ -200,6 +201,24 @@ _PERSON_TAIL_CHARS = frozenset("让的被给和与跟对把向从在是有个这
 #: 人名最短长度。单字人名噪声太大（`周会上` 的 `周` 会被标成 nr）
 MIN_PERSON_LEN = 2
 
+#: 排行称谓：`三哥` `四妹` `三叔` `一姐`……
+#:
+#: jieba 词典里没有这一批，`三哥是我哥` 会被切成 `三/m` + `哥/n`，
+#: 于是整句抽不到人（实测）。而这类词的模式**极明确**：
+#: 「三哥」不可能是别的东西，误伤几乎为零。
+#:
+#: 刻意**不做「老X」「小X」**：`小鹏`/`小米`/`小说`/`老总` 全是坑，
+#: 姓氏表再全也躲不掉。排行模式没这个问题。
+_RANK_DIGITS = "一二三四五六七八九十"
+_RANK_SUFFIXES = "哥姐弟妹叔伯婶舅姨"
+
+#: 切分结果里要剥掉的连词前缀。
+#:
+#: `老李和小王吵架` 会被切成 `老李/nr` + `和小王/nr` —— 「和」粘进了名字，
+#: `和小王` 就这么进图了。剥前缀只在剥完仍是合格名字时才动手，
+#: 否则 `和平` 会被剥成 `平`。
+_LEADING_CONJ = ("和", "与", "跟", "及", "同")
+
 #: 别名声明模式：`A 就是 B` / `A 也叫 B` / `A 又称 B` / `A 也就是 B`
 #:
 #: 只认**显式的等价词**。`A 是 B` 不算 —— `张三是个好人` 不是别名声明。
@@ -321,6 +340,17 @@ def _jieba_ready() -> bool:
     global _JIEBA_OK
     if _JIEBA_OK is None:
         try:
+            import jieba
+
+            # jieba 加载词典时会往 **stderr** 打这几行：
+            #
+            #   Building prefix dict from the default dictionary ...
+            #   Loading model from cache /tmp/jieba.cache
+            #
+            # MCP 契约要求 stderr 为空（只允许 stdout 走协议消息）。
+            # 不压掉的话，预热词典就会让 stderr 冒字，端到端测试直接红。
+            jieba.setLogLevel(logging.ERROR)
+
             import jieba.posseg  # noqa: F401
 
             _JIEBA_OK = True
@@ -331,8 +361,141 @@ def _jieba_ready() -> bool:
 
 def reset_jieba_probe() -> None:
     """清掉 jieba 探测缓存（测试用，模拟「jieba 不可用」）。"""
-    global _JIEBA_OK
+    global _JIEBA_OK, _DICT_READY
     _JIEBA_OK = None
+    _DICT_READY = False
+
+
+#: 静态词典是否已灌进 jieba。
+_DICT_READY = False
+
+#: 已经灌进 jieba 的实体名（`load_entity_dictionary` 用，避免重复 add_word）。
+_DICT_LOADED: set[str] = set()
+
+
+def _rank_appellations() -> list[str]:
+    """`一哥` `二哥` … `九姨` —— 10 位数字 × 10 个称谓 = 100 个词。"""
+    return [d + s for d in _RANK_DIGITS for s in _RANK_SUFFIXES]
+
+
+def _ensure_dictionary() -> None:
+    """把静态排行称谓灌进 jieba，只做一次。"""
+    global _DICT_READY
+    if _DICT_READY or not _jieba_ready():
+        return
+    import jieba
+
+    for word in _rank_appellations():
+        jieba.add_word(word, freq=10_000, tag="nr")
+        _DICT_LOADED.add(word)
+    _DICT_READY = True
+
+
+def load_entity_dictionary(
+    names: Any = (), *, persons: Any = (), entities: Any = ()
+) -> int:
+    """把图上已有的实体名灌进 jieba 词典，返回这次新加了多少个。
+
+    ## 为什么需要「记反哺分词」
+
+    `豆包` `糖包` `三哥` 这类名字 jieba 词典里没有，会被切成单字或标成
+    普通名词，于是抽不出来。但它们**已经在图上了** —— 说明确实是名字。
+    用记忆本身反哺分词，比穷举词表靠谱。
+
+    ## 词性必须分开给
+
+    标成 `nr`（人名）的词会被后续抽取当成人。把「项目A」标成 `nr`
+    → 下次 `张三决定项目A延期` 会抽出「项目A」是个人。
+
+    所以：
+
+    - `persons` → `nr`（人名）
+    - `entities` → `nz`（其他专名，不当人）
+
+    `names` 是不知类别的兜底，按 `nz` 处理。
+
+    ## 过滤
+
+    **不做 `_has_stop_char` 全字检查**。那个函数是给「被截断的句子片段」
+    用的，而这里的名字**已经在图上**，是抽取过一轮的结果。拿它再筛会误伤：
+    「明」在 `_STOP_CHARS` 里（来自「证明」「说明」），于是「小明」被拒。
+
+    只剥开头的连词（`和小王` → `小王`），剥完还是不合格就跳过。
+    `_STOP_ENTITIES` 和 `_NOT_PERSON_WORDS` 仍然生效。
+
+    重复调用是安全的：`_DICT_LOADED` 记住灌过的名字。
+    """
+    if not _jieba_ready():
+        return 0
+    _ensure_dictionary()
+    import jieba
+
+    # (名字, 词性)；同一名字出现两次取先来的（persons 优先）
+    tagged: list[tuple[str, str]] = []
+    tagged.extend((n, "nr") for n in (persons or ()))
+    tagged.extend((n, "nz") for n in (entities or ()))
+    tagged.extend((n, "nz") for n in (names or ()))
+
+    added = 0
+    for raw, tag in tagged:
+        name = _strip_leading_conj((raw or "").strip())
+        if len(name) < MIN_PERSON_LEN or len(name) > 8:
+            continue
+        if name in _DICT_LOADED or name in _STOP_ENTITIES:
+            continue
+        if name in _NOT_PERSON_WORDS:
+            continue
+        _DICT_LOADED.add(name)
+        # freq 给高一点：太低的话 HMM 仍会把它切碎
+        jieba.add_word(name, freq=100_000, tag=tag)
+        added += 1
+    return added
+
+
+def reset_dictionary() -> None:
+    """把 `load_entity_dictionary` 灌进去的词全部撤掉（测试用）。
+
+    jieba 没有公开的删词 API：`del_word` 只是把频率压到 0，
+    HMM 仍可能重新发现它，切分结果不保证回到原样。
+    唯一干净的办法是直接从 `jieba.dt.FREQ` 里删。
+
+    **为什么必须能撤**：词典是进程级全局状态，`remember` 会往里灌词。
+    测试之间不清理的话，`test_dual_run` 灌的「项目A」会让
+    `test_labeler` 把「项目A」抽成人 —— 单跑通过、全量失败，
+    而且失败信息完全指不到真正的原因。
+    """
+    global _DICT_READY
+    if not _jieba_ready():
+        return
+    import jieba
+
+    for name in list(_DICT_LOADED):
+        jieba.dt.FREQ.pop(name, None)
+        tag_tab = getattr(jieba.dt, "user_word_tag_tab", None)
+        if tag_tab is not None:
+            tag_tab.pop(name, None)
+    _DICT_LOADED.clear()
+    _DICT_READY = False
+
+
+def _strip_leading_conj(name: str) -> str:
+    """剥掉粘连在名字前面的连词：`和小王` → `小王`。
+
+    只在**剥完仍是合格名字**时才动手 —— 否则 `和平` 会被剥成 `平`
+    （长度不足，会保留原样）。`同事` 也一样。
+    """
+    for conj in _LEADING_CONJ:
+        if not name.startswith(conj):
+            continue
+        rest = name[len(conj) :]
+        if len(rest) < MIN_PERSON_LEN:
+            return name
+        if rest in _NOT_PERSON_WORDS or rest in _STOP_ENTITIES:
+            return name
+        if _has_stop_char(rest):
+            return name
+        return rest
+    return name
 
 
 def _suffix_kind(suffix: str) -> str:
@@ -352,6 +515,8 @@ def _extract_with_jieba(text: str) -> list[Entity]:
     """
     import jieba.posseg as pseg
 
+    _ensure_dictionary()
+
     tokens = [(w.word, w.flag) for w in pseg.cut(text)]
     persons: list[str] = []
     entities: list[Entity] = []
@@ -368,11 +533,13 @@ def _extract_with_jieba(text: str) -> list[Entity]:
     while i < len(tokens):
         word, flag = tokens[i]
 
-        # 人名：裁掉尾部被误吞的函数词（`张三让` → `张三`）
+        # 人名：裁掉尾部被误吞的函数词（`张三让` → `张三`），
+        # 也剥掉粘连在前面的连词（`和小王` → `小王`）
         if flag == "nr":
-            name = word
+            name = _strip_leading_conj(word)
             while len(name) > MIN_PERSON_LEN and name[-1] in _PERSON_TAIL_CHARS:
                 name = name[:-1]
+            name = _strip_leading_conj(name)
             if len(name) >= MIN_PERSON_LEN and name not in persons:
                 persons.append(name)
             i += 1
@@ -400,6 +567,19 @@ def _extract_with_jieba(text: str) -> list[Entity]:
                 _add(word + nxt, _suffix_kind(nxt))
                 i += 2
                 continue
+
+        # 已确认过的专名单独出现也收。
+        #
+        # 这是唯一的例外。`nz`（其他专名）默认只在上面的合并规则里收，
+        # 因为「句子里随便一个名词」不可信 —— 那条规矩挡住过
+        # `助手`/`接口`/`响应速度` 这类噪声。
+        #
+        # 但 `_DICT_LOADED` 里的词不一样：它们**已经在图上**，
+        # 是之前抽取确认过的实体。`豆包` 就靠这一条，第二次起能单独收下。
+        if flag == "nz" and word in _DICT_LOADED:
+            _add(word, "topic")
+            i += 1
+            continue
 
         i += 1
 

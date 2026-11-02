@@ -264,6 +264,17 @@ def main() -> int:
         settings.LOG_FILE,
     )
 
+    # 用图上的已有名字预热 jieba 词典。
+    #
+    # **必须在这里做，不能每次写入后做**：反哺会改变下一次的分词结果，
+    # 而 `event_id` 的哈希里有 `entity_names` —— 同一句话写两次会得到
+    # 两个不同的 id，一条记忆裂成两条。启动时灌一次就没有这个问题：
+    # 同一个进程内词典固定，切分必然一致。
+    from memory.services.remember import warm_up_dictionary
+
+    warmed = warm_up_dictionary(settings.MEMORY_NAMESPACE, settings=settings)
+    log.info("分词词典预热完成，新增 %d 个词", warmed)
+
     for raw in sys.stdin:
         line = raw.strip()
         if not line:

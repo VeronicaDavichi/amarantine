@@ -443,6 +443,8 @@ def list_known_names(
     drv = driver
     try:
         if drv is None:
+            from neo4j import GraphDatabase
+
             drv = GraphDatabase.driver(
                 settings.NEO4J_URI,
                 auth=(settings.NEO4J_USER, settings.NEO4J_PASSWORD),
@@ -498,6 +500,8 @@ def append_alias_edges(
     drv = driver
     try:
         if drv is None:
+            from neo4j import GraphDatabase
+
             drv = GraphDatabase.driver(
                 settings.NEO4J_URI,
                 auth=(settings.NEO4J_USER, settings.NEO4J_PASSWORD),

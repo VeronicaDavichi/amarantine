@@ -291,6 +291,8 @@ def remember_event(
                 )
             # 图上的关系**无论如何都追加**：重新提起本身就是一次新提及，
             # 时间线要留下痕迹（关系只追加不覆盖）。
+            # 图上的关系**无论如何都追加**：重新提起本身就是一次新提及，
+            # 时间线要留下痕迹（关系只追加不覆盖）。
             writer = graph_writer or write_event_node
             outbox = writer(  # type: ignore[operator]
                 card,
@@ -344,3 +346,46 @@ def _db_path(settings: Settings):
     from memory.services.directive_counter import db_path_from_settings
 
     return db_path_from_settings(settings)
+
+
+def warm_up_dictionary(namespace: str, *, settings: Settings) -> int:
+    """从图上拉已有名字，灌进 jieba 词典。返回灌了多少个。
+
+    ## 为什么是「启动时」而不是「每次写入后」
+
+    自动反哺会破坏幂等性：
+
+        event_id = hash(namespace | 日期 | types | entity_names | summary)
+
+    每写一条就灌一次词，下一次同样的句子分词结果就变了 →
+    `entity_names` 变了 → `event_id` 变了 → **一条记忆裂成两条**。
+    实测同一句话写两次得到 `evt_aa1e78d3…` 和 `evt_520f8855…`。
+
+    N4 的幂等性是地基，不能为了分词让路。
+
+    启动时灌一次没有这个问题：**同一个进程内词典固定不变**，
+    同一句话写两次的切分必然一致。
+
+    ## 代价
+
+    新名字要等下次启动才能切对。可以接受 —— 首次出现本来就会切错，
+    第二次起也未必立刻需要，等到重启够了。
+
+    ## 失败不抛
+
+    图连不上就只灌静态词典，不影响服务启动。
+    """
+    try:
+        from memory.services.graph_outbox import list_known_names
+        from memory.services.labeler import load_entity_dictionary
+
+        names = list_known_names(namespace, settings=settings)
+    except Exception:  # noqa: BLE001 - 图不可用不该拦住启动
+        logger.warning("warm-up 拉名字失败，只用静态词典", exc_info=True)
+        return 0
+
+    try:
+        return load_entity_dictionary(names=names)
+    except Exception:  # noqa: BLE001
+        logger.warning("warm-up 灌词典失败（已忽略）", exc_info=True)
+        return 0

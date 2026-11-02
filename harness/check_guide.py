@@ -111,6 +111,8 @@ def main() -> int:
         "APPEND_ALIAS_CYPHER", "RESOLVE_ALIAS_CYPHER",
         "APPEND_PERSON_CYPHER", "APPEND_ENTITY_CYPHER",
         "LIST_KNOWN_NAMES_CYPHER",
+        # 非配置项：labeler 里的分词常量（文档里讲称谓词典时会提到）
+        "RANK_DIGITS", "RANK_SUFFIXES",
     }
     unknown = [v for v in unknown if v not in allowed_extra]
     for v in unknown:

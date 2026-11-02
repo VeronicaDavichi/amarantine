@@ -791,6 +791,16 @@ def main() -> int:
         return 1
 
     app = create_app(settings)
+
+    # 用图上的已有名字预热 jieba 词典（与 MCP 入口同一逻辑）。
+    # 不能每次写入后反哺 —— 那会改变 `entity_names`，进而改变 `event_id`，
+    # 同一句话写两次会变成两条记忆。
+    if settings.MEMORY_NAMESPACE:
+        from memory.services.remember import warm_up_dictionary
+
+        warmed = warm_up_dictionary(settings.MEMORY_NAMESPACE, settings=settings)
+        logger.info("分词词典预热完成，新增 %d 个词", warmed)
+
     logger.info("admin 启动 %s:%s", settings.ADMIN_HOST, settings.ADMIN_PORT)
     uvicorn.run(
         app,
