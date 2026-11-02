@@ -199,3 +199,93 @@ def test_alias_entities_do_not_duplicate() -> None:
 
     names = [e.name for e in extract_entities("小张也叫张三")]
     assert len(names) == len(set(names)), f"实体重复: {names}"
+
+
+# ================================================================
+# 左值校验
+#
+# 原来只校验右侧（canonical），左侧只要长度 2–12 就放行。
+# `三哥主打的就是有声有色有味` 于是匹配成
+# `三哥主打的 -> 有声有色有味`，右边过了判据，
+# `(:Alias {name:"三哥主打的"})` 就这样进了图。
+#
+# 左侧才是最容易脏的一侧：它紧挨等价词，正则 `{2,12}` 会一路吞到谓语。
+# ================================================================
+
+
+def test_verbose_left_side_rejected() -> None:
+    """`三哥主打的` 是句子片段，不是名字。"""
+    from memory.services.labeler import extract_alias_claims
+
+    claims = extract_alias_claims("三哥主打的就是有声有色有味")
+    assert claims == [], f"左值是句片短语，不该产出声明: {claims}"
+
+
+def test_verbose_left_side_does_not_pollute_entities() -> None:
+    """连右侧也不能因为这个假声明进图。"""
+    from memory.services.labeler import extract_entities
+
+    names = {e.name for e in extract_entities("三哥主打的就是有声有色有味")}
+    assert "有声有色有味" not in names, f"描述性右值被当成实体了: {names}"
+    assert "三哥主打的" not in names
+
+
+def test_left_side_ending_with_de_rejected() -> None:
+    """以「的」结尾的一律不是名字。"""
+    from memory.services.labeler import extract_alias_claims
+
+    for text in ("前面说的就是这个人", "刚才提到的就是那个", "张三说的就是李四"):
+        claims = extract_alias_claims(text)
+        assert not any(c.alias.endswith("的") for c in claims), (
+            f"{text} 抽出了以「的」结尾的别名: {claims}"
+        )
+
+
+def test_left_side_starting_with_pronoun_rejected() -> None:
+    """代词开头的是句子片段。"""
+    from memory.services.labeler import extract_alias_claims
+
+    claims = extract_alias_claims("我刚才说的那个东西就是我之前提的那个")
+    assert claims == [], f"代词开头的不是名字: {claims}"
+
+
+def test_long_left_side_rejected() -> None:
+    """超过 6 个字的一律不收（名字没那么长）。"""
+    from memory.services.labeler import _is_clean_name
+
+    assert not _is_clean_name("这个特别长的东西名称")
+    assert _is_clean_name("豆包")
+
+
+@pytest.mark.parametrize(
+    "text,alias,canonical",
+    [
+        ("糖包就是豆包", "糖包", "豆包"),
+        ("李四也叫作小李", "李四", "小李"),
+        ("张三又称老张", "张三", "老张"),
+        ("项目A就是项目B", "项目A", "项目B"),
+    ],
+)
+def test_clean_left_sides_still_accepted(
+    text: str, alias: str, canonical: str
+) -> None:
+    """收紧左值不能把正常声明也误杀。"""
+    from memory.services.labeler import extract_alias_claims
+
+    pairs = [(c.alias, c.canonical) for c in extract_alias_claims(text)]
+    assert (alias, canonical) in pairs, f"{text} 的正常声明被误杀了: {pairs}"
+
+
+def test_clean_name_rejects_descriptive_markers() -> None:
+    from memory.services.labeler import _is_clean_name
+
+    for bad in ("那个东西", "这种人", "最好之一", "他们家"):
+        assert not _is_clean_name(bad), f"{bad} 不该通过"
+
+
+def test_clean_name_accepts_short_products() -> None:
+    """`豆包` 这种产品名要能过 —— 别名声明就是为它开的。"""
+    from memory.services.labeler import _is_clean_name
+
+    assert _is_clean_name("豆包")
+    assert _is_clean_name("糖包")

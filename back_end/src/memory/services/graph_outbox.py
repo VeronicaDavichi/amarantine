@@ -61,7 +61,7 @@ from dataclasses import dataclass
 from memory.config import Settings
 from memory.core.entity_key import key_for
 from memory.models.event_card import ALIAS_CONFIDENCE, AliasClaim, EventCard
-from memory.services.labeler import _looks_like_name
+from memory.services.labeler import _is_clean_name
 
 logger = logging.getLogger("memory.graph")
 
@@ -391,7 +391,7 @@ def write_event_node(
                     "source": c.source,
                 }
                 for c in card.alias_claims
-                if _looks_like_name(c.canonical)
+                if _is_clean_name(c.canonical)
             ]
             if alias_items:
                 session.run(
@@ -486,12 +486,19 @@ def append_alias_edges(
         {
             "alias": c.alias,
             "canonical": c.canonical,
+            # **必须带 key**：`APPEND_ALIAS_CYPHER` 是
+            # `MERGE (p {namespace: $namespace, key: item.key})`，
+            # 少了这个字段就是 `{key: null}` —— Neo4j 会直接抛
+            # `Cannot merge the following node because of null property value`，
+            # 而异常见下面吞掉只留一行 warning。别名边会**一条都写不进去**
+            # 却看不出来，直到 `list_known_names` 少一半名字才发现。
+            "key": key_for(c.canonical),
             "confidence": ALIAS_CONFIDENCE.get(c.label, 0.4),
             "label": c.label,
             "source": c.source,
         }
         for c in claims
-        if _looks_like_name(c.canonical) and c.alias
+        if _is_clean_name(c.canonical) and c.alias
     ]
     if not items:
         return 0

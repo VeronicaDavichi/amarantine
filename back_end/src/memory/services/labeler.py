@@ -243,6 +243,9 @@ _DESCRIPTIVE_MARKERS = frozenset(
 #: 别名左侧常被误带进来的前缀（`我说的豆包` → `豆包`）
 _ALIAS_PREFIXES = ("我说的", "我说的是", "就是说", "那个", "这个", "叫做", "称为")
 
+#: 开头的代词 —— 出现就说明是句子片段，不是名字
+_PRONOUN_CHARS = frozenset("我你他她它您咱这那")
+
 
 def _strip_prefix(name: str) -> str:
     for prefix in _ALIAS_PREFIXES:
@@ -251,23 +254,46 @@ def _strip_prefix(name: str) -> str:
     return name
 
 
-def _looks_like_name(canonical: str) -> bool:
-    """右边是不是一个**能当名字用**的串。
+def _looks_like_name(candidate: str) -> bool:
+    """这个串能不能当名字用（左右两侧同一个判据）。
 
     `印度人` 像名字（虽然它是个类别，但至少是个名词短语），
     `那个ai中最弱智的` 不像 —— 它是描述，不是名字。
 
-    不像名字的声明**不建图上的别名边**：把描述塞进 `(:Alias)` 节点，
-    以后查「三哥」会拉出一个叫「那个ai中最弱智的」的人。
-    这条 claim 仍然留在事件卡上，供 LLM 层（P2）去解析。
+    ## 为什么要卡左侧
+
+    `三哥主打的就是有声有色有味` 会匹配成 `三哥主打的 -> 有声有色有味`。
+    右边过了判据（6 个字、没描述标记、不以「的」结尾），于是
+    建出 `(:Alias {name:"三哥主打的"})` —— **一个句片短语进了图**，
+    而且「有声有色有味」被当成实体。
+
+    左侧才是最容易脏的一侧：它紧挨着等价词，正则 `{2,12}` 会
+    一路吞到谓语为止。
     """
-    if not canonical:
+    if not candidate:
         return False
-    if len(canonical) > 6:
+    if len(candidate) > 6:
         return False
-    if any(marker in canonical for marker in _DESCRIPTIVE_MARKERS):
+    if any(marker in candidate for marker in _DESCRIPTIVE_MARKERS):
         return False
-    if canonical[-1:] in ("的", "者", "地"):
+    # 以助词/描述词结尾的不是名字（`三哥主打的` / `前面说的`）
+    if candidate[-1:] in ("的", "者", "地", "了", "呢", "吧", "啊"):
+        return False
+    return True
+
+
+def _is_clean_name(candidate: str) -> bool:
+    """能不能作为名字写入图。
+
+    `_looks_like_name` 之外再查**首尾**的停用字。
+
+    不能用 `_has_stop_char` 全程扫：那个函数会误伤名字内部的常用字
+    （「明」在 `_STOP_CHARS` 里，来自「证明」）。但首尾不一样 ——
+    `我`/`这`/`那` 开头、「的」结尾，基本就是句子片段。
+    """
+    if not _looks_like_name(candidate):
+        return False
+    if candidate[0] in _PRONOUN_CHARS:
         return False
     return True
 
@@ -311,7 +337,14 @@ def extract_alias_claims(text: str) -> list[AliasClaim]:
             continue
         if (alias, canonical) in seen:
             continue
-        # 两边都得像个名字，不能把整句话当名字
+        # 两边都得像个名字，不能把整句话当名字。
+        #
+        # **左侧也要查**，这是原来漏掉的一半：`三哥主打的就是有声有色有味`
+        # 会匹配成 `三哥主打的 -> 有声有色有味`，右边过了判据，于是
+        # `(:Alias {name:"三哥主打的"})` 进了图。
+        # 左侧紧挨等价词，正则 `{2,12}` 会一路吞到谓语为止，比右侧更容易脏。
+        if not _is_clean_name(alias):
+            continue
         if len(alias) < 2 or len(alias) > 12:
             continue
         seen.add((alias, canonical))
@@ -748,7 +781,7 @@ def _merge_alias_names(text: str, entities: list[Entity]) -> list[Entity]:
     等于亲口断言 A 和 B 都是名字。这个不需要猜。
 
     描述性的不收（`那个AI里最弱智的`）—— 那本来就不是名字，
-    走 `_looks_like_name` 同一个判据。
+    走 `_is_clean_name` 同一个判据。
     """
     claims = extract_alias_claims(text)
     if not claims:
@@ -760,7 +793,7 @@ def _merge_alias_names(text: str, entities: list[Entity]) -> list[Entity]:
         for name in (claim.alias, claim.canonical):
             if not name or name in seen:
                 continue
-            if not _looks_like_name(name):
+            if not _is_clean_name(name):
                 continue
             if _has_stop_char(name):
                 continue
