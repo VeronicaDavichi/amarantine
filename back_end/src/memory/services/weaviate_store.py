@@ -119,6 +119,42 @@ SCHEMA_PROPERTIES: list[dict[str, Any]] = [
 ]
 
 
+#: 重复上报时**允许回填**的属性：内容字段。
+#:
+#: 判据是「这个值是不是纯粹由输入决定的」。标注规则升级了（比如这次加了
+#: `alias_claims`），老对象该补上新字段；输入没变，补上不会改变事实。
+#:
+#: **运行时字段一个都不在里面**：
+#:
+#: - `recall_count` / `confirmed_by_use`：记忆被用过多少次，重放输入不能清零
+#: - `is_deleted`：删了的卡重报同一条内容**不能自己复活**（复活走 `revive()`）
+#: - `retention` / `pinned` / `review_verdict` / `reviewer`：
+#:   遗忘策略和人工裁决的当前状态，不是输入的一部分
+#: - `ingested_at`：首次入库时间，重写会抹掉真实时间
+#:
+#: 这条界线是 upsert 语义的核心：**重放输入可以修正事实，不能改写历史。**
+_BACKFILL_FIELDS = frozenset(
+    {
+        "summary",
+        "summary_tokens",
+        "types",
+        "entity_names",
+        "unresolved",
+        "resolves",
+        "alias_claims",
+        "date_start",
+        "date_end",
+        "conclusion",
+        "conclusion_tokens",
+        "emotion",
+        "emotion_intensity",
+        "importance",
+        "importance_reason",
+        "user_directive",
+    }
+)
+
+
 def to_properties(card: EventCard, *, anomaly: str | None = None) -> dict[str, Any]:
     """EventCard → Weaviate 属性字典。
 
@@ -286,6 +322,9 @@ class WeaviateStore:
     ) -> str:
         """upsert 一条事件卡，返回 Weaviate 对象 UUID。
 
+        已存在时**只回填内容字段**，绝不覆盖运行时状态 —— 详见
+        `_backfill_content_fields` 的说明。
+
         Raises:
             MixedModelError: 向量维度不符（A26）。
             WeaviateStoreError: 其他写入失败。
@@ -299,10 +338,11 @@ class WeaviateStore:
 
         self.ensure_collection()
         uid = deterministic_uuid(card.namespace, card.event_id)
+        props = to_properties(card, anomaly=anomaly)
         body = {
             "class": COLLECTION,
             "id": uid,
-            "properties": to_properties(card, anomaly=anomaly),
+            "properties": props,
             "vector": vector,
         }
         # POST /v1/objects 是「创建」；PUT /v1/objects/{class}/{id} 是「更新」，
@@ -314,14 +354,90 @@ class WeaviateStore:
 
         if resp.status_code in (200, 201):
             return uid
-        # 幂等兜底：并发写入时同 id 已存在，视为成功
+        # 已存在：幂等成功，但要把**新增的内容字段**回填回去。
+        #
+        # 早先这里的注释是「并发写入时同 id 已存在，视为成功」就完事了，
+        # 那是个真 bug：`event_id` 是内容哈希，同一条事件重写永远拿同一个 id，
+        # 于是这条分支成了常态。给 schema 加新字段（alias_claims 等）之后，
+        # 老对象永远补不上 —— 实测重跑验证脚本，新字段读出来是空的。
         if resp.status_code == 422 and "already exists" in resp.text:
+            self._backfill_content_fields(uid, props)
             return uid
         raise WeaviateStoreError(
             f"写入事件卡失败: HTTP {resp.status_code} {resp.text[:300]}"
         )
 
     # ---------- 读回 ----------
+
+    def backfill_event(self, card: EventCard, *, anomaly: str | None = None) -> int:
+        """把**缺失的内容字段**补到已存在的对象上，返回补了几个。
+
+        为什么需要这个公开入口：`remember` 的幂等检查在 `insert_event`
+        **之前**就短路了（同 event_id 直接返回），所以 `insert_event` 里的
+        422 分支在正常流程中根本走不到。schema 升级后要给老对象补字段，
+        只能由调用方在短路处显式调一次。
+
+        只补内容字段，运行时状态（`recall_count` / `is_deleted` …）不碰 ——
+        详见 `_BACKFILL_FIELDS` 的说明。
+        """
+        self.ensure_collection()
+        uid = deterministic_uuid(card.namespace, card.event_id)
+        return self._backfill_content_fields(
+            uid, to_properties(card, anomaly=anomaly)
+        )
+
+    def _backfill_content_fields(self, uid: str, props: dict[str, Any]) -> int:
+        """把已有对象**缺失的**内容字段补上，返回补了几个。
+
+        只补两类：
+        1. 老对象根本没有这个属性（schema 后来才加的字段）
+        2. 老对象的值是 `None`（旧版本写的时候还是空）
+
+        **已有值不覆盖**：同一条事件的 `summary` 理论上不会变，
+        但万一变了，覆盖会让「用户说过的原话」被悄悄改写 —— 那是事实层，
+        不能由一次重复上报推翻。
+
+        失败只告警不抛：回填是增强，主流程（幂等成功）已经达成了。
+        """
+        try:
+            resp = self._http.get(f"{self._base}/v1/objects/{COLLECTION}/{uid}")
+        except httpx.HTTPError:
+            logger.warning("回填前读取对象失败，跳过 uid=%s", uid, exc_info=True)
+            return 0
+        if resp.status_code != 200:
+            return 0
+
+        existing = resp.json().get("properties") or {}
+        patch = {
+            name: value
+            for name, value in props.items()
+            if name in _BACKFILL_FIELDS
+            and value is not None
+            and existing.get(name) is None
+        }
+        if not patch:
+            return 0
+
+        try:
+            patched = self._http.patch(
+                f"{self._base}/v1/objects/{COLLECTION}/{uid}",
+                json={"properties": patch},
+            )
+        except httpx.HTTPError:
+            logger.warning("回填属性失败 uid=%s", uid, exc_info=True)
+            return 0
+
+        if patched.status_code not in (200, 204):
+            logger.warning(
+                "回填属性失败 uid=%s HTTP %s %s",
+                uid,
+                patched.status_code,
+                patched.text[:200],
+            )
+            return 0
+
+        logger.info("回填属性 uid=%s 字段=%s", uid, sorted(patch))
+        return len(patch)
 
     def get_by_event_id(self, namespace: str, event_id: str) -> dict[str, Any] | None:
         """按 event_id 取回属性（幂等断言与图对账用）。"""

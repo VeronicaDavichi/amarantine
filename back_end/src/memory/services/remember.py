@@ -272,6 +272,23 @@ def remember_event(
                     event_id,
                     summary[:24],
                 )
+            # 回填内容字段。
+            #
+            # 幂等短路在 `insert_event` **之前**，所以 store 层那个 422 分支
+            # 在正常流程里走不到。schema 升级（比如给事件卡加 `alias_claims`）
+            # 之后，老对象不会自己长出新字段 —— 必须在这里显式补一次，
+            # 否则「同一条事件重报」永远拿不到新标注。
+            #
+            # 只补缺失的内容字段，`recall_count` / `is_deleted` 这些运行时状态
+            # 由 store 层的白名单挡着，不会被这次写入改写。
+            backfilled = 0
+            backfill = getattr(active_store, "backfill_event", None)
+            if callable(backfill):
+                backfilled = backfill(card) or 0
+            if backfilled:
+                logger.info(
+                    "回填老对象缺失字段 %d 个 | event_id=%s", backfilled, event_id
+                )
             # 图上的关系**无论如何都追加**：重新提起本身就是一次新提及，
             # 时间线要留下痕迹（关系只追加不覆盖）。
             writer = graph_writer or write_event_node
