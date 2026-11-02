@@ -30,6 +30,31 @@ class Entity(BaseModel):
     kind: Literal["person", "topic", "place", "org", "event"]
 
 
+class Action(BaseModel):
+    """事件里的一个动作：谁对谁做了什么。
+
+    `types` 是粗分类（decision / work），表达不了「张三对项目A做了延期」。
+    动作拆出来才能在图上聚合「哪些事被延过」「谁总在决定」。
+
+    **`primary` 的意义**：一句话常有多个动词
+    （`张三决定项目A延期到六月` 有「决定」和「延期」），
+    最外层那个才是事件的主干，其余是嵌套内容。全部保留，用 `primary` 标注主次。
+
+    **不参与 `event_id` 哈希**：`event_id` 的 canonical 串只含
+    `types` / `entity_names` / `summary`。动作是派生标注，让它参与哈希
+    会导致打标一抖动就换 id —— 同一件事写成两张卡。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    #: 归一化后的动词（同义词已归并，如 推迟/延后 → 延期）
+    verb: str = Field(min_length=1)
+    #: 宾语名（可以是 Person 或 Entity 的名字），可空
+    patient: str | None = None
+    #: 是否为事件的主干动作
+    primary: bool = True
+
+
 class EventCard(BaseModel):
     """事件卡：记忆的最小语义单元。"""
 
@@ -71,6 +96,11 @@ class EventCard(BaseModel):
     #: 谁裁的，审计用。与 `pinned_source` 分开：那个是「为什么被钉」，
     #: 这个是「谁做的决定」。
     reviewer: str | None = None
+
+    # ---------- 动作（细粒度语义） ----------
+    #: 事件里的动作列表。`types` 是粗分类，这个才是「谁对谁做了什么」。
+    #: **不参与 `event_id` 哈希** —— 详见 `Action` 的文档。
+    actions: list[Action] = Field(default_factory=list)
 
     # ---------- 业务不变量（schema 表达不了的） ----------
 

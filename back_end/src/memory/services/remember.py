@@ -239,6 +239,7 @@ def remember_event(
         date_end=date_range.end,
         types=labels.types,
         entities=labels.entities,
+        actions=list(getattr(labels, "actions", []) or []),
         summary=summary,
         retention="normal",
         ingested_at=moment,

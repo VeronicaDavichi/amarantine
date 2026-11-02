@@ -136,6 +136,52 @@ _CODED_PATTERN = re.compile(
 #: 人名允许出现的位置：句首，或紧跟这些字之后
 _PERSON_BOUNDARY = "和与跟被让问找见是对向给及同、，,。；; ：:"
 
+#: 动词表：同义词归并到同一个归一化动词。
+#:
+#: **必须归并** —— `延期`/`推迟`/`延后` 都建成节点的话，图上就是三个孤立节点，
+#: 「哪些事被延过」这种聚合查询直接废掉。归并后一个 `:Action {verb:"延期"}`
+#: 就能把三种说法都收进来。
+_VERB_SYNONYMS: dict[str, str] = {
+    # 延期类
+    "延期": "延期", "推迟": "延期", "延后": "延期", "顺延": "延期",
+    # 决定类
+    "决定": "决定", "定了": "决定", "拍板": "决定", "敲定": "决定",
+    "确定": "确定", "确认": "确认",
+    # 推进类
+    "开始": "开始", "启动": "开始", "开工": "开始",
+    "完成": "完成", "搞定": "完成", "交付": "完成",
+    "取消": "取消", "终止": "取消", "砍掉": "取消",
+    # 沟通类
+    "讨论": "讨论", "商量": "讨论", "沟通": "讨论", "聊": "讨论",
+    "汇报": "汇报", "反馈": "汇报",
+    "批评": "批评", "指责": "批评", "批评了": "批评",
+    "同意": "同意", "批准": "同意", "通过": "同意",
+    "拒绝": "拒绝", "否决": "拒绝",
+    # 变更类
+    "新增": "新增", "添加": "新增", "增加": "新增",
+    "删除": "删除", "删掉": "删除", "移除": "删除",
+    "修改": "修改", "调整": "修改", "改动": "修改",
+    # 学习类
+    "学习": "学习", "复习": "学习", "背": "学习",
+    "考试": "考试", "考": "考试",
+    # 财务类
+    "投资": "投资", "融资": "融资", "报销": "报销", "借款": "借款",
+    # 移动类
+    "出差": "出差", "去了": "去", "去": "去", "来到": "去",
+}
+
+#: 一个事件最多保留几个动作（防长文本抽出一串动词把图打散）
+MAX_ACTIONS = 5
+
+
+@dataclass(frozen=True)
+class ActionMatch:
+    """规则层抽到的一个动作 + 它在原文里的位置（用来绑宾语）。"""
+
+    verb: str
+    start: int
+    end: int
+
 
 def _has_stop_char(text: str) -> bool:
     """候选里出现谓语/助词，说明它是被截断的句子片段，不是实体名。"""
@@ -267,12 +313,108 @@ def extract_entities(text: str) -> list[Entity]:
     return [Entity(name=n, kind="person") for n in persons] + entities
 
 
+def _match_verbs(summary: str) -> list[ActionMatch]:
+    """按动词表扫描，长的优先（`延期` 要先于 `延`）。
+
+    同义词归并到 `_VERB_SYNONYMS` 的归一化动词，这样 `推迟`/`延后`/`延期`
+    在图上都是同一个 Action 节点。
+
+    **跨度重叠要去掉**：`李四确定了…` 里 `确定`(2,4) 和 `定了`(3,5) 都命中，
+    不去重会同时抽出「确定」和「决定」两个动作 —— 同一句话说了两遍。
+    """
+    candidates: list[tuple[int, int, str]] = []
+
+    for surface, verb in sorted(_VERB_SYNONYMS.items(), key=lambda kv: -len(kv[0])):
+        for match in re.finditer(re.escape(surface), summary):
+            candidates.append((match.start(), match.end(), verb))
+
+    # 长的优先；等长时靠前的优先。已被占用区间覆盖的直接丢。
+    candidates.sort(key=lambda c: (-(c[1] - c[0]), c[0]))
+    taken: list[tuple[int, int]] = []
+    kept: list[ActionMatch] = []
+    for start, end, verb in candidates:
+        if any(s < end and start < e for s, e in taken):  # 有交集就算覆盖
+            continue
+        taken.append((start, end))
+        kept.append(ActionMatch(verb=verb, start=start, end=end))
+
+    kept.sort(key=lambda a: a.start)
+    return kept
+
+
+def _bind_patient(
+    action: ActionMatch, *, summary: str, entities: list[Entity]
+) -> str | None:
+    """给动作绑宾语：优先取动词**之后**最近的实体，没有就往前找。
+
+    为什么两个方向都要看：中文口语里宾语常被话题化到动词前面。
+    `项目A延期了` 和 `延期项目A` 是同一个意思，但宾语位置相反。
+    """
+    after: Entity | None = None
+    after_dist = len(summary) + 1
+    before: Entity | None = None
+    before_dist = len(summary) + 1
+
+    for ent in entities:
+        pos = summary.find(ent.name)
+        if pos < 0:
+            continue
+        if pos >= action.end:
+            dist = pos - action.end
+            if dist < after_dist:
+                after_dist = dist
+                after = ent
+        elif pos + len(ent.name) <= action.start:
+            dist = action.start - (pos + len(ent.name))
+            if dist < before_dist:
+                before_dist = dist
+                before = ent
+
+    pick = after or before
+    return pick.name if pick else None
+
+
+def extract_actions(summary: str, *, entities: list[Entity] | None = None) -> list[Action]:
+    """从文本抽动作。
+
+    Args:
+        summary: 事件摘要。
+        entities: 已抽出的实体（用于绑宾语）。不传就现抽一遍。
+
+    Returns:
+        按出现顺序排列的 Action；第一个是 `primary=True`。
+    """
+    from memory.models.event_card import Action
+
+    matches = _match_verbs(summary)
+    if not matches:
+        return []
+
+    pool = entities if entities is not None else extract_entities(summary)
+    actions: list[Action] = []
+    seen: set[str] = set()
+    for idx, m in enumerate(matches[:MAX_ACTIONS]):
+        if m.verb in seen:
+            continue
+        seen.add(m.verb)
+        actions.append(
+            Action(
+                verb=m.verb,
+                patient=_bind_patient(m, summary=summary, entities=pool),
+                primary=idx == 0,
+            )
+        )
+    return actions
+
+
 @dataclass(frozen=True)
 class LabelResult:
     """打标产物。`source` 便于统计规则命中率，也便于 A22 的双跑对比。"""
 
     types: list[str] = field(default_factory=list)
     entities: list[Entity] = field(default_factory=list)
+    #: 动作（谁对谁做了什么）。**不参与 event_id 哈希**。
+    actions: list[object] = field(default_factory=list)
     source: str = "rules"
 
 
@@ -293,7 +435,10 @@ def label_by_rules(summary: str, *, vocab: list[str] | None = None) -> LabelResu
     """规则层打标：永远给出非空 types（否则事件卡无法落库）。"""
     types = _match_types(summary, vocab or [])
     entities = extract_entities(summary)
-    return LabelResult(types=types, entities=entities, source="rules")
+    actions = extract_actions(summary, entities=entities)
+    return LabelResult(
+        types=types, entities=entities, actions=list(actions), source="rules"
+    )
 
 
 def label_event(

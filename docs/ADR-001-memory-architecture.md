@@ -925,7 +925,20 @@ MCP 的 `initialize` 响应可带 `instructions` 字段，运行时直接投给 
     "confirmed_by_use": { "type": "integer", "minimum": 0 },
     "review_verdict":   { "type": ["string", "null"],
                           "enum": ["keep", "delete", null] },
-    "reviewer":         { "type": ["string", "null"] }
+    "reviewer":         { "type": ["string", "null"] },
+    "actions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["verb", "primary"],
+        "properties": {
+          "verb":    { "type": "string", "minLength": 1 },
+          "patient": { "type": ["string", "null"] },
+          "primary": { "type": "boolean" }
+        }
+      }
+    }
   }
 }
 ```
@@ -935,6 +948,15 @@ MCP 的 `initialize` 响应可带 `instructions` 字段，运行时直接投给 
 `review_verdict` / `reviewer` 是 4.6 人工裁决的留痕。`null` 表示这张卡还没被裁决过
 （含所有加字段之前的旧卡）。`keep` → `PROTECTED`；`delete` → `SAFE_TO_DELETE`
 但**不立即删除**，且**不推翻** `pinned` / `unresolved` / 永久保留这三类硬信号。
+
+`actions` 是事件的细粒度动作（谁对谁做了什么）。`types` 只表达粗分类
+（`decision` / `work`），回答不了「张三对项目A做了什么」。一句话可有多个动作
+（`张三决定项目A延期到六月` 有「决定」和「延期」），全部保留，
+最外层那个 `primary=true`。
+
+**`actions` 不参与 `event_id` 哈希**：canonical 串只含
+`namespace` / 日期 / `types` / `entity_names` / `summary`。动作是派生标注，
+若参与哈希，打标规则一抖动就会换 `event_id`，同一件事写成两张卡。
 
 ---
 

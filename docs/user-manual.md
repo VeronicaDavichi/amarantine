@@ -294,15 +294,14 @@ curl -s -X POST -H "Authorization: Bearer $TOKEN" \
 
 `deleted_at` 保留不删，作为「曾被忘过」的审计痕迹。
 
-### 图上的三类核心节点
-
-图里有三类一等公民，不是「一个 Event 加一堆属性」：
+### 图上的四类节点
 
 | 节点 | 键 | 为什么单独建 |
 |---|---|---|
 | `(:Event)` | `event_id` | 事件本体 |
 | `(:Person)` | `name` | **人是记忆的主语**，最常用的检索入口 |
 | `(:Time)` | `YYYY-MM-DD` | **时间是共享维度**，属性没法被多张卡共用 |
+| `(:Action)` | `verb` | **动作是共享谓词**，「哪些事被延过」需要跨事件聚合 |
 
 剩下两类是辅助：`(:Entity)` 装 topic/place/org 这类宾语，
 `(:Context)` 装当前话题。
@@ -320,16 +319,58 @@ MATCH (e:Event)-[:AT]->(t:Time {month: "2026-06"}) RETURN e
 
 实测：两条事件分别落在 2026-06 和 2026-07，按月聚合直接分组出来。
 
+### 动作节点：谁对谁做了什么
+
+`types` 只表达粗分类（`decision` / `work`），回答不了
+「张三对项目A做了什么」。动作单独建成节点：
+
+```
+(Event)-[:ACTION {created_at, primary, patient}]->(:Action {verb})
+```
+
+**按 verb 唯一，不按 (verb, patient) 配对**。`(:Action {verb:"延期"})`
+全库只有一个节点，这样「哪些事被延期过」是一次走边就能答的聚合：
+
+```cypher
+MATCH (e:Event)-[r:ACTION]->(a:Action {verb:"延期"})
+WHERE r.patient = "项目A"
+RETURN e
+```
+
+如果按配对建节点，`延期+项目A` 和 `延期+项目B` 就是两个孤立节点，
+永远聚合不起来。
+
+**同义词必须归并**：`推迟` / `延后` / `顺延` 都归一化成 `延期`。
+不归并的话图上就是几个isolated 节点，聚合查询直接废掉。
+
+**一句话可有多个动作**：`张三决定项目A延期到六月` 有「决定」和「延期」，
+全部保留，最外层那个 `primary=true`。图上表现为：
+
+```
+evt_xxx ─ACTION(primary=true,  patient=项目A)─→ (决定)
+        └ACTION(primary=false, patient=项目A)─→ (延期)
+```
+
+**宾语放在边上，不能放在节点上**。这是踩过的坑：Action 节点是全库共享的，
+如果把宾语建成 `(Action)-[:PATIENT]->(Entity)`，所有事件的宾语会挤进同一个
+集合 —— `李四推迟了项目B` 和 `张三延期项目A` 会互相污染，
+查「项目A 被延期过吗」会答出项目B 那条事件。`ACTION` 边带事件上下文，
+`patient` 放这里才不会串。
+
+实测：三条事件写入后 `Action` 节点只有 `决定` / `取消` / `延期` 三个，
+`决定` 被两条事件共享仍是 1 个节点，查 `项目A 被延期` 只命中正确的那一条。
+
 ### 图上的关系只追加，不覆盖
 
 五类边，**全部用 `CREATE` 而不是 `MERGE`**：
 
 ```
-(Event)-[:INVOLVES {created_at}]->(Person)          事件涉及哪些人
-(Event)-[:AT       {created_at}]->(Time)            事件发生在哪天
-(Event)-[:MENTIONS {created_at}]->(Entity)          事件提到什么项目/地点
-(Event)-[:RELATED  {kind, created_at}]->(Event)     两个事件共享人或实体
-(Context)-[:RELATES_TO {created_at}]->(Event)       当前话题挂到事件上
+(Event)-[:INVOLVES {created_at}]->(Person)                    事件涉及哪些人
+(Event)-[:AT       {created_at}]->(Time)                      事件发生在哪天
+(Event)-[:MENTIONS {created_at}]->(Entity)                    事件提到什么项目/地点
+(Event)-[:ACTION   {created_at, primary, patient}]->(Action)  事件做了什么
+(Event)-[:RELATED  {kind, created_at}]->(Event)               两个事件共享人或实体
+(Context)-[:RELATES_TO {created_at}]->(Event)                 当前话题挂到事件上
 ```
 
 为什么关系不能 `MERGE`：`MERGE ... SET r.at = $now` 会抹掉上一次的时间。

@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import pytest
 
-from memory.services.labeler import extract_entities, label_by_rules
+from memory.services.labeler import extract_actions, extract_entities, label_by_rules
 
 
 def _names(text: str) -> list[tuple[str, str]]:
@@ -156,3 +156,70 @@ def test_long_text_does_not_hang() -> None:
     text = "张三决定项目A延期到六月" * 200
     result = extract_entities(text)
     assert isinstance(result, list)
+
+
+# ---------------- 动作抽取 ----------------
+
+
+def _acts(text: str) -> list[tuple[str, str | None, bool]]:
+    return [(a.verb, a.patient, a.primary) for a in extract_actions(text)]
+
+
+def test_two_actions_with_primary() -> None:
+    """`张三决定项目A延期到六月` 有两个动作：决定（主）+ 延期（嵌套）。"""
+    assert _acts("张三决定项目A延期到六月") == [
+        ("决定", "项目A", True),
+        ("延期", "项目A", False),
+    ]
+
+
+def test_exactly_one_primary() -> None:
+    acts = extract_actions("张三决定项目A延期到六月")
+    assert sum(1 for a in acts if a.primary) == 1
+    assert acts[0].primary is True
+
+
+def test_verb_synonyms_are_merged() -> None:
+    """`推迟` / `延后` / `延期` 必须归并成同一个 verb。
+
+    不归并的话图上就是三个孤立节点，「哪些事被延过」这种聚合查询直接废掉。
+    """
+    for surface in ("推迟", "延后", "延期", "顺延"):
+        verbs = [a.verb for a in extract_actions(f"项目A{surface}到下个月")]
+        assert verbs == ["延期"], f"{surface} 应归一化成「延期」，实际 {verbs}"
+
+
+def test_patient_from_before_verb() -> None:
+    """中文常把宾语话题化到动词前面：`项目A延期了` 和 `延期项目A` 同义。"""
+    acts = _acts("项目A推迟到下个月")
+    assert acts == [("延期", "项目A", True)]
+
+
+def test_no_duplicate_when_spans_overlap() -> None:
+    """`确定了` 里 `确定` 和 `定了` 都命中，不能同时抽出两个动作。"""
+    verbs = [a.verb for a in extract_actions("李四确定了新项目B的启动时间")]
+    assert verbs.count("确定") == 1
+    assert "决定" not in verbs, f"`定了` 是 `确定` 的一部分，不该单独算：{verbs}"
+
+
+def test_action_without_patient() -> None:
+    acts = _acts("老板批评进度太慢")
+    assert acts == [("批评", None, True)]
+
+
+def test_no_actions_returns_empty() -> None:
+    assert extract_actions("今天天气不错") == []
+
+
+def test_actions_capped() -> None:
+    from memory.services.labeler import MAX_ACTIONS
+
+    text = "决定确定讨论开始完成取消同意拒绝修改新增删除汇报"
+    assert len(extract_actions(text)) <= MAX_ACTIONS
+
+
+def test_label_by_rules_includes_actions() -> None:
+    result = label_by_rules("张三决定项目A延期到六月")
+    verbs = [a.verb for a in result.actions]
+    assert "决定" in verbs
+    assert "延期" in verbs

@@ -32,7 +32,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 
 from memory.config import Settings
-from memory.models.event_card import Entity
+from memory.models.event_card import Action, Entity
 from memory.services.labeler import DEFAULT_TYPE_RULES, FALLBACK_TYPE, LabelResult
 from memory.services.llm import LLMError, chat
 
@@ -53,10 +53,20 @@ _SYSTEM = """你是事件打标器。给定一句话，选出它属于哪些类�
 - 只能从给定词表里选，不许自创
 - 选 1–3 个最贴切的；实在不贴切就返回 ["general"]
 - 同时抽取文中出现的具体实体（项目名、公司、人名、地点等）
+- 同时抽取句中的**动作**：谁对谁做了什么
+  - verb 用动词原形，不要带时态助词（`确定了` → `确定`）
+  - patient 是这个动作的对象，可以是人或物，没有就填 null
+  - 一句话有多个动作时全部列出，最外层那个 primary=true，其余 false
 - 只输出 JSON，不要解释
 
 输出格式：
-{"types": ["decision", "work"], "entities": [{"name": "项目A", "kind": "topic"}]}"""
+{"types": ["decision", "work"],
+ "entities": [{"name": "项目A", "kind": "topic"}],
+ "actions": [{"verb": "决定", "patient": "项目A", "primary": true},
+             {"verb": "延期", "patient": "项目A", "primary": false}]}"""
+
+#: 一个事件最多保留几个动作（与规则层一致，防止长文本把图打散）
+MAX_LLM_ACTIONS = 5
 
 
 @dataclass
@@ -218,6 +228,44 @@ def make_llm_labeler(
                 except Exception:  # noqa: BLE001 - 单个实体不合法就跳过
                     continue
 
-        return LabelResult(types=types, entities=entities, source="llm")
+        # 动作：LLM 补规则层漏掉的动词（规则层只有一张有限的动词表）
+        actions: list[Action] = []
+        raw_acts = data.get("actions")
+        if isinstance(raw_acts, list):
+            seen_verbs: set[str] = set()
+            for item in raw_acts:
+                if not isinstance(item, dict):
+                    continue
+                verb = str(item.get("verb") or "").strip()
+                if not verb or verb in seen_verbs:
+                    continue
+                patient = item.get("patient")
+                patient_str = str(patient).strip() if patient else None
+                if patient_str in ("null", "None", ""):
+                    patient_str = None
+                seen_verbs.add(verb)
+                try:
+                    actions.append(
+                        Action(
+                            verb=verb,
+                            patient=patient_str,
+                            primary=bool(item.get("primary", not actions)),
+                        )
+                    )
+                except Exception:  # noqa: BLE001 - 单个动作不合法就跳过
+                    continue
+                if len(actions) >= MAX_LLM_ACTIONS:
+                    break
+            # 保证有且只有一个 primary
+            if actions and not any(a.primary for a in actions):
+                actions[0] = Action(
+                    verb=actions[0].verb,
+                    patient=actions[0].patient,
+                    primary=True,
+                )
+
+        return LabelResult(
+            types=types, entities=entities, actions=list(actions), source="llm"
+        )
 
     return labeler

@@ -11,6 +11,7 @@ import pytest
 
 from memory.models.event_card import Entity, EventCard
 from memory.services.graph_outbox import (
+    APPEND_ACTION_CYPHER,
     APPEND_ENTITY_CYPHER,
     APPEND_PERSON_CYPHER,
     APPEND_TIME_CYPHER,
@@ -305,6 +306,87 @@ def test_context_edge_created_when_given(driver: FakeDriver) -> None:
 
 def test_related_link_count_returned(driver: FakeDriver) -> None:
     assert _run(driver).related_links == 3
+
+
+# ---------------- 动作节点 ----------------
+
+
+def _card_with_actions(actions) -> EventCard:
+    from memory.models.event_card import Action
+
+    card = _card()
+    return card.model_copy(update={"actions": actions})
+
+
+def test_action_node_per_verb(driver: FakeDriver) -> None:
+    """Action 节点**按 verb 唯一**：两个动作就是两个节点。"""
+    from memory.models.event_card import Action
+
+    card = _card_with_actions(
+        [
+            Action(verb="决定", patient="项目A", primary=True),
+            Action(verb="延期", patient="项目A", primary=False),
+        ]
+    )
+    result = _run(driver, card)
+    assert result.actions == 2
+
+    runs = [p for c, p in driver.session_obj.runs if c == APPEND_ACTION_CYPHER]
+    assert len(runs) == 1
+    items = runs[0]["actions"]
+    assert [i["verb"] for i in items] == ["决定", "延期"]
+    assert [i["primary"] for i in items] == [True, False]
+
+
+def test_action_edge_carries_primary(driver: FakeDriver) -> None:
+    """主次标注必须在边上，不能只在节点上 —— 节点是全库共享的。"""
+    assert "primary: item.primary" in APPEND_ACTION_CYPHER
+
+
+def test_action_edge_is_created_not_merged(driver: FakeDriver) -> None:
+    """动作边只追加：同一件事被提两次，应该留下两条 ACTION 边。"""
+    assert "CREATE (e)-[:ACTION" in APPEND_ACTION_CYPHER
+    assert "MERGE (e)-[:ACTION" not in APPEND_ACTION_CYPHER
+
+
+def test_action_node_keyed_by_verb_only(driver: FakeDriver) -> None:
+    """节点键只有 namespace + verb。
+
+    如果键里带上 patient，`延期+项目A` 和 `延期+项目B` 就是两个节点，
+    「哪些事被延过」这种聚合查询永远做不了。
+    """
+    assert "MERGE (a:Action {namespace: $namespace, verb: item.verb})" in APPEND_ACTION_CYPHER
+    assert "patient" not in APPEND_ACTION_CYPHER.split("MERGE")[1].split("\n")[0]
+
+
+def test_patient_on_edge_not_on_shared_node(driver: FakeDriver) -> None:
+    """**宾语必须挂在边上，不能挂在共享的 Action 节点上。**
+
+    Action 节点按 verb 全库唯一。若把宾语建成
+    `(Action)-[:PATIENT]->(Entity)`，所有事件的宾语会挤进同一个集合：
+    `李四推迟项目B` 和 `张三延期项目A` 互相污染，
+    「项目A 被延期过吗」会答出项目B 那条事件。
+    边 `(Event)-[r:ACTION]->(Action)` 带事件上下文，放这里才不会串。
+    """
+    assert "patient: item.patient" in APPEND_ACTION_CYPHER
+    merge_line = [line for line in APPEND_ACTION_CYPHER.splitlines() if "MERGE" in line][0]
+    assert "patient" not in merge_line, "patient 不能进 MERGE 键"
+
+
+def test_patient_none_is_fine(driver: FakeDriver) -> None:
+    """没有宾语的动作用于写 null，不该报错。"""
+    from memory.models.event_card import Action
+
+    card = _card_with_actions([Action(verb="讨论", patient=None, primary=True)])
+    result = _run(driver, card)
+    assert result.ok is True
+    assert result.actions == 1
+
+
+def test_no_actions_skips_action_step(driver: FakeDriver) -> None:
+    _run(driver)
+    cyphers = [c for c, _ in driver.session_obj.runs]
+    assert APPEND_ACTION_CYPHER not in cyphers
 
 
 # ---------------- 失败绝不阻断 ----------------

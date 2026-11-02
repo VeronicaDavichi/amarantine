@@ -91,6 +91,29 @@ CREATE (e)-[:INVOLVES {created_at: $created_at}]->(p)
 RETURN count(*)
 """
 
+#: 动作：**按 verb 建唯一节点**，同义词已归并
+#:
+#: `(:Action {verb:"延期"})` 全库只有一个 —— 这样「哪些事被延过」是一次
+#: 走边就能答的聚合查询。如果按 (verb, patient) 配对建节点，
+#: 每条事件都会长出新节点，永远聚合不起来。
+#:
+#: **patient 必须放在边上，不能放到节点上**：
+#: Action 节点是全库共享的，在它上面挂 `PATIENT` 边会让所有事件的宾语
+#: 挤成一个集合 —— `李四推迟了项目B` 和 `张三延期项目A` 会互相污染，
+#: 聚合查询直接答错。`ACTION` 边带事件上下文，放这里才不串。
+APPEND_ACTION_CYPHER = """
+MATCH (e:Event {namespace: $namespace, event_id: $event_id})
+UNWIND $actions AS item
+MERGE (a:Action {namespace: $namespace, verb: item.verb})
+ON CREATE SET a.first_seen = $created_at
+CREATE (e)-[:ACTION {
+    created_at: $created_at,
+    primary: item.primary,
+    patient: item.patient
+}]->(a)
+RETURN count(*)
+"""
+
 #: 非人实体：topic / place / org / event
 APPEND_ENTITY_CYPHER = """
 MATCH (e:Event {namespace: $namespace, event_id: $event_id})
@@ -142,6 +165,8 @@ class OutboxResult:
     persons: int = 0
     entities: int = 0
     time_key: str | None = None
+    #: 本次涉及的动作数（诊断用）
+    actions: int = 0
 
 
 def _split_entities(card: EventCard) -> tuple[list[str], list[dict[str, str]]]:
@@ -221,6 +246,10 @@ def write_event_node(
             "time_month": f"{day.year:04d}-{day.month:02d}",
         }
         persons, entities = _split_entities(card)
+        action_items = [
+            {"verb": a.verb, "primary": a.primary, "patient": a.patient}
+            for a in card.actions
+        ]
 
         related = 0
         with drv.session() as session:
@@ -232,6 +261,11 @@ def write_event_node(
             if entities:
                 session.run(
                     APPEND_ENTITY_CYPHER, **params, entities=entities
+                ).consume()
+
+            if action_items:
+                session.run(
+                    APPEND_ACTION_CYPHER, **params, actions=action_items
                 ).consume()
 
             session.run(APPEND_TIME_CYPHER, **params).consume()
@@ -253,6 +287,7 @@ def write_event_node(
             persons=len(persons),
             entities=len(entities),
             time_key=params["time_key"],
+            actions=len(action_items),
         )
     except Exception as exc:  # noqa: BLE001 - 图失败绝不阻断主链路
         message = f"图写入失败（已忽略，等待重建对账）: {exc}"
