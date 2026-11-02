@@ -386,6 +386,77 @@ class WeaviateStore:
             uid, to_properties(card, anomaly=anomaly)
         )
 
+    def append_alias_claims(
+        self,
+        namespace: str,
+        event_id: str,
+        new_claims: list[dict[str, Any]],
+    ) -> int:
+        """把新推断出的别名 claim **追加**到已有卡的 `alias_claims` 上。
+
+        和 `backfill_event` 的区别：那个只补「空字段」，这个是往已有数组里
+        追加元素 —— LLM 推断出第二条别名时，不能把第一条顶掉。
+
+        去重键是 `(alias, canonical, label)`：同一条推断重复跑不会写两遍。
+
+        返回实际**新增**了几条（已存在的不算）。
+        """
+        uid = deterministic_uuid(namespace, event_id)
+        try:
+            resp = self._http.get(f"{self._base}/v1/objects/{COLLECTION}/{uid}")
+        except httpx.HTTPError as exc:
+            raise WeaviateStoreError(f"读取事件卡失败: {exc}") from exc
+        if resp.status_code == 404:
+            raise WeaviateStoreError(f"事件卡不存在: {event_id}")
+        if resp.status_code != 200:
+            raise WeaviateStoreError(
+                f"读取事件卡失败: HTTP {resp.status_code} {resp.text[:200]}"
+            )
+
+        props = resp.json().get("properties") or {}
+        raw = props.get("alias_claims")
+        existing: list[dict[str, Any]] = []
+        if raw:
+            try:
+                parsed = json.loads(raw)
+                if isinstance(parsed, list):
+                    existing = [c for c in parsed if isinstance(c, dict)]
+            except ValueError:
+                logger.warning("旧 alias_claims 不是合法 JSON，将覆盖 | %s", event_id)
+
+        seen = {
+            (c.get("alias"), c.get("canonical"), c.get("label")) for c in existing
+        }
+        added: list[dict[str, Any]] = []
+        for claim in new_claims:
+            key = (claim.get("alias"), claim.get("canonical"), claim.get("label"))
+            if key in seen:
+                continue
+            seen.add(key)
+            added.append(claim)
+
+        if not added:
+            return 0
+
+        merged = existing + added
+        try:
+            patched = self._http.patch(
+                f"{self._base}/v1/objects/{COLLECTION}/{uid}",
+                json={
+                    "properties": {
+                        "alias_claims": json.dumps(merged, ensure_ascii=False)
+                    }
+                },
+            )
+        except httpx.HTTPError as exc:
+            raise WeaviateStoreError(f"追加别名 claim 失败: {exc}") from exc
+        if patched.status_code not in (200, 204):
+            raise WeaviateStoreError(
+                f"追加别名 claim 失败: HTTP {patched.status_code} {patched.text[:200]}"
+            )
+        logger.info("追加别名 claim %d 条 | event_id=%s", len(added), event_id)
+        return len(added)
+
     def _backfill_content_fields(self, uid: str, props: dict[str, Any]) -> int:
         """把已有对象**缺失的**内容字段补上，返回补了几个。
 

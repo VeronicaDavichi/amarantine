@@ -35,6 +35,10 @@ from memory.core.forget_policy import (
     classify,
     sweep,
 )
+from memory.services.alias_apply import (
+    resolve_event_aliases,
+    resolve_namespace_aliases,
+)
 from memory.services.forget import ALLOWED_REASONS, ForgetError, forget_event
 from memory.services.label_review import LabelReviewQueue, queue_from_settings
 from memory.services.recall_count import RecallCounter, db_path_from_settings
@@ -90,6 +94,24 @@ class SweepResponse(BaseModel):
     buckets: dict[str, int]
     dry_run: bool
     sample: list[ReviewItem]
+
+
+# ---- 别名推断（P2：把描述性声明解析成具体名字）----
+
+
+class AliasResolveRequest(BaseModel):
+    #: 不填则扫整个命名空间
+    event_id: str | None = None
+    namespace: str | None = None
+    #: 命名空间模式下最多扫多少张卡（LLM 慢，不能无限等）
+    limit: int = Field(default=20, ge=1, le=200)
+    timeout_s: float | None = Field(default=30.0, gt=0, le=300)
+
+
+class AliasResolveResponse(BaseModel):
+    mode: Literal["event", "namespace"]
+    items: list[dict[str, Any]]
+    total: int
 
 
 # ---- 打标复核（A24：与上面的 NEED_REVIEW 是**两条独立队列**，字段刻意不同）----
@@ -441,6 +463,45 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             event_id=result.event_id,
             forgotten=result.forgotten,
             reason=result.reason,
+        )
+
+    # ------------------------------------------------------- aliases
+
+    @app.post(
+        "/admin/aliases/resolve",
+        response_model=AliasResolveResponse,
+        dependencies=[Depends(require_token)],
+    )
+    def admin_resolve_aliases(body: AliasResolveRequest) -> AliasResolveResponse:
+        """对存疑的别名声明跑 LLM 推断。
+
+        `糖包就是那个AI里最弱智的` 这类右边是描述的，规则层标 `uncertain`
+        且不建边。这里让 LLM 从**图上已有的对象**里找「最弱智的AI」是谁。
+
+        单卡模式（给了 `event_id`）返单条报告；否则扫命名空间。
+        """
+        ns = _namespace(body.namespace)
+        if body.event_id:
+            report = resolve_event_aliases(
+                ns,
+                body.event_id,
+                settings=cfg,
+                timeout_s=body.timeout_s,
+            )
+            return AliasResolveResponse(
+                mode="event", items=[report.to_dict()], total=1
+            )
+
+        reports = resolve_namespace_aliases(
+            ns,
+            settings=cfg,
+            timeout_s=body.timeout_s,
+            limit=body.limit,
+        )
+        return AliasResolveResponse(
+            mode="namespace",
+            items=[r.to_dict() for r in reports],
+            total=len(reports),
         )
 
     # ------------------------------------------------------------ sweep

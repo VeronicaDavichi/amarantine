@@ -76,6 +76,12 @@ ALIAS_CONFIDENCE: dict[str, float] = {
     ALIAS_UNCERTAIN: 0.4,
 }
 
+#: LLM 推断到什么把握才敢升到 `probable`。
+#:
+#: 低于这个值但 >= 0.5 的，仍然建边但标 `uncertain` —— 用户说得对：
+#: 「低置信度返回的时候应当有标记」，不是不许召回，是不许伪装成事实。
+ALIAS_PROBABLE_MIN = 0.8
+
 
 class AliasClaim(BaseModel):
     """一条「A 也叫 B」的声明。

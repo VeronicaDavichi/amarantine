@@ -59,7 +59,7 @@ import logging
 from dataclasses import dataclass
 
 from memory.config import Settings
-from memory.models.event_card import ALIAS_CONFIDENCE, EventCard
+from memory.models.event_card import ALIAS_CONFIDENCE, AliasClaim, EventCard
 from memory.services.labeler import _looks_like_name
 
 logger = logging.getLogger("memory.graph")
@@ -129,6 +129,20 @@ RETURN a.name AS alias, p.name AS canonical,
        r.label AS label, r.confidence AS confidence,
        r.source_event_id AS source_event_id
 """
+
+#: 给 LLM 别名推断用的候选名单。
+#:
+#: **只取 Person 和 Entity**：`(:Alias)` 不能当候选 —— 让 LLM 在别名里选，
+#: 会把「糖包 -> 豆包」推成「糖包 -> 小豆包」，链路越绕越偏。
+#: `(:Time)` 更不行，日期不可能是谁的别名。
+LIST_KNOWN_NAMES_CYPHER = """
+MATCH (n {namespace: $namespace})
+WHERE n:Person OR n:Entity
+RETURN n.name AS name
+ORDER BY name
+LIMIT $limit
+"""
+
 #: 动作：**按 verb 建唯一节点**，同义词已归并
 #:
 #: `(:Action {verb:"延期"})` 全库只有一个 —— 这样「哪些事被延过」是一次
@@ -360,3 +374,103 @@ def write_event_node(
                 drv.close()
             except Exception:  # noqa: BLE001 - 关闭失败也不该影响主流程
                 logger.warning("关闭 Neo4j driver 失败", exc_info=True)
+
+
+# ---------------------------------------------------------------- 别名推断
+
+def list_known_names(
+    namespace: str,
+    *,
+    settings: Settings,
+    limit: int = 200,
+    driver: object | None = None,
+) -> list[str]:
+    """取图上已有的 Person / Entity 名字，供 LLM 做别名消歧。
+
+    **只给名字，不给整张卡**：让 LLM 在几十个名字里做选择题，
+    比喂它一堆句子更准，也省上下文。
+
+    查不到就返回空列表，**不抛异常** —— 推断是增强功能，
+    图挂了不该让调用方跟着挂。
+    """
+    owns_driver = driver is None
+    drv = driver
+    try:
+        if drv is None:
+            drv = GraphDatabase.driver(
+                settings.NEO4J_URI,
+                auth=(settings.NEO4J_USER, settings.NEO4J_PASSWORD),
+            )
+        with drv.session() as session:  # type: ignore[union-attr]
+            rows = list(
+                session.run(
+                    LIST_KNOWN_NAMES_CYPHER, namespace=namespace, limit=int(limit)
+                )
+            )
+        return [r["name"] for r in rows if r.get("name")]
+    except Exception as exc:  # noqa: BLE001 - 推断失败只告警
+        logger.warning("读取已知名字失败（别名推断将跳过）: %s", exc)
+        return []
+    finally:
+        if owns_driver and drv is not None:
+            try:
+                drv.close()  # type: ignore[union-attr]
+            except Exception:  # noqa: BLE001
+                pass
+
+
+def append_alias_edges(
+    event_id: str,
+    namespace: str,
+    claims: list[AliasClaim],
+    *,
+    settings: Settings,
+    created_at: str,
+    driver: object | None = None,
+) -> int:
+    """把别名边追加到图上，返回建了几条。
+
+    走的是同一个 `APPEND_ALIAS_CYPHER` —— 推断出来的边和用户声明的边
+    在图上结构完全一致，区别只在 `source` / `label` 两个属性。
+    这样召回侧不需要区分「这条边谁建的」，标记由属性自己带出。
+    """
+    items = [
+        {
+            "alias": c.alias,
+            "canonical": c.canonical,
+            "confidence": ALIAS_CONFIDENCE.get(c.label, 0.4),
+            "label": c.label,
+            "source": c.source,
+        }
+        for c in claims
+        if _looks_like_name(c.canonical) and c.alias
+    ]
+    if not items:
+        return 0
+
+    owns_driver = driver is None
+    drv = driver
+    try:
+        if drv is None:
+            drv = GraphDatabase.driver(
+                settings.NEO4J_URI,
+                auth=(settings.NEO4J_USER, settings.NEO4J_PASSWORD),
+            )
+        with drv.session() as session:  # type: ignore[union-attr]
+            session.run(
+                APPEND_ALIAS_CYPHER,
+                namespace=namespace,
+                event_id=event_id,
+                created_at=created_at,
+                aliases=items,
+            )
+        return len(items)
+    except Exception as exc:  # noqa: BLE001 - 图失败只告警
+        logger.warning("追加别名边失败（已忽略）: %s", exc)
+        return 0
+    finally:
+        if owns_driver and drv is not None:
+            try:
+                drv.close()  # type: ignore[union-attr]
+            except Exception:  # noqa: BLE001
+                pass
