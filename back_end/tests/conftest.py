@@ -10,6 +10,17 @@
 
 表现是**单跑通过、全量失败**，而且失败信息完全指不到真正的原因。
 踩过一次，所以这里 autouse 清掉。
+
+## 为什么意图日志要钉到 tmp 库
+
+`remember_event` 每次写都会往 `pending_task` 记一笔（写前记账）。
+不隔离的话它按 `DATABASE_URL` 落到**开发库** `data/memory.db`：
+
+- 测试在真数据里留下任务行
+- 而**启动补跑会去重放它们** —— 测试数据被当成真事件写进图
+
+所以这里把意图日志钉到 `tmp_path`，而不是改各个测试的调用点
+（`remember_event` 在三个文件里被调用，钉在夹具里只改一处）。
 """
 
 from __future__ import annotations
@@ -27,3 +38,18 @@ def _clean_jieba_dictionary():
         reset_dictionary()
     except Exception:  # noqa: BLE001 - 清理失败不能影响测试结论
         pass
+
+
+@pytest.fixture(autouse=True)
+def _isolate_intent_log(tmp_path, monkeypatch):
+    """把意图日志钉到临时库，别写进开发库。"""
+    from memory.services import remember as rmod
+    from memory.services.pending_task import PendingTaskStore
+
+    store = PendingTaskStore(tmp_path / "intent.sqlite3")
+
+    def _fake(settings, injected):
+        return injected if injected is not None else store
+
+    monkeypatch.setattr(rmod, "_intent_store", _fake)
+    yield store

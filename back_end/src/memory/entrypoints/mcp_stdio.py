@@ -275,6 +275,17 @@ def main() -> int:
     warmed = warm_up_dictionary(settings.MEMORY_NAMESPACE, settings=settings)
     log.info("分词词典预热完成，新增 %d 个词", warmed)
 
+    # 补上上次进程被杀时欠下的图写入。
+    #
+    # **这是 SIGKILL 之后唯一的补课机会**：关闭时的钩子（atexit / SIGTERM）
+    # 在 kill -9、WSL 重启、taskkill /F、OOM 面前一次都不会执行。
+    # 所以账要记在动手之前，补课要放在启动之时。
+    #
+    # 结果由 `startup_recover` 自己记日志，这里不重复打。
+    from memory.services.maintenance import startup_recover
+
+    startup_recover(settings.MEMORY_NAMESPACE, settings=settings)
+
     for raw in sys.stdin:
         line = raw.strip()
         if not line:

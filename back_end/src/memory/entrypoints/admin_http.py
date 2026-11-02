@@ -17,6 +17,7 @@ from __future__ import annotations
 import logging
 import os
 import time
+from contextlib import asynccontextmanager, suppress
 from datetime import date, datetime, timezone
 from dataclasses import replace
 from typing import Any, Literal
@@ -229,9 +230,38 @@ class ReviewVerdictResponse(BaseModel):
 # ---------------------------------------------------------------- 应用工厂
 
 
-def create_app(settings: Settings | None = None) -> FastAPI:
-    """构造 FastAPI 应用。settings 可注入（测试用）。"""
+def create_app(
+    settings: Settings | None = None, *, maintenance: bool = False
+) -> FastAPI:
+    """构造 FastAPI 应用。settings 可注入（测试用）。
+
+    `maintenance=True` 才会起定期补跑循环 —— **测试默认关掉**，
+    否则每次 TestClient 都会去连 Weaviate/Neo4j 对账，慢且无意义。
+    """
     cfg = settings or load_settings()
+
+    lifespan = None
+    if maintenance and cfg.MEMORY_NAMESPACE:
+
+        @asynccontextmanager
+        async def lifespan(_app: FastAPI):  # type: ignore[misc]
+            """常驻补跑循环：30s 一次补欠账，每天一次对账。
+
+            这里是安全的：状态全在 `pending_task` 表里，
+            进程被杀只是少跑一个 tick，下次启动接着做。
+            """
+            import asyncio
+
+            from memory.services.maintenance import MaintenanceWorker
+
+            worker = MaintenanceWorker(cfg.MEMORY_NAMESPACE, cfg)
+            task = asyncio.create_task(worker.run_forever())
+            try:
+                yield
+            finally:
+                task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await task
 
     app = FastAPI(
         title="amarantine memory admin",
@@ -239,6 +269,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         docs_url=None,      # 不给未认证的 Swagger
         redoc_url=None,
         openapi_url=None,
+        lifespan=lifespan,
     )
 
     def _namespace(requested: str | None = None) -> str:
@@ -790,7 +821,7 @@ def main() -> int:
         print("FATAL: ADMIN_TOKEN 未配置，拒绝启动管理接口")
         return 1
 
-    app = create_app(settings)
+    app = create_app(settings, maintenance=True)
 
     # 用图上的已有名字预热 jieba 词典（与 MCP 入口同一逻辑）。
     # 不能每次写入后反哺 —— 那会改变 `entity_names`，进而改变 `event_id`，
@@ -800,6 +831,12 @@ def main() -> int:
 
         warmed = warm_up_dictionary(settings.MEMORY_NAMESPACE, settings=settings)
         logger.info("分词词典预热完成，新增 %d 个词", warmed)
+
+        # 启动补跑：谁先起来谁补课（MCP 和 admin 各做一次，重复补是幂等的）
+        # 结果由 `startup_recover` 自己记日志，这里不重复打。
+        from memory.services.maintenance import startup_recover
+
+        startup_recover(settings.MEMORY_NAMESPACE, settings=settings)
 
     logger.info("admin 启动 %s:%s", settings.ADMIN_HOST, settings.ADMIN_PORT)
     uvicorn.run(

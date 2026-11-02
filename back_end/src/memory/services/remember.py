@@ -114,6 +114,8 @@ class RememberResult:
     anomaly: str | None = None
     weaviate_id: str | None = None
     graph_ok: bool = True
+    #: 图没写成时，是否已经记进意图日志（攒着等补跑）
+    graph_pending: bool = False
     #: 这条内容曾被告知「忘掉」，这次因为重新提起而被恢复
     revived: bool = False
 
@@ -126,6 +128,13 @@ class RememberResult:
             payload["anomaly"] = self.anomaly
         if self.revived:
             payload["revived"] = True
+        # **图没写成必须让调用方看见。**
+        # 记忆进了 Weaviate（向量通道还能召回），但图关系缺失
+        # （图通道永远找不到）—— 这是「只进了一半」。
+        # 原来 `graph_ok` 这个字段全代码库没人读，等于静默降级。
+        if not self.graph_ok:
+            payload["graph_pending"] = self.graph_pending
+            payload["degraded"] = "graph_write_failed"
         return payload
 
 
@@ -144,6 +153,7 @@ def remember_event(
     embedder: object | None = None,
     graph_writer: object | None = None,
     llm_labeler: object | None = None,
+    intent_store: object | None = None,
     now: datetime | None = None,
     today: date | None = None,
 ) -> RememberResult:
@@ -163,6 +173,7 @@ def remember_event(
         embedder: 可替换的编码函数，签名 ``(text, settings) -> list[float]``。
         graph_writer: 可替换的图写入函数，签名同 `write_event_node`。
         llm_labeler: 可选的 LLM 打标器。
+        intent_store: 可注入的意图日志（测试用）。缺省按 DATABASE_URL 建。
         now: 当前时刻（UTC），缺省取系统时间。
         today: 「今天」的基准日，缺省取 `now` 的日期。
 
@@ -291,21 +302,27 @@ def remember_event(
                 )
             # 图上的关系**无论如何都追加**：重新提起本身就是一次新提及，
             # 时间线要留下痕迹（关系只追加不覆盖）。
-            # 图上的关系**无论如何都追加**：重新提起本身就是一次新提及，
-            # 时间线要留下痕迹（关系只追加不覆盖）。
-            writer = graph_writer or write_event_node
-            outbox = writer(  # type: ignore[operator]
+            #
+            # **幂等分支也要记账**：重报同一条时图写失败，照样要能补。
+            # 漏了这一段的话，「第一次图挂了，再提一次」永远修不好 ——
+            # 只会一遍遍返回 created=False 而图始终是空的。
+            graph_ok, graph_pending = _write_graph_with_intent(
+                namespace,
                 card,
-                settings=settings,
                 weaviate_id=existing.get("id"),  # type: ignore[arg-type]
                 context=context,
+                settings=settings,
+                intent_store=intent_store,
+                graph_writer=graph_writer,
+                now=moment,
             )
             return RememberResult(
                 event_id=event_id,
                 created=False,
                 revived=was_deleted,
                 weaviate_id=existing.get("id"),  # type: ignore[arg-type]
-                graph_ok=bool(getattr(outbox, "ok", False)),
+                graph_ok=graph_ok,
+                graph_pending=graph_pending,
             )
 
         # 8) embed（只对确实要写的内容付费）
@@ -321,13 +338,22 @@ def remember_event(
         if decision.pinned:
             counter.record_pinned(namespace, now=moment)
 
-        # 11) 派生图（失败只告警）
-        writer = graph_writer or write_event_node
-        outbox = writer(  # type: ignore[operator]
+        # 11) 派生图：先记账，再动手，成功销账
+        #
+        # **顺序不能反。**「动手之后、记账之前」崩溃 = 什么都没留下。
+        # 先写意图日志，「记账之后、销账之前」崩溃 = 重启时补跑。
+        #
+        # happy path 一秒没变慢：图写入仍然同步、仍然在返回前完成，
+        # 只是前后各多一条 SQLite 写入（INSERT + DELETE）。
+        graph_ok, graph_pending = _write_graph_with_intent(
+            namespace,
             card,
-            settings=settings,
             weaviate_id=weaviate_id,
             context=context,
+            settings=settings,
+            intent_store=intent_store,
+            graph_writer=graph_writer,
+            now=moment,
         )
 
         return RememberResult(
@@ -335,7 +361,8 @@ def remember_event(
             created=True,
             anomaly=decision.anomaly,
             weaviate_id=weaviate_id,
-            graph_ok=bool(getattr(outbox, "ok", False)),
+            graph_ok=graph_ok,
+            graph_pending=graph_pending,
         )
     finally:
         if owns_store:
@@ -346,6 +373,172 @@ def _db_path(settings: Settings):
     from memory.services.directive_counter import db_path_from_settings
 
     return db_path_from_settings(settings)
+
+
+#: 意图日志按 db 路径缓存（`__init__` 会跑一次建表脚本，不必每次都跑）
+_INTENT_STORES: dict[str, object] = {}
+
+
+def _intent_store(settings: Settings, injected: object | None):
+    """拿到意图日志。注入优先，否则按 DATABASE_URL 建（并缓存）。"""
+    if injected is not None:
+        return injected
+    from memory.services.pending_task import (
+        PendingTaskStore,
+        db_path_from_settings,
+    )
+
+    path = str(db_path_from_settings(settings))
+    cached = _INTENT_STORES.get(path)
+    if cached is None:
+        cached = PendingTaskStore(db_path_from_settings(settings))
+        _INTENT_STORES[path] = cached
+    return cached
+
+
+def _enqueue_intent(
+    namespace: str,
+    card: EventCard,
+    *,
+    weaviate_id: str | None,
+    context: str | None,
+    settings: Settings,
+    intent_store: object | None,
+    now: datetime | None = None,
+) -> int | None:
+    """记一笔「这张卡要写图」。失败返回 None（并打 ERROR）。
+
+    **意图日志挂了不该拦住写入**：事实层（Weaviate）已经落盘，
+    这时候抛异常等于把已经成功的写入变成失败，调用方会以为没记住。
+    但也不能装作没事 —— 所以是 ERROR 级日志 + `graph_pending=False`。
+
+    `now` 要透传：入队时刻就是 `next_retry_at` 的起点。不传的话
+    补跑的时间轴会跟写入用两套时钟（测试里尤其明显：入队按真实时间，
+    查询按注入时间，永远差一截）。
+    """
+    try:
+        store = _intent_store(settings, intent_store)
+        return store.enqueue(  # type: ignore[union-attr]
+            namespace,
+            "graph_write",
+            card.event_id,
+            {
+                "card": card.model_dump(mode="json"),
+                "weaviate_id": weaviate_id,
+                "context": context,
+            },
+            now=now,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.error(
+            "意图日志写入失败，这条事件没有补跑兜底 event=%s: %s",
+            card.event_id,
+            exc,
+        )
+        return None
+
+
+def _complete_intent(
+    intent_id: int | None, *, settings: Settings, intent_store: object | None
+) -> None:
+    """图写成功后销账。"""
+    if intent_id is None or intent_id < 0:
+        return
+    try:
+        store = _intent_store(settings, intent_store)
+        store.complete(intent_id)  # type: ignore[union-attr]
+    except Exception as exc:  # noqa: BLE001
+        # 销账失败只会导致一次多余的重放，而重放是幂等的 —— 不致命
+        logger.warning("意图日志销账失败 task=%s: %s", intent_id, exc)
+
+
+def _fail_intent(
+    intent_id: int | None,
+    *,
+    error: str,
+    settings: Settings,
+    intent_store: object | None,
+    now: datetime | None = None,
+) -> None:
+    """图写失败后记一次失败，等补跑。"""
+    if intent_id is None or intent_id < 0:
+        logger.error("图写入失败且没有意图日志兜底: %s", error)
+        return
+    try:
+        store = _intent_store(settings, intent_store)
+        status = store.fail(intent_id, error, now=now)  # type: ignore[union-attr]
+        logger.warning(
+            "图写入失败 task=%s status=%s: %s", intent_id, status, error
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.error("意图日志记账失败 task=%s: %s", intent_id, exc)
+
+
+def _write_graph_with_intent(
+    namespace: str,
+    card: EventCard,
+    *,
+    weaviate_id: str | None,
+    context: str | None,
+    settings: Settings,
+    intent_store: object | None,
+    graph_writer: object | None,
+    now: datetime | None = None,
+) -> tuple[bool, bool]:
+    """写图并记账。返回 `(graph_ok, graph_pending)`。
+
+    两条写入路径（新建 / 幂等重报）都走这里 —— 记账逻辑只有一份，
+    不会出现「主路径有兜底、幂等路径没有」这种不对称。
+
+    `graph_pending` 的含义是**有欠账、且已经记在盘上等人补**
+    （`graph_ok=False` 且入队成功），不是「这次入过队」。
+    写成功时它是 False —— 成功的写入没有欠账。
+
+    写图抛异常时**先把账记成失败再往上抛**：行为跟以前一致
+    （D2：图挂了不该影响主链路，异常由 `write_event_node` 内部消化成
+    `ok=False`），但账不会漏。
+    """
+    intent_id = _enqueue_intent(
+        namespace,
+        card,
+        weaviate_id=weaviate_id,
+        context=context,
+        settings=settings,
+        intent_store=intent_store,
+        now=now,
+    )
+    pending = intent_id is not None and intent_id >= 0
+
+    writer = graph_writer or write_event_node
+    try:
+        outbox = writer(  # type: ignore[operator]
+            card,
+            settings=settings,
+            weaviate_id=weaviate_id,
+            context=context,
+        )
+    except Exception as exc:
+        _fail_intent(
+            intent_id,
+            error=f"{type(exc).__name__}: {exc}",
+            settings=settings,
+            intent_store=intent_store,
+            now=now,
+        )
+        raise
+
+    graph_ok = bool(getattr(outbox, "ok", False))
+    if graph_ok:
+        _complete_intent(intent_id, settings=settings, intent_store=intent_store)
+    else:
+        _fail_intent(
+            intent_id,
+            error=getattr(outbox, "error", None) or "graph write returned ok=False",
+            settings=settings,
+            intent_store=intent_store,
+            now=now,
+        )
+    return graph_ok, (pending and not graph_ok)
 
 
 def warm_up_dictionary(namespace: str, *, settings: Settings) -> int:

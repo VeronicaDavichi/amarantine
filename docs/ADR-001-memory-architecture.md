@@ -119,6 +119,46 @@ normalize  = 去首尾空白、全角转半角、转小写、去标点
 
 **写入顺序**：先写 Weaviate 成功 → 再发图更新（outbox + 幂等 `event_id`）。图写失败只告警，不回滚、不阻断。
 
+#### D2 补记：图失败怎么做到「丢不了」（v0.12 已实现）
+
+「只告警」在实现时曾经是**字面意思**：`RememberResult.graph_ok` 这个字段
+**全代码库没有任何读者**。图写失败 → 记忆进了 Weaviate、图关系缺失、
+调用方看到"成功"。这是静默降级，不是容错。
+
+现在改成三层，且正确性**不押在任何退出钩子上**：
+
+| 层 | 机制 | 保障 |
+|---|---|---|
+| L1 事实层 | Weaviate 同步写 | 返回成功 ⇒ 向量通道一定召回得到 |
+| L2 意图日志 | 写图**前** INSERT `pending_task`，成功 DELETE | 返回成功 ⇒ 图关系缺失必有欠账记录 |
+| L3 补课 | 两个入口启动时补跑 + `admin_http` 30s tick + 每日对账 | 欠账一定能被补上（或降级记录在案） |
+
+**为什么不是「关闭时 flush」**：MCP 进程的死法大多抓不到 ——
+`kill -9`、`taskkill /F`、WSL VM 重启、OOM、断电，在那些情况下
+`atexit` 和 SIGTERM 处理器**一次都不会执行**。能抓的只有 stdin 关闭 /
+SIGTERM / SIGINT / 正常退出，而它们本来也没什么要冲的。
+所以正确性只能靠 **recover-on-boot**，不能靠 cleanup-on-exit。
+**不引入 SIGTERM 处理器**是刻意的：加了会让人以为「关闭时会保存」。
+
+**诚实边界（写进验收口径）**：
+
+- Weaviate 与 Neo4j **没有跨库事务**。「Weaviate 写成功、意图日志还没落」
+  之间有个毫秒级窗口，漏了就是漏了 —— 只能靠对账兜。
+- 对账**保真度低于意图日志**：`SCHEMA_PROPERTIES` 里没有 persons /
+  actions / alias_claims，所以只能补出 `Event` + `Time` + `MENTIONS`，
+  `INVOLVES` / `ACTION` / `ALIAS_OF` 补不回来。这类补图用
+  `kind='graph_rebuild'` 标记，可查。
+- 放弃重试的任务标 `status='dead'`，**永不自动删除** ——
+  删了就真没痕迹了。留一行才知道「有过这件事、没办成」。
+
+**契约**（比"图可丢弃重建"更精确）：
+
+> 返回成功 ⇒ 事实层一定在；
+> 返回成功 ⇒ 图关系可能缺，但一定可修；
+> 返回成功 ⇒ 永不出现「静默丢且无法修复」。
+
+见 `docs/user-manual.md` 的「图写失败不会静默」一节。
+
 **图 schema**：
 
 - 节点：`Person` / `Event` / `Topic` / `Place` / `Org`；`Event` 节点携带 `weaviate_id` 回指。
