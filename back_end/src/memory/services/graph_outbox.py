@@ -86,14 +86,23 @@ RETURN e
 #: 人：`kind == "person"` 的实体升级成独立的 Person 节点
 #:
 #: **按 `key` 建身份，不按 `name`**：名字是可改的显示名，代号才是身份。
-#: 详见 `core/entity_key.py`。`ON CREATE SET name` 意味着重放不会把用户
-#: 改过的名字顶回去 —— 跟 upsert 的「重放可以修正事实，不能改写历史」
-#: 是同一条规矩。
+#: 详见 `core/entity_key.py`。
+#:
+#: **MERGE 不带 label** —— 这是这一版最要紧的改动。原来写的是
+#: `MERGE (p:Person {key})`，如果同一个 key 已经以 `:Entity` 存在
+#: （别名声明建过、或抽取时被判成物），MERGE 不会匹配，直接新建一个
+#: `:Person` —— 同一个实体在图上裂成两个，查询时各返回一半的边。
+#: 去掉 label 后，任何标签的同 key 节点都能合并；`ON CREATE SET p:Person`
+#: 只在**真的新建**时打标签，已存在的不动它的标签。
+#:
+#: `ON CREATE SET name` 而不是 `SET name`：重放不会把用户改过的名字顶回去，
+#: 跟 upsert 的「重放可以修正事实，不能改写历史」是同一条规矩。
 APPEND_PERSON_CYPHER = """
 MATCH (e:Event {namespace: $namespace, event_id: $event_id})
 UNWIND $persons AS item
-MERGE (p:Person {namespace: $namespace, key: item.key})
+MERGE (p {namespace: $namespace, key: item.key})
 ON CREATE SET p.name = item.name, p.first_seen = $created_at
+SET p:Person
 CREATE (e)-[:INVOLVES {created_at: $created_at}]->(p)
 RETURN count(*)
 """
@@ -110,13 +119,23 @@ RETURN count(*)
 #: 而且 CREATE 才能带 `source_event_id` 追溯「哪句话说的」。
 #: 撤销走 `DELETE`（按 `source_event_id` 或 `label` 精确删），
 #: 原始事件卡不动 —— 别名是派生关系，删了不丢事实。
+#: 别名：`(:Alias)` 记名字，宿主节点连 `ALIAS_OF` 过来。
+#:
+#: **宿主不再硬绑 `:Person`。** 原来写 `MERGE (p:Person {key})`，
+#: 于是「豆包」（一个产品）被建成 Person，而实体抽取又把同名建成 Entity，
+#: 同一个东西在图上裂成两份 —— `list_known_names` 里出现两次就是这么来的。
+#:
+#: 现在的规矩：别名只能说明「这两个名字指同一个东西」，**不说明那个东西
+#: 是什么**。所以宿主按 label-free 合并，新建时默认 `:Entity`；
+#: 如果实体抽取随后判定它是人，`APPEND_PERSON_CYPHER` 会补上 `:Person`
+#: 标签而**不会**另建节点（因为 MERGE 也不带 label 了）。
 APPEND_ALIAS_CYPHER = """
 MATCH (e:Event {namespace: $namespace, event_id: $event_id})
 UNWIND $aliases AS item
 MERGE (a:Alias {namespace: $namespace, name: item.alias})
 ON CREATE SET a.first_seen = $created_at
-MERGE (p:Person {namespace: $namespace, key: item.key})
-ON CREATE SET p.name = item.canonical, p.first_seen = $created_at
+MERGE (p {namespace: $namespace, key: item.key})
+ON CREATE SET p.name = item.canonical, p.first_seen = $created_at, p:Entity
 CREATE (p)-[:ALIAS_OF {
     created_at: $created_at,
     confidence: item.confidence,
@@ -183,11 +202,15 @@ RETURN count(*)
 """
 
 #: 非人实体：topic / place / org / event
+#:
+#: 同样 label-free 合并：一个 key 在图上只能有一个节点，
+#: 至于它带哪些 label，由第一次创建它的人决定。
 APPEND_ENTITY_CYPHER = """
 MATCH (e:Event {namespace: $namespace, event_id: $event_id})
 UNWIND $entities AS item
-MERGE (n:Entity {namespace: $namespace, key: item.key})
+MERGE (n {namespace: $namespace, key: item.key})
 ON CREATE SET n.name = item.name, n.kind = item.kind
+SET n:Entity
 CREATE (e)-[:MENTIONS {created_at: $created_at}]->(n)
 RETURN count(*)
 """

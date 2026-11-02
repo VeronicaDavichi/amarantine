@@ -606,17 +606,38 @@ name   原文，可以随便改      → 显示
 
 留在图上而不是 SQLite：纠错本来就是图的操作，重建图时留痕不该先丢。
 
-### 一个已知问题：同名双节点
+### 一个 key 只有一个节点
 
-`APPEND_ALIAS_CYPHER` 为了给 `ALIAS_OF` 建起点会 `MERGE (p:Person)`，
-而实体抽取又会把同名名字建成 `:Entity`。于是同一个名字可能有两个节点。
+`MERGE` 一旦带上标签（`MERGE (p:Person {key})`），同一个 key 就能在图上
+存在两次：别名声明建 `:Entity`，实体抽取建 `:Person`，两边各匹配各的，
+永远合不到一起。
 
-**查询不受影响**（`WHERE n.name IN $names` 两个都匹配，`event_ids` 是
-集合自动去重），但**写入必须按 key**：`MATCH (x {name:...})` 会匹配到
-两个，一次 `CREATE` 就建出两条边。生产代码全部用 `MERGE (p {key})`。
+后果是「豆包」在 `list_known_names` 里出现两次、召回时各拿到一半的边。
 
-根子上是「别名的主人被硬绑成 Person」——「豆包」显然不是人。要彻底解决
-得让 `ALIAS_OF` 的起点不限定 label，这是后续的事。
+**规矩：`MERGE` 不带标签，新建时才打标签。**
+
+```cypher
+MERGE (p {namespace: $namespace, key: item.key})
+ON CREATE SET p.name = item.name, p.first_seen = $created_at
+SET p:Person        -- 无条件：后来的判定更可靠
+```
+
+- `ON CREATE SET name` —— 重放不会把用户改过的名字顶回去
+- `SET p:Person` 不带 `ON CREATE` —— 别名先把「豆包」建成 `:Entity`，
+  实体抽取判定它是人之后要能补上 `:Person`，而不是另建一个
+
+**`ALIAS_OF` 的宿主也不硬绑 `:Person`** —— 「豆包」是个产品，不是人。
+别名只说明「这两个名字指同一个东西」，**不说明那个东西是什么**。
+
+### 遗留：别名指向纯 Entity 时的召回
+
+别名宿主如果只有 `:Entity` 标签（实体抽取还没把它判定成人），
+召回时 `(e)-[:INVOLVES]->(p:Person)` 这条路走不到它 ——
+别名解析出来了，但图通道接不上。
+
+`ALIAS_OF` 起点放宽只解决了「能不能查到主人」，
+没解决「查到之后怎么走到事件」。要接上得让别名解析的结果同时进
+`INVOLVES` 和 `MENTIONS` 两条路。
 
 ## 图上的关系只追加，不覆盖
 
@@ -859,3 +880,4 @@ jieba 切成 `张三/nr 决定/v 项目/n A/x 延期/v 到/v 六月/t`，
 | v0.5 | 2026-11-02 | 别名 LLM 推断（描述性声明 → 候选选择 → probable/uncertain）；补 upsert 回填说明 |
 | v0.6 | 2026-11-02 | 别名声明带出名字；实体纠错现状与「宁可漏」的取舍；同名双节点问题 |
 | v0.7 | 2026-11-02 | 实体纠错（改/拆/合/解挂，无删除）；实体代号 key 化；解挂与改名的区别 |
+| v0.8 | 2026-11-02 | 一个 key 只有一个节点（MERGE 不带标签）；ALIAS_OF 宿主不再硬绑 Person |
