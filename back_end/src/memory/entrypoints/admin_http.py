@@ -39,6 +39,13 @@ from memory.services.alias_apply import (
     resolve_event_aliases,
     resolve_namespace_aliases,
 )
+from memory.services.entity_edit import (
+    EditResult,
+    merge_entities,
+    rebind_event_entity,
+    rename_entity,
+    split_entity,
+)
 from memory.services.forget import ALLOWED_REASONS, ForgetError, forget_event
 from memory.services.label_review import LabelReviewQueue, queue_from_settings
 from memory.services.recall_count import RecallCounter, db_path_from_settings
@@ -112,6 +119,49 @@ class AliasResolveResponse(BaseModel):
     mode: Literal["event", "namespace"]
     items: list[dict[str, Any]]
     total: int
+
+
+# ---- 实体纠错（改 / 拆 / 合 / 解挂重挂，**没有删除**）----
+
+
+class EntityRenameRequest(BaseModel):
+    from_name: str = Field(min_length=1)
+    to_name: str = Field(min_length=1)
+    namespace: str | None = None
+    reason: str = ""
+
+
+class EntityMergeRequest(BaseModel):
+    from_name: str = Field(min_length=1)
+    to_name: str = Field(min_length=1)
+    namespace: str | None = None
+    reason: str = ""
+    #: 合并的可信度。用户手工合并默认 `exact`
+    label: Literal["exact", "probable", "uncertain"] = "exact"
+
+
+class EntitySplitRequest(BaseModel):
+    from_name: str = Field(min_length=1)
+    into: list[str] = Field(min_length=2)
+    namespace: str | None = None
+    reason: str = ""
+
+
+class EntityRebindRequest(BaseModel):
+    event_id: str = Field(min_length=1)
+    from_name: str = Field(min_length=1)
+    to_name: str = Field(min_length=1)
+    #: 目标到底是什么。系统不猜 —— `三哥` 是人还是国家，只有说的人知道
+    to_kind: str = "topic"
+    namespace: str | None = None
+    reason: str = ""
+
+
+class EntityEditResponse(BaseModel):
+    ok: bool
+    op: str
+    detail: dict[str, Any] = {}
+    error: str | None = None
 
 
 # ---- 打标复核（A24：与上面的 NEED_REVIEW 是**两条独立队列**，字段刻意不同）----
@@ -463,6 +513,99 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             event_id=result.event_id,
             forgotten=result.forgotten,
             reason=result.reason,
+        )
+
+    # ------------------------------------------------- entity edit
+
+    def _edit_response(result: EditResult) -> EntityEditResponse:
+        if not result.ok:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail=result.error
+            )
+        return EntityEditResponse(
+            ok=result.ok,
+            op=result.op,
+            detail=result.detail,
+            error=result.error,
+        )
+
+    @app.post(
+        "/admin/entities/rename",
+        response_model=EntityEditResponse,
+        dependencies=[Depends(require_token)],
+    )
+    def admin_rename_entity(body: EntityRenameRequest) -> EntityEditResponse:
+        """改名。**无条件成功** —— `key` 是身份，`name` 只是显示名。
+
+        改完如果有另一个实体也叫 `to_name`，那是合法的重名状态，
+        各有各的 key，查询时都显示原文。
+        """
+        return _edit_response(
+            rename_entity(
+                _namespace(body.namespace),
+                body.from_name,
+                body.to_name,
+                settings=cfg,
+                reason=body.reason,
+            )
+        )
+
+    @app.post(
+        "/admin/entities/merge",
+        response_model=EntityEditResponse,
+        dependencies=[Depends(require_token)],
+    )
+    def admin_merge_entities(body: EntityMergeRequest) -> EntityEditResponse:
+        """合并。边搬过去，被并的降级成 `(:Alias)`，**节点不删**。"""
+        return _edit_response(
+            merge_entities(
+                _namespace(body.namespace),
+                body.from_name,
+                body.to_name,
+                settings=cfg,
+                reason=body.reason,
+                label=body.label,
+            )
+        )
+
+    @app.post(
+        "/admin/entities/split",
+        response_model=EntityEditResponse,
+        dependencies=[Depends(require_token)],
+    )
+    def admin_split_entity(body: EntitySplitRequest) -> EntityEditResponse:
+        """拆分。原节点标 `split_into` 留痕，边两边都连并标 `from_split`。"""
+        return _edit_response(
+            split_entity(
+                _namespace(body.namespace),
+                body.from_name,
+                body.into,
+                settings=cfg,
+                reason=body.reason,
+            )
+        )
+
+    @app.post(
+        "/admin/entities/rebind",
+        response_model=EntityEditResponse,
+        dependencies=[Depends(require_token)],
+    )
+    def admin_rebind_entity(body: EntityRebindRequest) -> EntityEditResponse:
+        """解挂重挂：**只改这一条事件**的指向。
+
+        `三哥主打的就是一个有声有色有味` → 这个「三哥」其实是印度人。
+        别名层不动（`三哥` 确实可以指哥哥），旧节点也不删。
+        """
+        return _edit_response(
+            rebind_event_entity(
+                _namespace(body.namespace),
+                body.event_id,
+                body.from_name,
+                body.to_name,
+                settings=cfg,
+                to_kind=body.to_kind,
+                reason=body.reason,
+            )
         )
 
     # ------------------------------------------------------- aliases

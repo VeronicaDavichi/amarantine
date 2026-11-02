@@ -121,7 +121,9 @@ def _run(driver, card=None, **kw) -> OutboxResult:
 
 def test_split_entities_separates_person() -> None:
     persons, entities = _split_entities(_card())
-    assert persons == ["张三", "李四"]
+    # persons 现在是 [{key, name}]：key 是身份，name 是显示名
+    assert [p["name"] for p in persons] == ["张三", "李四"]
+    assert all(p["key"] for p in persons), "每个人都要有代号"
     assert [e["name"] for e in entities] == ["项目A"]
     assert entities[0]["kind"] == "topic"
 
@@ -129,7 +131,7 @@ def test_split_entities_separates_person() -> None:
 def test_split_entities_all_persons() -> None:
     card = _card(entities=[Entity(name="张三", kind="person")])
     persons, entities = _split_entities(card)
-    assert persons == ["张三"]
+    assert [p["name"] for p in persons] == ["张三"]
     assert entities == []
 
 
@@ -137,7 +139,8 @@ def test_split_entities_no_persons() -> None:
     card = _card(entities=[Entity(name="项目A", kind="topic")])
     persons, entities = _split_entities(card)
     assert persons == []
-    assert entities == [{"name": "项目A", "kind": "topic"}]
+    assert [e["name"] for e in entities] == ["项目A"]
+    assert entities[0]["kind"] == "topic"
 
 
 # ---------------- 三类节点都建出来 ----------------
@@ -147,7 +150,8 @@ def test_person_node_created(driver: FakeDriver) -> None:
     _run(driver)
     runs = [p for c, p in driver.session_obj.runs if c == APPEND_PERSON_CYPHER]
     assert len(runs) == 1
-    assert runs[0]["persons"] == ["张三", "李四"]
+    assert [p["name"] for p in runs[0]["persons"]] == ["张三", "李四"]
+    assert all(p["key"] for p in runs[0]["persons"])
 
 
 def test_entity_node_excludes_persons(driver: FakeDriver) -> None:

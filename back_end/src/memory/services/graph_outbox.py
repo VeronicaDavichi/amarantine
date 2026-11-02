@@ -59,6 +59,7 @@ import logging
 from dataclasses import dataclass
 
 from memory.config import Settings
+from memory.core.entity_key import key_for
 from memory.models.event_card import ALIAS_CONFIDENCE, AliasClaim, EventCard
 from memory.services.labeler import _looks_like_name
 
@@ -83,11 +84,16 @@ RETURN e
 """
 
 #: 人：`kind == "person"` 的实体升级成独立的 Person 节点
+#:
+#: **按 `key` 建身份，不按 `name`**：名字是可改的显示名，代号才是身份。
+#: 详见 `core/entity_key.py`。`ON CREATE SET name` 意味着重放不会把用户
+#: 改过的名字顶回去 —— 跟 upsert 的「重放可以修正事实，不能改写历史」
+#: 是同一条规矩。
 APPEND_PERSON_CYPHER = """
 MATCH (e:Event {namespace: $namespace, event_id: $event_id})
-UNWIND $persons AS name
-MERGE (p:Person {namespace: $namespace, name: name})
-ON CREATE SET p.first_seen = $created_at
+UNWIND $persons AS item
+MERGE (p:Person {namespace: $namespace, key: item.key})
+ON CREATE SET p.name = item.name, p.first_seen = $created_at
 CREATE (e)-[:INVOLVES {created_at: $created_at}]->(p)
 RETURN count(*)
 """
@@ -109,8 +115,8 @@ MATCH (e:Event {namespace: $namespace, event_id: $event_id})
 UNWIND $aliases AS item
 MERGE (a:Alias {namespace: $namespace, name: item.alias})
 ON CREATE SET a.first_seen = $created_at
-MERGE (p:Person {namespace: $namespace, name: item.canonical})
-ON CREATE SET p.first_seen = $created_at
+MERGE (p:Person {namespace: $namespace, key: item.key})
+ON CREATE SET p.name = item.canonical, p.first_seen = $created_at
 CREATE (p)-[:ALIAS_OF {
     created_at: $created_at,
     confidence: item.confidence,
@@ -122,8 +128,12 @@ RETURN count(*)
 """
 
 #: 召回时从别名反查主人。一个别名可能有多个主人（一词多义）。
+#:
+#: 起点**不限定 label**：合并两个实体之后，被并掉的那个降级成 `(:Alias)`，
+#: 边从存活的那个出发 —— 它可能是 `:Person`，也可能是 `:Entity`。
+#: 写死 `(p:Person)` 会让「豆包」这种非人实体的别名查不出来。
 RESOLVE_ALIAS_CYPHER = """
-MATCH (a:Alias {namespace: $namespace})<-[r:ALIAS_OF]-(p:Person)
+MATCH (a:Alias {namespace: $namespace})<-[r:ALIAS_OF]-(p)
 WHERE a.name IN $names
 RETURN a.name AS alias, p.name AS canonical,
        r.label AS label, r.confidence AS confidence,
@@ -176,8 +186,8 @@ RETURN count(*)
 APPEND_ENTITY_CYPHER = """
 MATCH (e:Event {namespace: $namespace, event_id: $event_id})
 UNWIND $entities AS item
-MERGE (n:Entity {namespace: $namespace, name: item.name})
-ON CREATE SET n.kind = item.kind
+MERGE (n:Entity {namespace: $namespace, key: item.key})
+ON CREATE SET n.name = item.name, n.kind = item.kind
 CREATE (e)-[:MENTIONS {created_at: $created_at}]->(n)
 RETURN count(*)
 """
@@ -229,19 +239,25 @@ class OutboxResult:
     aliases: int = 0
 
 
-def _split_entities(card: EventCard) -> tuple[list[str], list[dict[str, str]]]:
+def _split_entities(
+    card: EventCard,
+) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
     """把人从实体里分出来：人走 Person 节点，其余走 Entity 节点。
 
     同一个人和一个话题不该混在同一个标签下 —— 前者是记忆的主语，
     后者是记忆的宾语，查询入口完全不同。
+
+    返回的每一项都是 `{key, name}`：**`key` 是身份，`name` 是显示名**。
+    同名默认同 key（视为同一实体），这是 `key_for` 的确定性行为。
     """
-    persons: list[str] = []
+    persons: list[dict[str, str]] = []
     entities: list[dict[str, str]] = []
     for e in card.entities:
+        item = {"key": key_for(e.name), "name": e.name}
         if e.kind == "person":
-            persons.append(e.name)
+            persons.append(item)
         else:
-            entities.append({"name": e.name, "kind": e.kind})
+            entities.append({**item, "kind": e.kind})
     return persons, entities
 
 
@@ -346,6 +362,7 @@ def write_event_node(
                 {
                     "alias": c.alias,
                     "canonical": c.canonical,
+                    "key": key_for(c.canonical),
                     "label": c.label,
                     "confidence": ALIAS_CONFIDENCE.get(c.label, 0.4),
                     "source": c.source,

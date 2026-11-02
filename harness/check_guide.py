@@ -107,6 +107,10 @@ def main() -> int:
         # 非配置项：模型层常量
         "ALIAS_PROBABLE_MIN", "ALIAS_CONFIDENCE", "ALIAS_EXACT",
         "ALIAS_PROBABLE", "ALIAS_UNCERTAIN",
+        # 非配置项：cypher 常量名（文档里讲图的实现时会提到）
+        "APPEND_ALIAS_CYPHER", "RESOLVE_ALIAS_CYPHER",
+        "APPEND_PERSON_CYPHER", "APPEND_ENTITY_CYPHER",
+        "LIST_KNOWN_NAMES_CYPHER",
     }
     unknown = [v for v in unknown if v not in allowed_extra]
     for v in unknown:
