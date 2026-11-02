@@ -291,12 +291,16 @@ def test_clean_name_accepts_short_products() -> None:
     assert _is_clean_name("糖包")
 
 
-# ---------------- 「X 人」：名词后缀不是描述标记 ----------------
+# ---------------- 「X 人」：名词性类词缀，降置信度而不是拒收 ----------------
 #
 # `人` 曾经直接在 `_DESCRIPTIVE_MARKERS` 里，一刀切拦掉所有带「人」的串。
 # 结果 `三哥就是印度人` 抽得出 claim，但 `append_alias_edges` 用
 # `_is_clean_name(canonical)` 过滤时把它丢掉了 —— 边一条建不出来，
-# 而且没有任何日志。判据改成只看 `人` 前面是不是形容词。
+# 而且没有任何日志。
+#
+# 汉典把 `人` 列为名词，举证里就有 主持人/介绍人/证人/强人/恩人 ——
+# `X人` 是**能产构词**（类词缀），造出来的是合法名词。
+# 所以：`X人` 一律放行进图，评价性的（老实人）只降置信度。
 
 
 @pytest.mark.parametrize(
@@ -310,34 +314,41 @@ def test_clean_name_accepts_short_products() -> None:
         "主持人",   # 名词 + 人：职业
         "负责人",
         "介绍人",
+        "强人",     # 汉典举证里有，不该被形容词表误杀
+        "恩人",
     ],
 )
-def test_person_noun_with_nominal_prefix_is_a_name(name: str) -> None:
-    """名词 + 「人」是名词短语，不是描述。"""
-    from memory.services.labeler import _is_clean_name
+def test_person_noun_is_admitted_and_exact(name: str) -> None:
+    """名词 + 「人」是名词短语 → 能建边，且置信度 exact。"""
+    from memory.services.labeler import _alias_label, _is_clean_name
 
-    assert _is_clean_name(name), f"{name} 是名词短语，不该被当成描述"
+    assert _is_clean_name(name), f"{name} 是名词短语，不该被拒收"
+    assert _alias_label(name) == "exact", f"{name} 该是 exact"
 
 
 @pytest.mark.parametrize(
     "desc",
-    [
-        "老实人",
-        "聪明人",
-        "坏人",
-        "好人",
-        "懒人",
-        "陌生人",
-        "什么人",
-        "那种人",
-        "老人",
-    ],
+    ["老实人", "聪明人", "坏人", "好人", "懒人", "陌生人"],
 )
-def test_person_noun_with_adjectival_prefix_is_a_description(desc: str) -> None:
-    """形容词 + 「人」是评价 —— 进了图就是垃圾实体。"""
+def test_adjectival_ren_admitted_but_downgraded(desc: str) -> None:
+    """形容词 + 「人」是评价 —— **不再拒收**，只降置信度。
+
+    拒收 = 边建不出来且没有日志，正是 `印度人` 那个 bug 的形态。
+    降级 = 边照建、置信度 0.4、召回不当强证据、可 rebind 清理。
+    宁可要个低置信度实体，也不要再出现「图上没有还查不出为什么」。
+    """
+    from memory.services.labeler import _alias_label, _is_clean_name
+
+    assert _is_clean_name(desc), f"{desc} 不该被拒收（拒收是静默的）"
+    assert _alias_label(desc) == "uncertain", f"{desc} 该降级"
+
+
+@pytest.mark.parametrize("desc", ["什么人", "那种人", "这种人"])
+def test_ren_with_determiner_still_rejected(desc: str) -> None:
+    """限定词开头的还是要拦 —— 那是多字标记抓的，不是「人」抓的。"""
     from memory.services.labeler import _is_clean_name
 
-    assert not _is_clean_name(desc), f"{desc} 是评价，不该过"
+    assert not _is_clean_name(desc), f"{desc} 是句子片段"
 
 
 def test_sange_is_indian_claim_is_created_and_clean() -> None:
@@ -424,15 +435,124 @@ def test_sange_is_indian_actually_reaches_graph_items() -> None:
     assert canonicals == ["印度人"]
 
 
-def test_description_stays_on_card_but_never_reaches_graph() -> None:
-    """`小明就是老实人` —— claim 留着（LLM 层还有用），边不建。
+def test_description_reaches_graph_with_low_confidence() -> None:
+    """`小明就是老实人` —— claim 留着，边也建，但标 uncertain。
 
-    这是「右值可以是描述」的设计：不猜，但也不丢。
+    以前这里断言「不能建边」。改成能建，是因为硬拒的代价太大：
+    边建不出来**而且没有任何日志**，正是 `印度人` 那个 bug 的形态。
+    现在让数据进来，用置信度表达质量，可查、可降权、可撤销。
     """
-    from memory.services.labeler import _is_clean_name
+    from memory.services.labeler import _alias_label, _is_clean_name
 
     claims = extract_alias_claims("小明就是老实人")
     assert len(claims) == 1
     assert claims[0].canonical == "老实人"
     assert claims[0].label == "uncertain", "评价性右值要标存疑"
-    assert not _is_clean_name(claims[0].canonical), "不能建边"
+    assert _is_clean_name(claims[0].canonical), "边要建得出来（不能静默丢）"
+    assert _alias_label(claims[0].canonical) == "uncertain"
+
+
+# ---------------- 单字只做位置检查，包含检查只用于多字词 ----------------
+#
+# 依据：中央研究院《詞類標記表》的封闭类/开放类划分，以及吕叔湘
+# 《說自由和粘著》的自由语素/粘着语素区分。`个/位/家/种/人` 都是
+# 自由语素 —— 能单用成词，也能构词，位置不固定。放进包含式匹配
+# 必然在名词里误伤。
+
+
+def test_no_single_char_markers() -> None:
+    """看门狗：`_DESCRIPTIVE_MARKERS` 里不许出现单字。
+
+    这条断言就是防止以后有人再往集合里塞 `家`/`个`/`位` 之类。
+    单字要走位置检查（`_LEADING_CHARS` / 结尾助词表），不能走包含。
+    """
+    from memory.services.labeler import _DESCRIPTIVE_MARKERS
+
+    bad = sorted(m for m in _DESCRIPTIVE_MARKERS if len(m) < 2)
+    assert not bad, f"这些单字不该做包含式标记: {bad}"
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        # 单字「家」误伤的名词（类词缀 / 普通名词）
+        "科学家", "作家", "画家", "国家", "行家", "专家", "厂家",
+        # 单字「位」误伤、但不以量词起头的
+        "单位",
+        "人民",
+    ],
+)
+def test_nouns_hit_by_single_char_markers_are_admitted(name: str) -> None:
+    """这些名词曾被单字标记的包含式匹配误伤，现在放行。"""
+    from memory.services.labeler import _alias_label, _is_clean_name
+
+    assert _is_clean_name(name), f"{name} 是名词，不该被拒收"
+    assert _alias_label(name) == "exact", f"{name} 该是 exact"
+
+
+@pytest.mark.parametrize("noun", ["位置", "个别", "个体", "种类", "种族"])
+def test_nouns_starting_with_measure_word_rejected(noun: str) -> None:
+    """以量词起头的名词会被**开头位置检查**拦掉 —— 这是有意的。
+
+    区别在于：`位置`/`种类` 这些词本身是名词，但它们不可能是**名字**。
+    量词打头出现在别名位置，只能是 `就是` 后面紧跟量词造成的半截短语
+    （`就是**个**老实人` → `个老实人`）。丢掉它们没有损失，
+    而 `科学家`/`单位` 这类不以量词起头的照常放行。
+    """
+    from memory.services.labeler import _is_clean_name
+
+    assert not _is_clean_name(noun), f"{noun} 以量词起头，不该当名字"
+
+
+@pytest.mark.parametrize(
+    "fragment",
+    ["个老实人", "位老师", "种人"],
+)
+def test_measure_word_leading_fragment_rejected(fragment: str) -> None:
+    """`小明就是个老实人` 会被捕获成 `个老实人` —— 半截短语，不是名字。
+
+    这是量词走**开头检查**而不是包含检查的直接原因：以前 `个` 在包含式
+    集合里能拦住它，去掉单字标记后必须补一条位置规则，否则这个口子
+    会静默打开。
+    """
+    from memory.services.labeler import _is_clean_name
+
+    assert not _is_clean_name(fragment), f"{fragment} 是半截短语"
+
+
+@pytest.mark.parametrize(
+    "junk",
+    ["家里", "家人", "家门口", "家庭", "家中", "家族"],
+)
+def test_jia_compounds_are_descriptions(junk: str) -> None:
+    """「家」的实词实现 —— 用具体词拦，不用单字规则。
+
+    `家` 单用是量词，在 `科学家` 里是类词缀。想拦 `家里` 就该写 `家里`，
+    而不是把 `家` 拉黑（那会连 `科学家` 一起打掉）。
+    """
+    from memory.services.labeler import _is_clean_name
+
+    assert not _is_clean_name(junk), f"{junk} 是普通名词，不是名字"
+
+
+@pytest.mark.parametrize(
+    "junk",
+    ["一个AI", "某种", "那位", "各位", "每个", "某个", "整个", "这种", "那种"],
+)
+def test_double_char_determiners_still_rejected(junk: str) -> None:
+    """单字量词换成双字实现后，原来的拦截能力不能丢。"""
+    from memory.services.labeler import _is_clean_name
+
+    assert not _is_clean_name(junk), f"{junk} 是指示/数量词"
+
+
+@pytest.mark.parametrize("junk", ["最近", "很好", "太快", "更高", "不错"])
+def test_leading_adverb_rejected(junk: str) -> None:
+    """单字副词走**开头检查**，不走包含检查。
+
+    这是位置检查的好处：`最` 做包含会命中 `最近`/`最终`，
+    做开头检查只命中真正的描述。
+    """
+    from memory.services.labeler import _is_clean_name
+
+    assert not _is_clean_name(junk), f"{junk} 以副词开头，是描述"
