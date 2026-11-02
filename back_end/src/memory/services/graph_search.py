@@ -5,8 +5,15 @@ ADR 的超时矩阵里，图通道是 **200ms 且失败直接丢弃该路**：
 - 图可丢弃重建（D2），所以它天然是可降级的
 - 但它不能拖慢整体：`degraded=true` 只是标记某路缺失，不影响返回
 
-P0 的图查询刻意保持简单：按实体名在 `summary` 里做包含匹配。
-真正的多跳实体扩展要等图结构补齐后再上——**先用能工作的最简单版本**。
+## 查询走两条路（UNION）
+
+1. **实体边**（准）：`(e)-[:MENTIONS]->(:Entity {name})` —— 实体是写入时抽出来的，
+   不会因为一句话里恰好出现某个词就误命中
+2. **`RELATED` 一跳扩展**（广）：命中实体后，顺着共享实体连到相邻事件，
+   把「同一件事的另一面」也带出来
+
+`summary CONTAINS` 那条老路保留做兜底：加边之前的旧数据没有 `MENTIONS`，
+只走新路会让它们在图通道里彻底消失。
 """
 
 from __future__ import annotations
@@ -28,9 +35,36 @@ MAX_ENTITY_NAMES = 8
 #: 实体名最短长度——单字实体噪声太大
 MIN_ENTITY_LEN = 2
 
+#: 除了直连命中，再顺着 `RELATED` 扩几跳的结果（1 跳，避免噪声扩散）
+MAX_HOPS = 1
+
+#: 三条路合并后的上限
+DEFAULT_LIMIT = 50
+
 _SEARCH_CYPHER = """
+// 路 1：实体边直连（最准）
+MATCH (e:Event {namespace: $namespace})-[:MENTIONS]->(n:Entity)
+WHERE n.name IN $names
+WITH DISTINCT e
+RETURN e.event_id AS event_id
+LIMIT $limit
+
+UNION
+
+// 路 2：顺着共享实体的一跳邻居（广）
+MATCH (e:Event {namespace: $namespace})-[:MENTIONS]->(n:Entity)
+WHERE n.name IN $names
+MATCH (e)-[:RELATED]-(other:Event {namespace: $namespace})
+WITH DISTINCT other
+RETURN other.event_id AS event_id
+LIMIT $limit
+
+UNION
+
+// 路 3：兜底——加边之前的旧数据只能靠文本匹配
 MATCH (e:Event {namespace: $namespace})
 WHERE ANY(name IN $names WHERE e.summary CONTAINS name)
+WITH DISTINCT e
 RETURN e.event_id AS event_id
 LIMIT $limit
 """

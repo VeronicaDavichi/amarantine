@@ -279,6 +279,56 @@ curl -s -X POST -H "Authorization: Bearer $TOKEN" \
 
 关掉双跑：`LABEL_DUAL_RUN=false`（省一次 LLM 调用）。
 
+### 忘掉的事又被提起，会自己回来
+
+用户说「忘掉 X」之后，如果把 X 原样又说了一遍，这条记忆会**自动复活**：
+
+| 情况 | 结果 |
+|---|---|
+| 第一次说 | `created=true`，正常写入 |
+| 说「忘掉 X」 | 软删，检索不到，原文保留 |
+| 又说一遍 X | **`created=false` + `revived=true`**，重新可见 |
+
+为什么必须这样：如果只看到「卡已存在」就静默返回，这条记忆会永远停在已忘状态
+—— 用户说什么都没用，除非换措辞把 `event_id` 改掉。那是 bug，不是保守。
+
+`deleted_at` 保留不删，作为「曾被忘过」的审计痕迹。
+
+### 图上的关系只追加，不覆盖
+
+Neo4j 里存三类边，**全部用 `CREATE` 而不是 `MERGE`**：
+
+```
+(Event)-[:MENTIONS {created_at}]->(Entity)          事件提到某个实体
+(Event)-[:RELATED  {kind, created_at}]->(Event)     两个事件共享实体
+(Context)-[:RELATES_TO {created_at}]->(Event)       当前话题挂到事件上
+```
+
+为什么关系不能 `MERGE`：`MERGE ... SET r.at = $now` 会抹掉上一次的时间。
+**同一条记忆被反复提起，恰恰是最有价值的信号** —— 覆盖掉历史等于把信号删了。
+
+实测：同一条内容写三次，`MENTIONS` 边有 3 条、3 个不同时间戳；
+两个共享实体的事件重复写入，`RELATED` 边从 1 条变 2 条。
+
+**「不同 event 之间必有关系」的落法**：两个 Event 共享至少一个 Entity 才连
+`RELATED` 边。有交集才连，没交集不硬连（否则边数会平方级爆炸）。
+
+**Neo4j 不做忘却处理**：删卡时图上的边留在原地，历史不抹。
+
+### 用 context 把记忆挂到话题上
+
+`memory_remember` 新增可选参数 `context`：
+
+```json
+{"summary": "张三决定项目A延期到六月", "context": "A股"}
+```
+
+传了就会建 `(Context {key:"A股"})-[:RELATES_TO]->(Event)`，
+将来按话题回溯能串起来。不传则不建话题关联。
+
+召回时图通道走三条路：实体边直连（准）→ `RELATED` 一跳扩展（广）→
+`summary CONTAINS` 兜底（兼容加边之前的旧数据）。
+
 ---
 
 ## 五、FAQ

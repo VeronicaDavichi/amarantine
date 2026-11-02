@@ -114,6 +114,8 @@ class RememberResult:
     anomaly: str | None = None
     weaviate_id: str | None = None
     graph_ok: bool = True
+    #: 这条内容曾被告知「忘掉」，这次因为重新提起而被恢复
+    revived: bool = False
 
     def to_tool_result(self) -> dict[str, object]:
         payload: dict[str, object] = {
@@ -122,6 +124,8 @@ class RememberResult:
         }
         if self.anomaly:
             payload["anomaly"] = self.anomaly
+        if self.revived:
+            payload["revived"] = True
         return payload
 
 
@@ -133,6 +137,7 @@ def remember_event(
     pinned: bool = False,
     important: bool = False,
     emotion_intensity: float = 0.0,
+    context: str | None = None,
     settings: Settings,
     store: WeaviateStore | None = None,
     counter: DirectiveCounter | None = None,
@@ -151,6 +156,7 @@ def remember_event(
         pinned: 用户是否显式要求记住。
         important: 用户是否强调重要。
         emotion_intensity: 情绪强度 0–1。
+        context: 当前对话话题（如 ``"A股"``）。给了才在图上建 Context 边。
         settings: 配置。
         store: 可注入的 Weaviate 封装（测试用）。
         counter: 可注入的护栏计数器（测试用）。
@@ -253,10 +259,32 @@ def remember_event(
 
         existing = active_store.get_by_event_id(namespace, event_id)
         if existing is not None:
+            was_deleted = bool(existing.get("is_deleted"))
+            if was_deleted:
+                # 用户把「忘掉」的那件事原样又说了一遍 → 复活它。
+                # 只看到「卡已存在」就静默返回，会让这条记忆永远停在已忘状态，
+                # 用户说什么都没用（除非换措辞让 event_id 变掉）。
+                active_store.revive(event_id, namespace)
+                logger.info(
+                    "已遗忘的记忆被重新提起，复活 | event_id=%s | %s",
+                    event_id,
+                    summary[:24],
+                )
+            # 图上的关系**无论如何都追加**：重新提起本身就是一次新提及，
+            # 时间线要留下痕迹（关系只追加不覆盖）。
+            writer = graph_writer or write_event_node
+            outbox = writer(  # type: ignore[operator]
+                card,
+                settings=settings,
+                weaviate_id=existing.get("id"),  # type: ignore[arg-type]
+                context=context,
+            )
             return RememberResult(
                 event_id=event_id,
                 created=False,
+                revived=was_deleted,
                 weaviate_id=existing.get("id"),  # type: ignore[arg-type]
+                graph_ok=bool(getattr(outbox, "ok", False)),
             )
 
         # 8) embed（只对确实要写的内容付费）
@@ -275,7 +303,10 @@ def remember_event(
         # 11) 派生图（失败只告警）
         writer = graph_writer or write_event_node
         outbox = writer(  # type: ignore[operator]
-            card, settings=settings, weaviate_id=weaviate_id
+            card,
+            settings=settings,
+            weaviate_id=weaviate_id,
+            context=context,
         )
 
         return RememberResult(

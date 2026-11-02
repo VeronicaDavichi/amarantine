@@ -101,6 +101,8 @@ def main() -> int:
         # 非配置项：代码常量 / 外部工具的环境变量 / shell 层开关
         "SCHEMA_PROPERTIES", "UV_PROJECT_ENVIRONMENT", "LOG_FILE",
         "PYTHONIOENCODING", "MEMORY_KEEP_LLM_BASE_URL",
+        # 非配置项：Neo4j 关系类型名
+        "RELATES_TO", "MENTIONS", "RELATED",
     }
     unknown = [v for v in unknown if v not in allowed_extra]
     for v in unknown:

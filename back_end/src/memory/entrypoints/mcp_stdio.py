@@ -108,6 +108,7 @@ def _tool_remember(settings: Settings, args: dict[str, Any]) -> dict[str, Any]:
         pinned=args.get("pinned", False),
         important=args.get("important", False),
         emotion_intensity=args.get("emotion_intensity", 0.0),
+        context=args.get("context"),
         settings=settings,
     )
     return result.to_tool_result()

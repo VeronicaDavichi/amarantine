@@ -100,6 +100,14 @@ TOOLS: dict[str, dict[str, Any]] = {
                     "maximum": 1,
                     "default": 0.0,
                 },
+                "context": {
+                    "type": "string",
+                    "description": (
+                        "当前对话在聊什么话题（如「A股」「跳槽」）。"
+                        "给了才能在图上把这条记忆挂到该话题下，"
+                        "将来按话题回溯时才能串起来。不填则不建话题关联。"
+                    ),
+                },
             },
             "required": ["summary"],
             "additionalProperties": False,

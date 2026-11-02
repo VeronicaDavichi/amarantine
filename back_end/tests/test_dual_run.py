@@ -57,7 +57,7 @@ def _embedder(text, settings):
     return [0.01] * settings.EMBEDDING_DIM
 
 
-def _ok_graph(card, *, settings, weaviate_id):
+def _ok_graph(card, *, settings, weaviate_id, context=None):
     return OutboxResult(ok=True)
 
 

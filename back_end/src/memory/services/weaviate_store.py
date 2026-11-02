@@ -346,7 +346,33 @@ class WeaviateStore:
         data = self._graphql(query)
         return [self._to_hit(obj, score=0.0) for obj in self._extract_hits(data)]
 
-    # ---------- 软删（D7 / A32） ----------
+    # ---------- 软删与复活（D7 / A32） ----------
+
+    def revive(self, event_id: str, namespace: str) -> None:
+        """把一条软删过的卡恢复成可见（`is_deleted=False`）。
+
+        **为什么需要它**：用户说「忘掉 X」之后又把 X 原样说了一遍，
+        说明 X 又有用了。如果幂等检查只看到「卡已存在」就静默返回，
+        这条记忆会永远停留在已忘状态 —— 用户说什么都没用，除非换措辞
+        让 `event_id` 变掉。那是明显的 bug，不是保守。
+
+        **不删 `deleted_at`**：留作审计（这条卡曾被忘过、又被重新提起）。
+        检索侧只看 `is_deleted`，所以留着不影响正确性。
+        """
+        self.ensure_collection()
+        uid = deterministic_uuid(namespace, event_id)
+        url = f"{self._base}/v1/objects/{COLLECTION}/{uid}"
+        try:
+            resp = self._http.patch(
+                url,
+                json={"class": COLLECTION, "properties": {"is_deleted": False}},
+            )
+        except httpx.HTTPError as exc:
+            raise WeaviateStoreError(f"复活事件卡失败: {exc}") from exc
+        if resp.status_code not in (200, 204):
+            raise WeaviateStoreError(
+                f"复活事件卡失败: HTTP {resp.status_code} {resp.text[:200]}"
+            )
 
     def mark_forgotten(
         self, event_id: str, namespace: str, *, deleted_at: str

@@ -73,11 +73,11 @@ def _embedder(text: str, settings) -> list[float]:
     return [0.01] * settings.EMBEDDING_DIM
 
 
-def _ok_graph(card, *, settings, weaviate_id):
+def _ok_graph(card, *, settings, weaviate_id, context=None):
     return OutboxResult(ok=True)
 
 
-def _bad_graph(card, *, settings, weaviate_id):
+def _bad_graph(card, *, settings, weaviate_id, context=None):
     return OutboxResult(ok=False, error="neo4j down")
 
 
