@@ -938,6 +938,20 @@ MCP 的 `initialize` 响应可带 `instructions` 字段，运行时直接投给 
           "primary": { "type": "boolean" }
         }
       }
+    },
+    "alias_claims": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["alias", "canonical", "label", "source"],
+        "properties": {
+          "alias":     { "type": "string", "minLength": 1 },
+          "canonical": { "type": "string", "minLength": 1 },
+          "label":     { "enum": ["exact", "probable", "uncertain"] },
+          "source":    { "enum": ["user_declared", "rule", "llm_inferred"] }
+        }
+      }
     }
   }
 }
@@ -956,6 +970,26 @@ MCP 的 `initialize` 响应可带 `instructions` 字段，运行时直接投给 
 
 **`actions` 不参与 `event_id` 哈希**：canonical 串只含
 `namespace` / 日期 / `types` / `entity_names` / `summary`。动作是派生标注，
+若参与哈希，打标规则一调整就会换 id —— 同一件事写成两张卡。
+
+`alias_claims` 是这句话里出现的「A 也叫 B」。
+
+**一个人可能有多种称呼，一种称呼也可能对应多个人。**
+`三哥` 既能指印度人，也能指家里排行第三的男性 —— 所以别名不能假设一对一。
+
+`label` 的判据是**这句话里有几分显式的身份锚定**：
+
+| label | 例子 | 含义 |
+|---|---|---|
+| `exact` | `糖包就是豆包` | 用户直接给了等价关系，不用推理 |
+| `probable` | 同姓 + `小X`/`老X`/`X总` 的称呼变形 | 规则能对上 |
+| `uncertain` | `糖包就是那个AI里最弱智的` | 得先知道「最弱智的AI」是谁才能推出来，这一步会错 |
+
+**低置信度召回时必须带标记**，不能让用户以为那是板上钉钉的事实。
+图上 `(Person)-[:ALIAS_OF {confidence, label, source, source_event_id}]->(:Alias)`，
+边可 `DELETE` 撤销，事件卡不动 —— 别名单存于事件卡，删了不丢事实。
+
+**`alias_claims` 不参与 `event_id` 哈希**，理由同 `actions`。
 若参与哈希，打标规则一抖动就会换 `event_id`，同一件事写成两张卡。
 
 ---

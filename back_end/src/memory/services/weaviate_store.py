@@ -112,6 +112,10 @@ SCHEMA_PROPERTIES: list[dict[str, Any]] = [
     # 语义正好是「还没人看过」——所以加字段不需要回填。
     {"name": "review_verdict", "dataType": ["text"]},
     {"name": "reviewer", "dataType": ["text"]},
+    # 别名声明的留痕。存成 JSON 字符串而不是嵌套对象：
+    # Weaviate 的嵌套属性要单独定义 nested 类型，为一个留痕字段不值得。
+    # 图上的 `(:Alias)` 才是别名的主存储，这里只是「哪句话说的」的证据。
+    {"name": "alias_claims", "dataType": ["text"]},
 ]
 
 
@@ -161,6 +165,24 @@ def to_properties(card: EventCard, *, anomaly: str | None = None) -> dict[str, A
         props["review_verdict"] = card.review_verdict
     if card.reviewer is not None:
         props["reviewer"] = card.reviewer
+    # 别名声明留痕。JSON 字符串，读回时解析。
+    # **描述性声明也存**：`糖包就是那个AI里最弱智的` 不建图边，
+    # 但这句话本身要留着 —— LLM 层（P2）靠它去解析出真正的等价对象。
+    if card.alias_claims:
+        import json
+
+        props["alias_claims"] = json.dumps(
+            [
+                {
+                    "alias": c.alias,
+                    "canonical": c.canonical,
+                    "label": c.label,
+                    "source": c.source,
+                }
+                for c in card.alias_claims
+            ],
+            ensure_ascii=False,
+        )
     if anomaly is not None:
         props["anomaly"] = anomaly
     return props

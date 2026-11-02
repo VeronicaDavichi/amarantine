@@ -240,6 +240,7 @@ def remember_event(
         types=labels.types,
         entities=labels.entities,
         actions=list(getattr(labels, "actions", []) or []),
+        alias_claims=list(getattr(labels, "alias_claims", []) or []),
         summary=summary,
         retention="normal",
         ingested_at=moment,

@@ -14,7 +14,12 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
-from memory.models.event_card import Entity
+from memory.models.event_card import (
+    ALIAS_EXACT,
+    ALIAS_UNCERTAIN,
+    AliasClaim,
+    Entity,
+)
 
 #: 规则层内置词表（`TYPES_VOCAB` 为空时才用）。类型值应保持稳定，便于回溯统计。
 DEFAULT_TYPE_RULES: dict[str, tuple[str, ...]] = {
@@ -194,6 +199,114 @@ _PERSON_TAIL_CHARS = frozenset("让的被给和与跟对把向从在是有个这
 
 #: 人名最短长度。单字人名噪声太大（`周会上` 的 `周` 会被标成 nr）
 MIN_PERSON_LEN = 2
+
+#: 别名声明模式：`A 就是 B` / `A 也叫 B` / `A 又称 B` / `A 也就是 B`
+#:
+#: 只认**显式的等价词**。`A 是 B` 不算 —— `张三是个好人` 不是别名声明。
+_ALIAS_PATTERN = re.compile(
+    r"([\u4e00-\u9fa5A-Za-z0-9_]{2,12})\s*"
+    # 交替**按长度降序**：`也叫作` 必须排在 `也叫` 前面。
+    # 否则短词先匹配，把 `作` 甩到右边，抽出 `李四 -> 作小李`。
+    r"(?:也叫作|也就是|也叫|又称|亦称|又叫|就是|即)\s*"
+    r"([\u4e00-\u9fa5A-Za-z0-9_]{2,12})"
+)
+
+#: 描述性内容里常见的词。右边出现它们，说明这不是一个干净的名字，
+#: 而是「那个……的东西」，得靠推理才能落到具体名字上 → 置信度降级。
+_DESCRIPTIVE_MARKERS = frozenset(
+    {
+        "那个", "这个", "最", "很", "特别", "非常", "比较", "之一",
+        "东西", "家伙", "人", "家", "位", "个", "种",
+    }
+)
+
+
+#: 别名左侧常被误带进来的前缀（`我说的豆包` → `豆包`）
+_ALIAS_PREFIXES = ("我说的", "我说的是", "就是说", "那个", "这个", "叫做", "称为")
+
+
+def _strip_prefix(name: str) -> str:
+    for prefix in _ALIAS_PREFIXES:
+        if name.startswith(prefix) and len(name) > len(prefix):
+            return name[len(prefix) :]
+    return name
+
+
+def _looks_like_name(canonical: str) -> bool:
+    """右边是不是一个**能当名字用**的串。
+
+    `印度人` 像名字（虽然它是个类别，但至少是个名词短语），
+    `那个ai中最弱智的` 不像 —— 它是描述，不是名字。
+
+    不像名字的声明**不建图上的别名边**：把描述塞进 `(:Alias)` 节点，
+    以后查「三哥」会拉出一个叫「那个ai中最弱智的」的人。
+    这条 claim 仍然留在事件卡上，供 LLM 层（P2）去解析。
+    """
+    if not canonical:
+        return False
+    if len(canonical) > 6:
+        return False
+    if any(marker in canonical for marker in _DESCRIPTIVE_MARKERS):
+        return False
+    if canonical[-1:] in ("的", "者", "地"):
+        return False
+    return True
+
+
+def _alias_label(canonical: str) -> str:
+    """判断一条别名声明的置信度。
+
+    判据是**右边是不是一个干净的名字**：
+
+    - `糖包就是豆包` → `豆包` 干净 → ``exact``（用户直接给了等价关系）
+    - `糖包就是那个ai中最弱智的` → 右边是描述 → ``uncertain``
+      （得先知道「最弱智的 AI」是谁，才能推出「糖包 = 豆包」，这一步会错）
+
+    描述性右边界**不直接丢弃** —— 它仍是线索，只是要打上存疑标记，
+    召回时让调用方自己去判断。
+    """
+    if any(marker in canonical for marker in _DESCRIPTIVE_MARKERS):
+        return ALIAS_UNCERTAIN
+    if _has_stop_char(canonical):
+        return ALIAS_UNCERTAIN
+    if len(canonical) > 6:
+        return ALIAS_UNCERTAIN
+    return ALIAS_EXACT
+
+
+def extract_alias_claims(text: str) -> list[AliasClaim]:
+    """从文本抽「A 也叫 B」的别名声明。
+
+    只认显式等价词，不做推断 —— 推断是 LLM 层的事（P2）。
+    规则层只负责把话说死了的那些抓出来，并且**如实标注置信度**。
+    """
+    claims: list[AliasClaim] = []
+    seen: set[tuple[str, str]] = set()
+
+    for match in _ALIAS_PATTERN.finditer(text):
+        raw_alias = match.group(1).strip()
+        raw_canonical = match.group(2).strip()
+        alias = _strip_prefix(raw_alias)
+        canonical = _strip_prefix(raw_canonical)
+        if alias == canonical:
+            continue
+        if (alias, canonical) in seen:
+            continue
+        # 两边都得像个名字，不能把整句话当名字
+        if len(alias) < 2 or len(alias) > 12:
+            continue
+        seen.add((alias, canonical))
+        # **用原始串判置信度**：裁剪前缀会把描述性标记（`那个`）一起削掉，
+        # 削完再看就「看起来像名字」了 —— `那个国产大模型` 会被误判成 exact。
+        claims.append(
+            AliasClaim(
+                alias=alias,
+                canonical=canonical,
+                label=_alias_label(raw_canonical),  # type: ignore[arg-type]
+                source="user_declared",
+            )
+        )
+    return claims
 
 #: jieba 是否可用。`None` = 还没探测过。
 _JIEBA_OK: bool | None = None
@@ -549,6 +662,8 @@ class LabelResult:
     entities: list[Entity] = field(default_factory=list)
     #: 动作（谁对谁做了什么）。**不参与 event_id 哈希**。
     actions: list[object] = field(default_factory=list)
+    #: 这里的「A 也叫 B」声明。**不参与 event_id 哈希**。
+    alias_claims: list[AliasClaim] = field(default_factory=list)
     source: str = "rules"
 
 
@@ -570,8 +685,13 @@ def label_by_rules(summary: str, *, vocab: list[str] | None = None) -> LabelResu
     types = _match_types(summary, vocab or [])
     entities = extract_entities(summary)
     actions = extract_actions(summary, entities=entities)
+    claims = extract_alias_claims(summary)
     return LabelResult(
-        types=types, entities=entities, actions=list(actions), source="rules"
+        types=types,
+        entities=entities,
+        actions=list(actions),
+        alias_claims=claims,
+        source="rules",
     )
 
 

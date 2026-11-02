@@ -36,9 +36,23 @@ class FakeResult:
             yield FakeRow(event_id=row)
 
 
-class FakeSession:
-    def __init__(self, rows: list[str]) -> None:
+class FakeAliasResult:
+    """别名查询返回结构跟主查询不一样：带 label / confidence。"""
+
+    def __init__(self, rows: list[dict[str, Any]]) -> None:
         self._rows = rows
+
+    def __iter__(self):
+        for row in self._rows:
+            yield FakeRow(row)
+
+
+class FakeSession:
+    def __init__(
+        self, rows: list[str], aliases: list[dict[str, Any]] | None = None
+    ) -> None:
+        self._rows = rows
+        self._aliases = aliases or []
         self.calls: list[tuple[str, dict[str, Any]]] = []
 
     def __enter__(self):
@@ -47,14 +61,19 @@ class FakeSession:
     def __exit__(self, *args):
         return False
 
-    def run(self, cypher: str, **params: Any) -> FakeResult:
+    def run(self, cypher: str, **params: Any) -> Any:
         self.calls.append((cypher, params))
+        # 别名解析是单独一次查询（RESOLVE_ALIAS_CYPHER），结构不同
+        if "ALIAS_OF" in cypher:
+            return FakeAliasResult(self._aliases)
         return FakeResult(self._rows)
 
 
 class FakeDriver:
-    def __init__(self, rows: list[str]) -> None:
-        self.session_obj = FakeSession(rows)
+    def __init__(
+        self, rows: list[str], aliases: list[dict[str, Any]] | None = None
+    ) -> None:
+        self.session_obj = FakeSession(rows, aliases)
 
     def session(self) -> FakeSession:
         return self.session_obj
@@ -79,12 +98,20 @@ def _search(drv: FakeDriver, entities, persons=None, **kw) -> GraphHits:
     )
 
 
+def _main_call(drv: FakeDriver) -> tuple[str, dict[str, Any]]:
+    """取主查询那次调用（别名解析排在最前，要跳过）。"""
+    for cypher, params in drv.session_obj.calls:
+        if "ALIAS_OF" not in cypher:
+            return cypher, params
+    raise AssertionError("没有找到主查询调用")
+
+
 # ---------------- 分流 ----------------
 
 def test_persons_and_entities_passed_separately(driver: FakeDriver) -> None:
     """人/实体必须分开传进 Cypher —— 这是让动作扩展只对实体生效的前提。"""
     _search(driver, ["项目A"], ["张三"])
-    cypher, params = driver.session_obj.calls[0]
+    _cypher, params = _main_call(driver)
     assert params["person_names"] == ["张三"]
     assert params["entity_names"] == ["项目A"]
 

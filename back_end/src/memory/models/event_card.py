@@ -55,6 +55,50 @@ class Action(BaseModel):
     primary: bool = True
 
 
+#: 别名置信度分级。
+#:
+#: **判据是「这句话里有几分显式的身份锚定」**：
+#:
+#: - ``exact``：用户明确说「A 就是 B」。直接等价声明，不需要推理。
+#: - ``probable``：规则能对上（同姓 + `小X`/`老X`/`X总` 这类称呼变形）。
+#: - ``uncertain``：要靠描述性内容去猜。``糖包就是那个 AI 里最弱智的``
+#:   得先知道「最弱智的 AI」是谁，才能推出「糖包 = 豆包」—— 这一步会错。
+#:
+#: 召回时低置信度**必须带标记**，不能让用户以为那是板上钉钉的事实。
+ALIAS_EXACT = "exact"
+ALIAS_PROBABLE = "probable"
+ALIAS_UNCERTAIN = "uncertain"
+
+#: 各等级的数值权重（写进图的边属性，便于排序与阈值过滤）
+ALIAS_CONFIDENCE: dict[str, float] = {
+    ALIAS_EXACT: 1.0,
+    ALIAS_PROBABLE: 0.7,
+    ALIAS_UNCERTAIN: 0.4,
+}
+
+
+class AliasClaim(BaseModel):
+    """一条「A 也叫 B」的声明。
+
+    **一个别名可能对应多个人**：``三哥`` 既能指印度人，也能指家里排行第三的
+    男性。别名不能假设一对一 —— 图上的 `(:Alias)` 节点可以被多条 `ALIAS_OF`
+    边指向，召回时发现多个主人就要标 `ambiguous`。
+
+    **不参与 `event_id` 哈希**：理由同 `Action`，声明是派生标注。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    #: 别名本身（`小张` / `糖包` / `三哥`）
+    alias: str = Field(min_length=1)
+    #: 它指向的那个更正式的名字（`张三` / `豆包`）
+    canonical: str = Field(min_length=1)
+    #: 置信度等级
+    label: Literal["exact", "probable", "uncertain"] = ALIAS_UNCERTAIN
+    #: 谁说的：`user_declared`（用户原话）/ `rule` / `llm_inferred`
+    source: Literal["user_declared", "rule", "llm_inferred"] = "user_declared"
+
+
 class EventCard(BaseModel):
     """事件卡：记忆的最小语义单元。"""
 
@@ -101,6 +145,14 @@ class EventCard(BaseModel):
     #: 事件里的动作列表。`types` 是粗分类，这个才是「谁对谁做了什么」。
     #: **不参与 `event_id` 哈希** —— 详见 `Action` 的文档。
     actions: list[Action] = Field(default_factory=list)
+
+    # ---------- 别名声明的留痕 ----------
+    #: 这句话里出现的「A 也叫 B」。**不参与 `event_id` 哈希**。
+    #:
+    #: 别名关系本身存在图上（`(:Person)-[:ALIAS_OF]->(:Alias)`），
+    #: 这里留的是「哪句话说的」，用于追溯和撤销。
+    #: 一个人可能有多种称呼，也可能一种称呼对应多个人 —— 都靠这张表兜着。
+    alias_claims: list[AliasClaim] = Field(default_factory=list)
 
     # ---------- 业务不变量（schema 表达不了的） ----------
 

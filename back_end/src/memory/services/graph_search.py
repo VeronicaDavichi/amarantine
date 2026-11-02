@@ -43,6 +43,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from memory.config import Settings
+from memory.services.graph_outbox import RESOLVE_ALIAS_CYPHER
 
 logger = logging.getLogger("memory.graph_search")
 
@@ -160,6 +161,20 @@ LIMIT $limit
 
 
 @dataclass(frozen=True)
+class AliasHit:
+    """一条被解析的别名。"""
+
+    #: 查询里说的那个称呼（`小张`）
+    alias: str
+    #: 它指向的主人（`张三`）
+    canonical: str
+    #: 置信度等级：exact / probable / uncertain
+    label: str
+    #: 数值置信度
+    confidence: float
+
+
+@dataclass(frozen=True)
 class GraphHits:
     """图通道结果。`ok=False` 时上游应置 `degraded=true` 并继续。"""
 
@@ -168,6 +183,27 @@ class GraphHits:
     error: str | None = None
     #: 本次走了哪几条路（诊断用，便于确认动作扩展真的生效）
     routed: tuple[str, ...] = ()
+    #: 本次解析到的别名。**低置信度的会出现在这里，让上层自己决定要不要提示用户。**
+    alias_hits: tuple[AliasHit, ...] = ()
+
+    @property
+    def ambiguous_aliases(self) -> tuple[str, ...]:
+        """一个称呼对应多个主人时，把那些称呼列出来。
+
+        `三哥` 既能指印度人，也能指家里排行第三的男性 —— 这种歧义
+        不能替用户拍板，只能如实报出来。
+        """
+        by_alias: dict[str, set[str]] = {}
+        for hit in self.alias_hits:
+            by_alias.setdefault(hit.alias, set()).add(hit.canonical)
+        return tuple(sorted(a for a, owners in by_alias.items() if len(owners) > 1))
+
+    @property
+    def uncertain_aliases(self) -> tuple[str, ...]:
+        """置信度低于 probable 的别名（召回结果需要对用户标注）。"""
+        return tuple(
+            sorted({h.alias for h in self.alias_hits if h.label == "uncertain"})
+        )
 
 
 def _clean_names(entity_names: list[str]) -> list[str]:
@@ -243,25 +279,60 @@ def search_by_entities(
         # 调用方可能明确传空列表（「这次查询没抽出人」），这是分流版的有效输入，
         # 不能因为列表空就退回老路径 —— 那样实体扩展也会一起失效。
         use_split = person_names is not None
-        cypher = _SEARCH_CYPHER if use_split else _ALL_NAMES_CYPHER
-        params = {
-            "namespace": namespace,
-            "names": all_names,
-            "person_names": persons,
-            "entity_names": entities,
-            "limit": int(limit),
-            "timeout": timeout_s,
-        }
 
+        # 先解析别名：`小张` → `张三`。
+        #
+        # 一个人可能有多种称呼，直接把 `小张` 拿去匹配 `(:Person {name})`
+        # 会一条都命中不了。别名不是独立的实体，它得先落到主人身上。
+        #
+        # 单独一次查询而不是塞进上面的大 UNION：UNION 要求每路列数一致，
+        # 别名路还要额外带回置信度，混在一起会把所有路的返回结构撑大。
+        alias_hits: list[AliasHit] = []
         with drv.session() as session:
+            if all_names:
+                for row in session.run(
+                    RESOLVE_ALIAS_CYPHER, namespace=namespace, names=all_names
+                ):
+                    alias_hits.append(
+                        AliasHit(
+                            alias=row["alias"],
+                            canonical=row["canonical"],
+                            label=row["label"] or "uncertain",
+                            confidence=float(row["confidence"] or 0.4),
+                        )
+                    )
+                # 别名的主人要并入人名集合，才能走 INVOLVES 直连。
+                # 一个别名可能解析出多个主人（`三哥` 的歧义），全部并入 ——
+                # 宁可多召回，也不能替用户挑一个。
+                resolved = _clean_names([h.canonical for h in alias_hits])
+                if resolved:
+                    persons = _clean_names(persons + resolved)
+                    all_names = _clean_names(all_names + resolved)
+
+            cypher = _SEARCH_CYPHER if use_split else _ALL_NAMES_CYPHER
+            params = {
+                "namespace": namespace,
+                "names": all_names,
+                "person_names": persons,
+                "entity_names": entities,
+                "limit": int(limit),
+                "timeout": timeout_s,
+            }
             result = session.run(cypher, **params)
             event_ids = [row["event_id"] for row in result if row.get("event_id")]
 
         routed = ["person_direct", "entity_direct"] if use_split else ["direct"]
         if use_split and entities:
             routed.extend(["entity_to_person", "entity_to_action"])
+        if alias_hits:
+            routed.insert(0, "alias_resolved")
         routed.extend(["related", "text_fallback"])
-        return GraphHits(event_ids=event_ids, ok=True, routed=tuple(routed))
+        return GraphHits(
+            event_ids=event_ids,
+            ok=True,
+            routed=tuple(routed),
+            alias_hits=tuple(alias_hits),
+        )
     except Exception as exc:  # noqa: BLE001 - 图失败必须降级，不能抛给上层
         message = f"图扩展失败（已降级）: {exc}"
         logger.warning("%s namespace=%s", message, namespace)

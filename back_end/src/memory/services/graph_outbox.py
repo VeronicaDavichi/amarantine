@@ -59,7 +59,8 @@ import logging
 from dataclasses import dataclass
 
 from memory.config import Settings
-from memory.models.event_card import EventCard
+from memory.models.event_card import ALIAS_CONFIDENCE, EventCard
+from memory.services.labeler import _looks_like_name
 
 logger = logging.getLogger("memory.graph")
 
@@ -91,6 +92,43 @@ CREATE (e)-[:INVOLVES {created_at: $created_at}]->(p)
 RETURN count(*)
 """
 
+#: 别名：`(Person)-[:ALIAS_OF]->(Alias)`
+#:
+#: **一个人可能有多种称呼，一种称呼也可能对应多个人。**
+#:
+#: - `三哥` 既能指印度人，也能指家里排行第三的男性 ——
+#:   所以 `(:Alias {name:"三哥"})` 可以被多条 `ALIAS_OF` 边指向。
+#: - 召回时发现一个别名有多个主人，必须标 `ambiguous`，不能随便挑一个。
+#:
+#: **边用 CREATE 不用 MERGE**：同一条声明说两遍是两件事，
+#: 而且 CREATE 才能带 `source_event_id` 追溯「哪句话说的」。
+#: 撤销走 `DELETE`（按 `source_event_id` 或 `label` 精确删），
+#: 原始事件卡不动 —— 别名是派生关系，删了不丢事实。
+APPEND_ALIAS_CYPHER = """
+MATCH (e:Event {namespace: $namespace, event_id: $event_id})
+UNWIND $aliases AS item
+MERGE (a:Alias {namespace: $namespace, name: item.alias})
+ON CREATE SET a.first_seen = $created_at
+MERGE (p:Person {namespace: $namespace, name: item.canonical})
+ON CREATE SET p.first_seen = $created_at
+CREATE (p)-[:ALIAS_OF {
+    created_at: $created_at,
+    confidence: item.confidence,
+    label: item.label,
+    source: item.source,
+    source_event_id: $event_id
+}]->(a)
+RETURN count(*)
+"""
+
+#: 召回时从别名反查主人。一个别名可能有多个主人（一词多义）。
+RESOLVE_ALIAS_CYPHER = """
+MATCH (a:Alias {namespace: $namespace})<-[r:ALIAS_OF]-(p:Person)
+WHERE a.name IN $names
+RETURN a.name AS alias, p.name AS canonical,
+       r.label AS label, r.confidence AS confidence,
+       r.source_event_id AS source_event_id
+"""
 #: 动作：**按 verb 建唯一节点**，同义词已归并
 #:
 #: `(:Action {verb:"延期"})` 全库只有一个 —— 这样「哪些事被延过」是一次
@@ -167,6 +205,8 @@ class OutboxResult:
     time_key: str | None = None
     #: 本次涉及的动作数（诊断用）
     actions: int = 0
+    #: 本次建立的别名边数（只算右边像名字的声明）
+    aliases: int = 0
 
 
 def _split_entities(card: EventCard) -> tuple[list[str], list[dict[str, str]]]:
@@ -278,6 +318,26 @@ def write_event_node(
                 ).single()
                 related = int(record[0]) if record and record[0] is not None else 0
 
+            # 别名：只建「右边像名字」的那些声明。
+            # 描述性的（`糖包就是那个AI里最弱智的`）不建边 ——
+            # 把描述塞进 (:Alias) 节点，以后查「糖包」会拉出一个叫
+            # 「那个AI里最弱智的」的人。这类 claim 留在事件卡上给 LLM 层解析。
+            alias_items = [
+                {
+                    "alias": c.alias,
+                    "canonical": c.canonical,
+                    "label": c.label,
+                    "confidence": ALIAS_CONFIDENCE.get(c.label, 0.4),
+                    "source": c.source,
+                }
+                for c in card.alias_claims
+                if _looks_like_name(c.canonical)
+            ]
+            if alias_items:
+                session.run(
+                    APPEND_ALIAS_CYPHER, **params, aliases=alias_items
+                ).consume()
+
             if context:
                 session.run(LINK_CONTEXT_CYPHER, **params, context=context).consume()
 
@@ -288,6 +348,7 @@ def write_event_node(
             entities=len(entities),
             time_key=params["time_key"],
             actions=len(action_items),
+            aliases=len(alias_items),
         )
     except Exception as exc:  # noqa: BLE001 - 图失败绝不阻断主链路
         message = f"图写入失败（已忽略，等待重建对账）: {exc}"
