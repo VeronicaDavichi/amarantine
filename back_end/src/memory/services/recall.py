@@ -129,7 +129,11 @@ def recall(
             raise RecallUnavailableError(f"embedding 不可用: {exc}") from exc
 
         # 3) 并行扇出
-        entities = [e.name for e in extract_entities(query)]
+        #    人跟实体要分开传：人和实体在图通道走不同的路
+        #    （实体命中后会挖动作和相关人，人则直接收工，见 graph_search 文档）
+        _query_ents = extract_entities(query)
+        persons = [e.name for e in _query_ents if e.kind == "person"]
+        entities = [e.name for e in _query_ents if e.kind != "person"]
         graph_fn = graph_searcher or search_by_entities
 
         def run_vector():
@@ -143,7 +147,9 @@ def recall(
             )
 
         def run_graph():
-            return graph_fn(entities, namespace, settings=settings)
+            return graph_fn(
+                entities, namespace, person_names=persons, settings=settings
+            )
 
         channel_results: dict[str, Any] = {}
         errors: dict[str, str] = {}

@@ -86,11 +86,11 @@ def _embedder(text: str, settings) -> list[float]:
     return [0.01] * settings.EMBEDDING_DIM
 
 
-def _graph_ok(entities, namespace, *, settings):
+def _graph_ok(entities, namespace, *, person_names=None, settings):
     return GraphHits(event_ids=[], ok=True)
 
 
-def _graph_down(entities, namespace, *, settings):
+def _graph_down(entities, namespace, *, person_names=None, settings):
     return GraphHits(event_ids=[], ok=False, error="neo4j down")
 
 
