@@ -294,24 +294,53 @@ curl -s -X POST -H "Authorization: Bearer $TOKEN" \
 
 `deleted_at` 保留不删，作为「曾被忘过」的审计痕迹。
 
+### 图上的三类核心节点
+
+图里有三类一等公民，不是「一个 Event 加一堆属性」：
+
+| 节点 | 键 | 为什么单独建 |
+|---|---|---|
+| `(:Event)` | `event_id` | 事件本体 |
+| `(:Person)` | `name` | **人是记忆的主语**，最常用的检索入口 |
+| `(:Time)` | `YYYY-MM-DD` | **时间是共享维度**，属性没法被多张卡共用 |
+
+剩下两类是辅助：`(:Entity)` 装 topic/place/org 这类宾语，
+`(:Context)` 装当前话题。
+
+**为什么人要从 Entity 里拆出来**：如果人只是 `kind="person"` 的一个取值，
+就只能靠属性过滤找，没法作为图的枢纽去连。拆出来后
+「张三的所有事」「张三和李四之间」都是沿边走，不用扫全表。
+
+**为什么时间要建节点**：`date_start` 只是 Event 的属性，属性没法共享、
+也没法做「同一时段」聚合。建成节点后按月查询只要：
+
+```cypher
+MATCH (e:Event)-[:AT]->(t:Time {month: "2026-06"}) RETURN e
+```
+
+实测：两条事件分别落在 2026-06 和 2026-07，按月聚合直接分组出来。
+
 ### 图上的关系只追加，不覆盖
 
-Neo4j 里存三类边，**全部用 `CREATE` 而不是 `MERGE`**：
+五类边，**全部用 `CREATE` 而不是 `MERGE`**：
 
 ```
-(Event)-[:MENTIONS {created_at}]->(Entity)          事件提到某个实体
-(Event)-[:RELATED  {kind, created_at}]->(Event)     两个事件共享实体
+(Event)-[:INVOLVES {created_at}]->(Person)          事件涉及哪些人
+(Event)-[:AT       {created_at}]->(Time)            事件发生在哪天
+(Event)-[:MENTIONS {created_at}]->(Entity)          事件提到什么项目/地点
+(Event)-[:RELATED  {kind, created_at}]->(Event)     两个事件共享人或实体
 (Context)-[:RELATES_TO {created_at}]->(Event)       当前话题挂到事件上
 ```
 
 为什么关系不能 `MERGE`：`MERGE ... SET r.at = $now` 会抹掉上一次的时间。
 **同一条记忆被反复提起，恰恰是最有价值的信号** —— 覆盖掉历史等于把信号删了。
 
-实测：同一条内容写三次，`MENTIONS` 边有 3 条、3 个不同时间戳；
-两个共享实体的事件重复写入，`RELATED` 边从 1 条变 2 条。
+实测：同一条内容写三次，`INVOLVES` 边有 3 条、3 个不同时间戳；
+两个共享「张三」的事件重复写入，`RELATED` 边从 1 条变 2 条。
 
-**「不同 event 之间必有关系」的落法**：两个 Event 共享至少一个 Entity 才连
-`RELATED` 边。有交集才连，没交集不硬连（否则边数会平方级爆炸）。
+**「不同 event 之间必有关系」的落法**：两个 Event 共享至少一个 Person
+**或** Entity 才连 `RELATED` 边。共享同一个人的两件事、共享同一个项目的两件事，
+才是真的有关系；两两相连会让边数平方级爆炸。
 
 **Neo4j 不做忘却处理**：删卡时图上的边留在原地，历史不抹。
 

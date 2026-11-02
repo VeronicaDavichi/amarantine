@@ -1,4 +1,4 @@
-"""B9 图 outbox：幂等写 Event 节点，**关系只追加不覆盖**。
+"""B9 图 outbox：Event / Person / Time 三类核心节点，关系只追加不覆盖。
 
 ADR D2 的红线是「**图可丢弃重建**」：
 
@@ -6,34 +6,51 @@ ADR D2 的红线是「**图可丢弃重建**」：
 - 图写失败**只告警，不回滚、不阻断**
 - 节点/边统一带 `namespace`，禁止跨域
 
-## 为什么关系只追加
+## 节点
 
-事件卡本身幂等（`event_id` 是内容哈希），所以 `Event` 节点用 `MERGE`
-不会出问题。但**关系不能 MERGE**：
+| 节点 | 键 | 说明 |
+|---|---|---|
+| `(:Event)` | `namespace + event_id` | 事件本体，内容哈希做键，天然幂等 |
+| `(:Person)` | `namespace + name` | **人**。是一等公民，不是「kind=person 的实体」 |
+| `(:Time)` | `namespace + key` | **时间**。`YYYY-MM-DD`，让「那阵子发生了什么」能查 |
+| `(:Entity)` | `namespace + name` | 非人实体（topic/place/org/event） |
+| `(:Context)` | `namespace + key` | 当前话题 |
 
-`MERGE (a)-[r:RELATED]->(b) SET r.at = $now` 会抹掉上一次的时间。
-同一条记忆被反复提起，恰恰是最有价值的信号 —— 覆盖掉历史等于把这个信号删了。
+**为什么人要从 Entity 里拆出来**：人是记忆的主语，也是最常用的检索入口
+（「张三的事」「我和李四之间」）。把它当成 `kind` 的一个取值，
+就只能靠属性过滤找，没法作为图的枢纽去连。
 
-所以关系一律 `CREATE`：同一对节点之间可以有多条边，各自带 `created_at`，
-时间线完整保留。（Neo4j 不做忘却处理：删卡时图上的边留在原地。）
+**为什么时间要建节点**：`date_start` 只是 Event 的属性，属性没法被多张卡共享、
+也没法做「同一时段」的聚合。建成节点后 `(Event)-[:AT]->(Time)` 才能
+让「上个月」这种查询走索引，而不是扫全部事件。
 
-## 图结构
+## 关系
 
 ```
-(:Event {namespace, event_id, ...})
-(:Entity {namespace, name})
-(:Context {namespace, key})
-
+(Event)-[:INVOLVES {created_at}]->(Person)
+(Event)-[:AT       {created_at}]->(Time)
 (Event)-[:MENTIONS {created_at}]->(Entity)
 (Event)-[:RELATED  {kind, created_at}]->(Event)
 (Context)-[:RELATES_TO {created_at}]->(Event)
 ```
 
-**`RELATED` 的产生条件**：两个 Event 共享至少一个 Entity。
-这就是「不同 event 之间必有关系」的落法 —— 有关系才有边，没交集不硬连。
+**关系一律 `CREATE`，绝不用 `MERGE`**：
 
-Cypher 里关系不能作为边的起点，所以「把 Context 连到某条关系上」
-用 `(Context)-[:RELATES_TO]->(Event)` 表达：事件是关系的锚点。
+`MERGE (a)-[r:RELATED]->(b) SET r.at = $now` 会抹掉上一次的时间。
+同一条记忆被反复提起，恰恰是最有价值的信号 —— 覆盖掉历史等于把信号删了。
+所以同一对节点之间可以有多条边，各自带 `created_at`，时间线完整保留。
+
+节点本身用 `MERGE` 是安全的：它们的键（event_id / name / date）就是身份，
+合并同身份的两个节点正是我们要的。
+
+**Neo4j 不做忘却处理**：删卡时图上的边留在原地。
+
+## `RELATED` 的产生条件
+
+两个 Event 共享至少一个 Person **或** Entity 才连边。
+
+「不同 event 之间必有关系」不等于「两两相连」—— 后者是 O(n²) 的边数爆炸。
+共享同一个人的两件事、共享同一个项目的两件事，才是真的有关系。
 """
 
 from __future__ import annotations
@@ -49,7 +66,7 @@ logger = logging.getLogger("memory.graph")
 #: 一次写入最多连出多少条 event-event 边（防边数爆炸）
 MAX_RELATED_LINKS = 20
 
-#: Event 节点：`MERGE` 是安全的，因为 event_id 是内容哈希，同一条内容不会有两份
+#: Event 节点：`MERGE` 安全，event_id 是内容哈希，同一条内容不会有两份
 MERGE_EVENT_CYPHER = """
 MERGE (e:Event {namespace: $namespace, event_id: $event_id})
 SET e.summary     = $summary,
@@ -64,24 +81,43 @@ SET e.summary     = $summary,
 RETURN e
 """
 
-#: 实体边：每次提及都留一条，`created_at` 各不相同
-APPEND_MENTION_CYPHER = """
+#: 人：`kind == "person"` 的实体升级成独立的 Person 节点
+APPEND_PERSON_CYPHER = """
 MATCH (e:Event {namespace: $namespace, event_id: $event_id})
-UNWIND $names AS name
-MERGE (n:Entity {namespace: $namespace, name: name})
-  ON CREATE SET n.kind = $kind
+UNWIND $persons AS name
+MERGE (p:Person {namespace: $namespace, name: name})
+ON CREATE SET p.first_seen = $created_at
+CREATE (e)-[:INVOLVES {created_at: $created_at}]->(p)
+RETURN count(*)
+"""
+
+#: 非人实体：topic / place / org / event
+APPEND_ENTITY_CYPHER = """
+MATCH (e:Event {namespace: $namespace, event_id: $event_id})
+UNWIND $entities AS item
+MERGE (n:Entity {namespace: $namespace, name: item.name})
+ON CREATE SET n.kind = item.kind
 CREATE (e)-[:MENTIONS {created_at: $created_at}]->(n)
 RETURN count(*)
 """
 
-#: event-event 边：共享实体的两个 Event 连一条，**只追加**
+#: 时间：按 `date_start` 建日粒度节点，让「那阵子」能走索引
+APPEND_TIME_CYPHER = """
+MATCH (e:Event {namespace: $namespace, event_id: $event_id})
+MERGE (t:Time {namespace: $namespace, key: $time_key})
+ON CREATE SET t.year = $time_year, t.month = $time_month
+CREATE (e)-[:AT {created_at: $created_at}]->(t)
+RETURN t
+"""
+
+#: event-event 边：共享 Person 或 Entity 的两个 Event 连一条，**只追加**
 LINK_RELATED_CYPHER = """
 MATCH (e:Event {namespace: $namespace, event_id: $event_id})
-MATCH (e)-[:MENTIONS]->(:Entity)<-[:MENTIONS]-(other:Event {namespace: $namespace})
+MATCH (e)-[:MENTIONS|INVOLVES]->()<-[:MENTIONS|INVOLVES]-(other:Event {namespace: $namespace})
 WHERE other.event_id <> e.event_id
 WITH DISTINCT e, other
 LIMIT $max_links
-CREATE (e)-[:RELATED {kind: 'shared_entity', created_at: $created_at}]->(other)
+CREATE (e)-[:RELATED {kind: 'shared_node', created_at: $created_at}]->(other)
 RETURN count(*)
 """
 
@@ -102,6 +138,26 @@ class OutboxResult:
     error: str | None = None
     #: 本次新建的 event-event 边数（诊断用）
     related_links: int = 0
+    #: 本次涉及的人 / 时间键 / 非人实体数（诊断用）
+    persons: int = 0
+    entities: int = 0
+    time_key: str | None = None
+
+
+def _split_entities(card: EventCard) -> tuple[list[str], list[dict[str, str]]]:
+    """把人从实体里分出来：人走 Person 节点，其余走 Entity 节点。
+
+    同一个人和一个话题不该混在同一个标签下 —— 前者是记忆的主语，
+    后者是记忆的宾语，查询入口完全不同。
+    """
+    persons: list[str] = []
+    entities: list[dict[str, str]] = []
+    for e in card.entities:
+        if e.kind == "person":
+            persons.append(e.name)
+        else:
+            entities.append({"name": e.name, "kind": e.kind})
+    return persons, entities
 
 
 def write_event_node(
@@ -114,12 +170,14 @@ def write_event_node(
 ) -> OutboxResult:
     """把事件卡同步成图节点，并**追加**这次提及产生的关系。
 
-    四步顺序不能换：
+    六步顺序不能换：
 
-    1. `MERGE` Event 节点 —— 节点幂等
-    2. `CREATE` 实体边 —— 必须先有 `MENTIONS` 才能算共享实体
-    3. `CREATE` event-event 边 —— 依赖第 2 步建好的边
-    4. `CREATE` context 边（可选）
+    1. `MERGE` Event 节点
+    2. `CREATE` Person 边（`kind=person`）
+    3. `CREATE` Entity 边（其余 kind）
+    4. `CREATE` Time 边（按 `date_start` 的日粒度）
+    5. `CREATE` event-event 边 —— 依赖第 2/3 步建好的边
+    6. `CREATE` Context 边（可选）
 
     Args:
         card: 事件卡。
@@ -142,11 +200,12 @@ def write_event_node(
                 auth=(settings.NEO4J_USER, settings.NEO4J_PASSWORD),
             )
 
+        day = card.date_start
         params = {
             "namespace": card.namespace,
             "event_id": card.event_id,
             "summary": card.summary,
-            "date_start": card.date_start.isoformat(),
+            "date_start": day.isoformat(),
             "date_end": card.date_end.isoformat() if card.date_end else None,
             "types": list(card.types),
             "importance": card.importance,
@@ -156,34 +215,45 @@ def write_event_node(
             "ingested_at": card.ingested_at.isoformat(),
             # 关系的统一时间戳：这次「提及」发生的时刻
             "created_at": card.ingested_at.isoformat(),
+            # 时间节点：日粒度，月和年是给「按月/按年」查询用的副本属性
+            "time_key": day.isoformat(),
+            "time_year": day.year,
+            "time_month": f"{day.year:04d}-{day.month:02d}",
         }
-        names = [e.name for e in card.entities]
-        kind = card.entities[0].kind if card.entities else "topic"
+        persons, entities = _split_entities(card)
 
+        related = 0
         with drv.session() as session:
             session.run(MERGE_EVENT_CYPHER, **params).consume()
 
-            if names:
+            if persons:
+                session.run(APPEND_PERSON_CYPHER, **params, persons=persons).consume()
+
+            if entities:
                 session.run(
-                    APPEND_MENTION_CYPHER,
-                    **params,
-                    names=names,
-                    kind=kind,
+                    APPEND_ENTITY_CYPHER, **params, entities=entities
                 ).consume()
 
+            session.run(APPEND_TIME_CYPHER, **params).consume()
+
+            if persons or entities:
                 record = session.run(
                     LINK_RELATED_CYPHER,
                     **params,
                     max_links=MAX_RELATED_LINKS,
                 ).single()
                 related = int(record[0]) if record and record[0] is not None else 0
-            else:
-                related = 0
 
             if context:
                 session.run(LINK_CONTEXT_CYPHER, **params, context=context).consume()
 
-        return OutboxResult(ok=True, related_links=related)
+        return OutboxResult(
+            ok=True,
+            related_links=related,
+            persons=len(persons),
+            entities=len(entities),
+            time_key=params["time_key"],
+        )
     except Exception as exc:  # noqa: BLE001 - 图失败绝不阻断主链路
         message = f"图写入失败（已忽略，等待重建对账）: {exc}"
         logger.warning("%s event_id=%s", message, card.event_id)
