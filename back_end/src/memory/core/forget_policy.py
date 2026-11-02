@@ -43,6 +43,8 @@ class ForgetCandidate:
     retention: str = "normal"
     pinned: bool = False
     unresolved: list[str] = field(default_factory=list)
+    #: 人工裁决（D5 resolve）。`None` = 还没人看过；`keep` / `delete` 都是终局。
+    review_verdict: str | None = None
     #: 仅用于管理接口展示，不参与分桶判定
     summary: str | None = None
 
@@ -121,7 +123,11 @@ def classify(
             age_days=age,
         )
 
-    # ---- 1) 五类硬信号 → 绝对保护 ----
+    # ---- 1) 人工裁决 `keep`：只加强保护，放最前无风险 ----
+    if candidate.review_verdict == "keep":
+        return verdict(BUCKET_PROTECTED, "manual_keep")
+
+    # ---- 2) 五类硬信号 → 绝对保护 ----
     if candidate.pinned:
         return verdict(BUCKET_PROTECTED, "pinned")
     if candidate.retention in PERMANENT_RETENTIONS:
@@ -129,20 +135,27 @@ def classify(
     if candidate.unresolved:
         return verdict(BUCKET_PROTECTED, "unresolved")
 
-    # ---- 2) 宽限期（A11）：新卡不进任何删除桶 ----
+    # ---- 3) 人工裁决 `delete`：**不推翻硬信号**，放在它们之后 ----
+    # 为什么不在最前：一次误点不该能删掉 pinned / 有未决事项的卡。
+    # 人判「可删」只是把卡送进 SAFE_TO_DELETE，真正删除还要过 4.7 的扫描，
+    # 两道缓冲都在，不靠单点决定。
+    if candidate.review_verdict == "delete":
+        return verdict(BUCKET_SAFE_TO_DELETE, "manual_delete")
+
+    # ---- 4) 宽限期（A11）：新卡不进任何删除桶 ----
     # 注意这里**同时**要求 recall_count == 0：已经被召回过的新卡是活跃的，
     # 走后面的分支也一样安全，但这里提前返回能省一次判断。
     if age <= grace_days and candidate.recall_count == 0:
         return verdict(BUCKET_PROTECTED, "grace_period")
 
-    # ---- 3) importance 灰区 → 人工看 ----
+    # ---- 5) importance 灰区 → 人工看 ----
     # **必须在淘汰条件之前判**：否则 importance 高的卡会被直接扫进 SAFE_TO_DELETE，
     # 一个不可靠的自评分就沉默地导致删除——正是 D7 要避免的。
     # 注意这不是"豁免"（豁免=自动保留），而是升级为人工裁决。
     if candidate.importance >= protect_importance:
         return verdict(BUCKET_NEED_REVIEW, "high_importance")
 
-    # ---- 4) 淘汰条件：四个必须**同时**满足 ----
+    # ---- 6) 淘汰条件：四个必须**同时**满足 ----
     if (
         idle >= idle_days
         and candidate.recall_count < min_recalls
@@ -151,7 +164,7 @@ def classify(
     ):
         return verdict(BUCKET_SAFE_TO_DELETE, "idle_and_unrecalled")
 
-    # ---- 5) 其余：活跃但不够老 → 保护 ----
+    # ---- 7) 其余：活跃但不够老 → 保护 ----
     return verdict(BUCKET_PROTECTED, "active")
 
 

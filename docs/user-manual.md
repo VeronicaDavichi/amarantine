@@ -125,6 +125,18 @@ curl -s http://127.0.0.1:8765/health
 curl -s -H "Authorization: Bearer $TOKEN" \
   "http://127.0.0.1:8765/admin/review?bucket=NEED_REVIEW&namespace=work"
 
+# 裁决一条：留着 → PROTECTED（等价人工钉住）
+curl -s -X POST -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"action":"keep","reviewer":"owner","namespace":"work"}' \
+  http://127.0.0.1:8765/admin/review/evt_xxx/resolve
+
+# 裁决一条：可以删 → SAFE_TO_DELETE（**不会立即删**）
+curl -s -X POST -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"action":"delete","reviewer":"owner","namespace":"work"}' \
+  http://127.0.0.1:8765/admin/review/evt_xxx/resolve
+
 # 看「打标打得对不对」的待办（注意：和上一条是**两条不同的队列**）
 curl -s -H "Authorization: Bearer $TOKEN" \
   "http://127.0.0.1:8765/admin/label-review?namespace=work"
@@ -217,11 +229,27 @@ curl -s -X POST -H "Authorization: Bearer $TOKEN" \
 | 问什么 | 这张卡**该不该留** | 这张卡**打得对不对** |
 | 什么时候进 | 闲置很久但 importance 高 | 规则层和 LLM 打标分歧 |
 | 怎么看 | `GET /admin/review?bucket=NEED_REVIEW` | `GET /admin/label-review` |
-| 怎么清 | （待实现） | `POST /admin/label-review/{id}/resolve` |
-| 清掉会怎样 | 留 / 删 | 只记「人看过了」，不动卡 |
+| 怎么清 | `POST /admin/review/{id}/resolve` | `POST /admin/label-review/{id}/resolve` |
+| 清掉会怎样 | 留（→PROTECTED）或归入待删 | 只记「人看过了」，不动卡 |
 
 **它们永远不合并**（ADR A24）。一个是存储策略，一个是标注质量，
 混在一起会让人分不清「该删」和「标错了」。
+
+### 裁决的两个语义
+
+`POST /admin/review/{id}/resolve` 只有两个动作，都有讲究：
+
+- **`keep`** → 进 `PROTECTED`，同时把卡置成 `pinned=true` / `pinned_source=manual`。
+  不置 pinned 的话，下次扫描又会把它扫回 `NEED_REVIEW`，等于没裁。
+- **`delete`** → 进 `SAFE_TO_DELETE`，但**不会立即删除**。真正删除还要过
+  `POST /admin/forget/sweep` 那一关，两道缓冲都在，不靠单点决定。
+
+两个安全边界：
+
+1. **`delete` 不推翻硬保护**。一张 `pinned` 的卡，就算人点了删，仍然进
+   `PROTECTED` —— 一次误点不该能删掉被钉住的东西。
+2. **重复提交同一动作是幂等的**，返回 `unchanged=true` 说明这次没改动状态。
+   提交相反动作**允许** —— 人会改主意，改主意不该被拒绝。
 
 ### 打标分歧是怎么来的
 

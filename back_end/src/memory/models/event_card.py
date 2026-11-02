@@ -64,6 +64,14 @@ class EventCard(BaseModel):
     last_recalled_at: datetime | None = None
     confirmed_by_use: int = Field(default=0, ge=0)
 
+    # ---------- 人工裁决留痕（D5 `POST /admin/review/{id}/resolve`） ----------
+    #: 人对 NEED_REVIEW 的裁决。`None` = 还没人看过。
+    #: `keep` → 视为绝对保护；`delete` → 归入 SAFE_TO_DELETE（**不立即删**）。
+    review_verdict: Literal["keep", "delete"] | None = None
+    #: 谁裁的，审计用。与 `pinned_source` 分开：那个是「为什么被钉」，
+    #: 这个是「谁做的决定」。
+    reviewer: str | None = None
+
     # ---------- 业务不变量（schema 表达不了的） ----------
 
     def check_invariants(self) -> None:

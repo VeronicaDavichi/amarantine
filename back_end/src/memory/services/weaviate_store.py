@@ -21,6 +21,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import uuid
 from datetime import date, datetime
 from typing import Any
@@ -30,6 +31,8 @@ import httpx
 from memory.config import Settings
 from memory.core.tokenize import tokenize_for_index, tokenize_for_query
 from memory.models.event_card import EventCard
+
+logger = logging.getLogger("memory.weaviate")
 
 #: 单 collection（ADR D1：namespace 用属性隔离，不拆 collection）
 COLLECTION = "MemoryEvent"
@@ -105,6 +108,10 @@ SCHEMA_PROPERTIES: list[dict[str, Any]] = [
     {"name": "is_deleted", "dataType": ["boolean"]},
     # 保留时间戳供审计展示（不参与过滤）
     {"name": "deleted_at", "dataType": ["date"]},
+    # 人工裁决留痕（D5 resolve）。旧对象没有这两个属性，读出来是 None，
+    # 语义正好是「还没人看过」——所以加字段不需要回填。
+    {"name": "review_verdict", "dataType": ["text"]},
+    {"name": "reviewer", "dataType": ["text"]},
 ]
 
 
@@ -150,6 +157,10 @@ def to_properties(card: EventCard, *, anomaly: str | None = None) -> dict[str, A
         props["user_directive"] = card.user_directive
     if card.observed_at is not None:
         props["observed_at"] = _rfc3339(card.observed_at)
+    if card.review_verdict is not None:
+        props["review_verdict"] = card.review_verdict
+    if card.reviewer is not None:
+        props["reviewer"] = card.reviewer
     if anomaly is not None:
         props["anomaly"] = anomaly
     return props
@@ -177,7 +188,16 @@ class WeaviateStore:
             raise WeaviateStoreError(f"Weaviate 未就绪: HTTP {resp.status_code}")
 
     def ensure_collection(self) -> None:
-        """collection 不存在则创建；已存在则直接返回。"""
+        """collection 不存在则创建；已存在则补齐缺失属性。
+
+        **为什么不是「已存在就返回」**：往 `SCHEMA_PROPERTIES` 加字段后，
+        老 collection 不会自动获得新属性，查询会因为「字段不存在」而报错。
+        重建 collection 能解决但会丢数据。
+
+        Weaviate 支持往已有 class 追加属性，所以这里做增量补齐：
+        对比远端 schema 与本地的差集，逐个 `POST /v1/schema/{class}/properties`。
+        旧对象读新字段得到 `None`，语义正好是「还没裁决过」。
+        """
         if self._ready:
             return
         self.ping()
@@ -202,7 +222,36 @@ class WeaviateStore:
                 raise WeaviateStoreError(
                     f"创建 collection 失败: HTTP {created.status_code} {created.text[:200]}"
                 )
+        else:
+            self._add_missing_properties(classes=classes)
         self._ready = True
+
+    def _add_missing_properties(self, *, classes: set[str]) -> None:
+        """给已存在的 collection 补上 `SCHEMA_PROPERTIES` 里新增的属性。"""
+        try:
+            detail = self._http.get(f"{self._base}/v1/schema/{COLLECTION}")
+            detail.raise_for_status()
+            existing = {
+                p.get("name") for p in detail.json().get("properties", []) or []
+            }
+        except httpx.HTTPError as exc:
+            raise WeaviateStoreError(f"读取 {COLLECTION} 属性失败: {exc}") from exc
+
+        for prop in SCHEMA_PROPERTIES:
+            name = prop["name"]
+            if name in existing:
+                continue
+            try:
+                added = self._http.post(
+                    f"{self._base}/v1/schema/{COLLECTION}/properties", json=prop
+                )
+            except httpx.HTTPError as exc:
+                raise WeaviateStoreError(f"追加属性 {name} 失败: {exc}") from exc
+            if added.status_code not in (200, 201):
+                raise WeaviateStoreError(
+                    f"追加属性 {name} 失败: HTTP {added.status_code} {added.text[:200]}"
+                )
+            logger.info("Weaviate 属性已补齐: %s.%s", COLLECTION, name)
 
     # ---------- 写入 ----------
 
@@ -353,6 +402,51 @@ class WeaviateStore:
                 f"写 confirmed_by_use 失败: HTTP {resp.status_code} {resp.text[:200]}"
             )
 
+    # ---------- 人工裁决（D5 resolve） ----------
+
+    def set_review_verdict(
+        self,
+        event_id: str,
+        namespace: str,
+        *,
+        verdict: str,
+        reviewer: str | None = None,
+        pinned: bool | None = None,
+    ) -> None:
+        """写人工裁决结果，可选同步 `pinned`。
+
+        `keep` 需要同时置 `pinned=true` / `pinned_source=manual`：
+        ADR 规定 keep 等价于人工钉住。反过来 `delete` **不动 pinned** ——
+        人判「可删」不该悄悄解掉一条被钉的记录，那会让审计对不上。
+
+        Raises:
+            WeaviateStoreError: 写入失败（调用方映射成 503）。
+        """
+        if verdict not in ("keep", "delete"):
+            raise ValueError(f"verdict 必须是 keep/delete：{verdict}")
+
+        self.ensure_collection()
+        uid = deterministic_uuid(namespace, event_id)
+        props: dict[str, Any] = {"review_verdict": verdict}
+        if reviewer is not None:
+            props["reviewer"] = reviewer
+        if pinned is not None:
+            props["pinned"] = pinned
+            if pinned:
+                props["pinned_source"] = "manual"
+
+        url = f"{self._base}/v1/objects/{COLLECTION}/{uid}"
+        try:
+            resp = self._http.patch(
+                url, json={"class": COLLECTION, "properties": props}
+            )
+        except httpx.HTTPError as exc:
+            raise WeaviateStoreError(f"写 review_verdict 失败: {exc}") from exc
+        if resp.status_code not in (200, 204):
+            raise WeaviateStoreError(
+                f"写 review_verdict 失败: HTTP {resp.status_code} {resp.text[:200]}"
+            )
+
     # ---------- 检索（M3 召回用） ----------
 
     def _graphql(self, query: str, variables: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -405,20 +499,22 @@ class WeaviateStore:
 
     @staticmethod
     def _to_hit(obj: dict[str, Any], *, score: float) -> dict[str, Any]:
+        """GraphQL 对象 → 扁平 dict。
+
+        **保留全部属性**，只剔除 `_additional`。以前这里是白名单，
+        结果 `retention` / `recall_count` / `confirmed_by_use` / `review_verdict`
+        被静默丢弃 —— 调用方 `.get()` 拿到的永远是默认值，看起来一切正常，
+        实际是「遗忘策略把每张卡都当成 retention=normal、召回 0 次」。
+        """
         props = dict(obj)
         extra = props.pop("_additional", {}) or {}
-        return {
-            "event_id": props.get("event_id"),
-            "namespace": props.get("namespace"),
-            "summary": props.get("summary"),
-            "date_start": props.get("date_start"),
-            "importance": props.get("importance"),
-            "pinned": props.get("pinned"),
-            "unresolved": props.get("unresolved") or [],
-            "entity_names": props.get("entity_names") or [],
-            "score": score,
-            "distance": extra.get("distance"),
-        }
+        props.setdefault("unresolved", [])
+        props.setdefault("entity_names", [])
+        props["unresolved"] = props.get("unresolved") or []
+        props["entity_names"] = props.get("entity_names") or []
+        props["score"] = score
+        props["distance"] = extra.get("distance")
+        return props
 
     #: 管理接口要的字段集（不能用 `_FIELDS` 拼接：它结尾是 `_additional`，
     #: GraphQL 里继续追加字段会直接语法错误）
@@ -431,11 +527,14 @@ class WeaviateStore:
       types
       importance
       pinned
+      pinned_source
       unresolved
       entity_names
       retention
       recall_count
-      confirmed_by_use"""
+      confirmed_by_use
+      review_verdict
+      reviewer"""
 
     #: 两路都要请求：`distance` 给向量通道，`score` 给 BM25 通道。
     #: 缺失的那个 Weaviate 会返回 null，不影响。

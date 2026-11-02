@@ -18,7 +18,8 @@ import logging
 import os
 import time
 from datetime import date, datetime, timezone
-from typing import Any
+from dataclasses import replace
+from typing import Any, Literal
 
 import uvicorn
 from fastapi import Depends, FastAPI, HTTPException, Query, status
@@ -31,6 +32,7 @@ from memory.core.forget_policy import (
     BUCKET_PROTECTED,
     BUCKET_SAFE_TO_DELETE,
     ForgetCandidate,
+    classify,
     sweep,
 )
 from memory.services.forget import ALLOWED_REASONS, ForgetError, forget_event
@@ -129,6 +131,27 @@ class LabelReviewResolveResponse(BaseModel):
     event_id: str
     resolved: bool
     resolution: str
+
+
+# ---- NEED_REVIEW 裁决（D5：与上面的 LABEL_REVIEW 是另一条队列）----
+
+
+class ReviewVerdictRequest(BaseModel):
+    action: Literal["keep", "delete"]
+    #: 谁做的决定，进审计
+    reviewer: str = "owner"
+    note: str | None = None
+    #: 不填则用 `MEMORY_NAMESPACE`
+    namespace: str | None = None
+
+
+class ReviewVerdictResponse(BaseModel):
+    event_id: str
+    bucket_before: str | None
+    bucket_after: str
+    deleted: bool = False
+    #: 幂等命中：本次没有真正改变状态
+    unchanged: bool = False
 
 
 # ---------------------------------------------------------------- 应用工厂
@@ -236,6 +259,98 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             for v in picked[:limit]
         ]
         return ReviewResponse(bucket=bucket, items=items, total=len(picked))
+
+    @app.post(
+        "/admin/review/{event_id}/resolve",
+        response_model=ReviewVerdictResponse,
+        dependencies=[Depends(require_token)],
+    )
+    def resolve_review(
+        event_id: str, body: ReviewVerdictRequest
+    ) -> ReviewVerdictResponse:
+        """裁决一条 NEED_REVIEW（D5）：留还是删。
+
+        语义（照 ADR 4.6）：
+
+        - `keep`   → 归入 PROTECTED，等价人工钉住（`pinned=true`,
+          `pinned_source=manual`）
+        - `delete` → 归入 SAFE_TO_DELETE，**不立即删**；真正删除走 4.7 的扫描
+
+        **幂等**：重复提交同一 action 不报错，`unchanged=true` 说明这次没改动状态。
+        重复提交**相反** action 是允许的 —— 人会改主意，改主意不该被拒绝。
+
+        为什么 `delete` 不能推翻 `pinned` / `unresolved`：
+        那是 `forget_policy` 的事（判定顺序），这里只负责落库。
+        一次误点不该能删掉受硬保护的卡。
+        """
+        ns = _namespace(body.namespace)
+        rows = _load_all(cfg, ns)
+        target = next((r for r in rows if r.event_id == event_id), None)
+        if target is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"找不到这张卡：{event_id}",
+            )
+
+        # 裁决前先算当前桶，供响应里做前后对照
+        before = classify(
+            target,
+            today=date.today(),
+            idle_days=cfg.FORGET_IDLE_DAYS,
+            min_recalls=cfg.FORGET_MIN_RECALLS,
+            grace_days=cfg.FORGET_GRACE_DAYS,
+            protect_importance=cfg.PROTECT_IMPORTANCE_REVIEW,
+        )
+
+        unchanged = target.review_verdict == body.action
+        store = WeaviateStore(cfg)
+        try:
+            store.set_review_verdict(
+                event_id,
+                ns,
+                verdict=body.action,
+                reviewer=body.reviewer,
+                # keep 才动 pinned；delete 不动，免得审计对不上
+                pinned=True if body.action == "keep" else None,
+            )
+        except WeaviateStoreError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=f"写入裁决失败: {exc}",
+            ) from exc
+        finally:
+            store.close()
+
+        # 用裁决后的状态重算一遍，保证返回的 bucket_after 是真值
+        after_target = replace(
+            target,
+            review_verdict=body.action,
+            pinned=True if body.action == "keep" else target.pinned,
+        )
+        after = classify(
+            after_target,
+            today=date.today(),
+            idle_days=cfg.FORGET_IDLE_DAYS,
+            min_recalls=cfg.FORGET_MIN_RECALLS,
+            grace_days=cfg.FORGET_GRACE_DAYS,
+            protect_importance=cfg.PROTECT_IMPORTANCE_REVIEW,
+        )
+        logger.info(
+            "人工裁决 | event_id=%s action=%s before=%s after=%s reviewer=%s unchanged=%s",
+            event_id,
+            body.action,
+            before.bucket,
+            after.bucket,
+            body.reviewer,
+            unchanged,
+        )
+        return ReviewVerdictResponse(
+            event_id=event_id,
+            bucket_before=before.bucket,
+            bucket_after=after.bucket,
+            deleted=False,  # ADR：delete 只归档，不立即删
+            unchanged=unchanged,
+        )
 
     # ------------------------------------------------------ label review（B5）
 
@@ -431,6 +546,7 @@ def _load_all(cfg: Settings, namespace: str) -> list[ForgetCandidate]:
                 retention=str(r.get("retention") or "normal"),
                 pinned=bool(r.get("pinned")),
                 unresolved=list(r.get("unresolved") or []),
+                review_verdict=r.get("review_verdict"),
                 summary=r.get("summary"),
             )
         )

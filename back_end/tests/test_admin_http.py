@@ -91,6 +91,7 @@ def _to_candidates(rows):
             retention=r["retention"],
             pinned=r["pinned"],
             unresolved=r["unresolved"],
+            review_verdict=r.get("review_verdict"),
             summary=r.get("summary"),
         )
         for r in rows
@@ -338,3 +339,186 @@ def test_label_review_limit(label_client: TestClient) -> None:
     assert len(r.json()["items"]) == 2
     assert r.json()["total"] == 5
 
+
+
+# ---------------- D5 NEED_REVIEW 裁决（resolve）----------------
+
+
+class FakeVerdictStore:
+    """假 Weaviate：把裁决写回共享状态，好让 `_load_all` 下次读到新值。"""
+
+    state: dict = {}
+    calls: list[dict] = []
+
+    def __init__(self, settings=None) -> None:
+        pass
+
+    def set_review_verdict(
+        self, event_id, namespace, *, verdict, reviewer=None, pinned=None
+    ):
+        FakeVerdictStore.calls.append(
+            {
+                "event_id": event_id,
+                "namespace": namespace,
+                "verdict": verdict,
+                "reviewer": reviewer,
+                "pinned": pinned,
+            }
+        )
+        row = FakeVerdictStore.state.setdefault(event_id, {})
+        row["review_verdict"] = verdict
+        if pinned is not None:
+            row["pinned"] = pinned
+
+    def close(self) -> None:
+        pass
+
+
+@pytest.fixture()
+def resolve_client(monkeypatch) -> TestClient:
+    import memory.entrypoints.admin_http as mod
+
+    settings = Settings()
+    settings.MEMORY_NAMESPACE = "work"
+    settings.ADMIN_TOKEN = TOKEN
+    settings.FORGET_IDLE_DAYS = 180
+    settings.FORGET_GRACE_DAYS = 90
+    settings.FORGET_MIN_RECALLS = 1
+    settings.PROTECT_IMPORTANCE_REVIEW = 0.7
+
+    old = date.today() - timedelta(days=400)
+    # importance 高 → NEED_REVIEW（灰区，要人看）
+    rows = [
+        {
+            "event_id": "evt_review_me",
+            "importance": 0.95,
+            "recall_count": 0,
+            "date_start": old.isoformat(),
+            "retention": "normal",
+            "pinned": False,
+            "unresolved": [],
+            "summary": "很重要但没人用过",
+        },
+        {
+            "event_id": "evt_pinned_one",
+            "importance": 0.95,
+            "recall_count": 0,
+            "date_start": old.isoformat(),
+            "retention": "normal",
+            "pinned": True,
+            "unresolved": [],
+            "summary": "被钉住的重要事",
+        },
+    ]
+    FakeVerdictStore.calls = []
+    FakeVerdictStore.state = {}
+
+    def _load(cfg, ns):
+        """把假 store 里记的裁决叠加到基础数据上，模拟真库读回。"""
+        merged = []
+        for r in rows:
+            row = dict(r)
+            row.update(FakeVerdictStore.state.get(r["event_id"], {}))
+            merged.append(row)
+        return _to_candidates(merged)
+
+    monkeypatch.setattr(mod, "_load_all", _load)
+    monkeypatch.setattr(mod, "WeaviateStore", FakeVerdictStore)
+    return TestClient(create_app(settings))
+
+
+def test_resolve_requires_token(resolve_client: TestClient) -> None:
+    r = resolve_client.post(
+        "/admin/review/evt_review_me/resolve", json={"action": "keep"}
+    )
+    assert r.status_code == 401
+
+
+def test_resolve_keep_moves_to_protected(resolve_client: TestClient) -> None:
+    r = resolve_client.post(
+        "/admin/review/evt_review_me/resolve",
+        json={"action": "keep", "reviewer": "owner"},
+        headers=AUTH,
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["bucket_before"] == "NEED_REVIEW"
+    assert body["bucket_after"] == "PROTECTED"
+    assert body["deleted"] is False
+    assert body["unchanged"] is False
+
+    # keep 必须同时置 pinned，否则下次 sweep 又回到 NEED_REVIEW
+    call = FakeVerdictStore.calls[-1]
+    assert call["verdict"] == "keep"
+    assert call["pinned"] is True
+    assert call["reviewer"] == "owner"
+
+
+def test_resolve_delete_moves_to_safe_but_not_deleted(resolve_client: TestClient) -> None:
+    r = resolve_client.post(
+        "/admin/review/evt_review_me/resolve",
+        json={"action": "delete"},
+        headers=AUTH,
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["bucket_after"] == "SAFE_TO_DELETE"
+    assert body["deleted"] is False, "delete 只归档，不立即删（ADR 4.6）"
+
+    call = FakeVerdictStore.calls[-1]
+    assert call["verdict"] == "delete"
+    assert call["pinned"] is None, "delete 不该动 pinned"
+
+
+def test_resolve_delete_cannot_override_pinned(resolve_client: TestClient) -> None:
+    """人工 delete 不推翻硬保护 —— 一次误点不该删掉 pinned 的卡。"""
+    r = resolve_client.post(
+        "/admin/review/evt_pinned_one/resolve",
+        json={"action": "delete"},
+        headers=AUTH,
+    )
+    assert r.status_code == 200
+    assert r.json()["bucket_after"] == "PROTECTED"
+
+
+def test_resolve_missing_event_is_404(resolve_client: TestClient) -> None:
+    r = resolve_client.post(
+        "/admin/review/evt_nope/resolve", json={"action": "keep"}, headers=AUTH
+    )
+    assert r.status_code == 404
+
+
+def test_resolve_bad_action_is_422(resolve_client: TestClient) -> None:
+    r = resolve_client.post(
+        "/admin/review/evt_review_me/resolve",
+        json={"action": "destroy"},
+        headers=AUTH,
+    )
+    assert r.status_code == 422
+
+
+def test_resolve_twice_is_idempotent(resolve_client: TestClient) -> None:
+    body = {"action": "keep"}
+    first = resolve_client.post(
+        "/admin/review/evt_review_me/resolve", json=body, headers=AUTH
+    )
+    assert first.json()["unchanged"] is False
+    # 同一 action 再来一次：仍然 200，但 unchanged=true
+    second = resolve_client.post(
+        "/admin/review/evt_review_me/resolve", json=body, headers=AUTH
+    )
+    assert second.status_code == 200
+    assert second.json()["unchanged"] is True
+    assert second.json()["bucket_after"] == "PROTECTED"
+
+
+def test_resolve_opposite_action_allowed(resolve_client: TestClient) -> None:
+    """人会改主意，改主意不该被拒绝。"""
+    resolve_client.post(
+        "/admin/review/evt_review_me/resolve", json={"action": "keep"}, headers=AUTH
+    )
+    r = resolve_client.post(
+        "/admin/review/evt_review_me/resolve", json={"action": "delete"}, headers=AUTH
+    )
+    assert r.status_code == 200
+    assert r.json()["unchanged"] is False

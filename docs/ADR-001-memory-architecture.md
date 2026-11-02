@@ -922,12 +922,19 @@ MCP 的 `initialize` 响应可带 `instructions` 字段，运行时直接投给 
                           "enum": ["manual", "user_directive", null] },
     "recall_count":     { "type": "integer", "minimum": 0 },
     "last_recalled_at": { "type": ["string", "null"], "format": "date-time" },
-    "confirmed_by_use": { "type": "integer", "minimum": 0 }
+    "confirmed_by_use": { "type": "integer", "minimum": 0 },
+    "review_verdict":   { "type": ["string", "null"],
+                          "enum": ["keep", "delete", null] },
+    "reviewer":         { "type": ["string", "null"] }
   }
 }
 ```
 
 **说明**：`do_not_store` 不在 enum 内——它在写入入口拦截，不会产生卡，因此没有合法实例需要校验。
+
+`review_verdict` / `reviewer` 是 4.6 人工裁决的留痕。`null` 表示这张卡还没被裁决过
+（含所有加字段之前的旧卡）。`keep` → `PROTECTED`；`delete` → `SAFE_TO_DELETE`
+但**不立即删除**，且**不推翻** `pinned` / `unresolved` / 永久保留这三类硬信号。
 
 ---
 
