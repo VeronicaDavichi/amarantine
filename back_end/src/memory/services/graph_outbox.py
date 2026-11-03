@@ -136,15 +136,28 @@ MERGE (a:Alias {namespace: $namespace, name: item.alias})
 ON CREATE SET a.first_seen = $created_at
 MERGE (p {namespace: $namespace, key: item.key})
 ON CREATE SET p.name = item.canonical, p.first_seen = $created_at, p:Entity
-CREATE (p)-[:ALIAS_OF {
-    created_at: $created_at,
-    confidence: item.confidence,
-    label: item.label,
-    source: item.source,
-    source_event_id: $event_id
-}]->(a)
+MERGE (p)-[r:ALIAS_OF]->(a)
+ON CREATE SET r.created_at = $created_at,
+              r.confidence = item.confidence,
+              r.label = item.label,
+              r.source = item.source,
+              r.source_event_id = $event_id
+ON MATCH SET r.label = item.label,
+             r.confidence = item.confidence,
+             r.source = item.source
 RETURN count(*)
 """
+
+#: 原来的关系写的是 `CREATE`，同一条声明重放就会多出一条平行边。
+#: 正常写入链路靠 `event_id` 的幂等短路掩盖了这个 bug —— 同一句话不会
+#: 走到第二次建边。但「人工裁决 accepted → 补建边」这条路径会重复调用
+#: （补建失败可重试、人可能点两次），于是图上出现两条 `ALIAS_OF`，
+#: 召回时同一条别名被算两遍。
+#:
+#: 所以关系改成 `MERGE`：**一对 (canonical, alias) 只保留一条边**。
+#: `ON CREATE` 记首次的时间与来源事件，`ON MATCH` 只更新可变的判定属性
+#: （`label` / `confidence` / `source`）—— 人工裁决把 `uncertain` 改成
+#: `exact` 能覆盖上去，但 `created_at` / `source_event_id` 保留最早的。
 
 #: 召回时从别名反查主人。一个别名可能有多个主人（一词多义）。
 #:
@@ -561,6 +574,7 @@ def append_alias_edges(
     settings: Settings,
     created_at: str,
     driver: object | None = None,
+    force: bool = False,
 ) -> AliasWriteResult:
     """把别名边追加到图上，返回建了几条 + 拒了哪些。
 
@@ -577,8 +591,23 @@ def append_alias_edges(
     但原来这个过滤只返回一个数字，**拒了哪些一句话都没有**。判据要是
     把真名字误判成描述（`印度人` 就是），边一条建不出来且毫无痕迹。
     现在把 `skipped` 一起返回，调用方落进 `alias_reject` 表。
+
+    ## `force=True` 绕过的正是上面这道判据
+
+    人工在 `/admin/alias-rejects/resolve` 上标了 `accepted`，意思是
+    「**判据错了**，这条声明是真名字」。这时候如果还走
+    `_partition_alias_claims`，同一道判据会把边再拦一次 —— 人已经
+    否决了判据，结果图上仍然没边，而且这次连 `skipped` 都不会有人看。
+    那正好是 002 要消灭的形态。
+
+    所以 `force=True` 时不判、不跳：直接 `_alias_item()` 装参数，
+    `skipped` 恒为空。**这是唯一一处可以绕过判据的入口**，只给人工
+    裁决用；正常写入链路（`force=False`）行为不变。
     """
-    items, skipped = _partition_alias_claims(list(claims))
+    if force:
+        items, skipped = [_alias_item(c) for c in claims], []
+    else:
+        items, skipped = _partition_alias_claims(list(claims))
     if not items:
         return AliasWriteResult(written=0, skipped=skipped)
 

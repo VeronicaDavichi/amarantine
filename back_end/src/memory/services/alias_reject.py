@@ -190,13 +190,19 @@ class AliasRejectQueue:
         side: str,
         resolution: str = "accepted",
     ) -> bool:
-        """标记已处理（人工/LLM 看过）。返回 False 表示这条不存在或已处理。"""
+        """标记已处理（人工/LLM 看过）。返回 False 表示这条不存在或已处理。
+
+        `accept_pending` 也算「可再处理」：那是「人已裁决 accepted、但补建
+        别名边失败」的中间态。它必须还能被 resolve 重试一次，否则失败就
+        永久沉底 —— 人以为修好了，其实没有。
+        """
         now = self._now()
         with self._lock, self._connect() as conn:
             cur = conn.execute(
                 "UPDATE alias_reject SET resolved_at = ?, resolution = ?"
                 " WHERE namespace = ? AND event_id = ? AND alias = ?"
-                "   AND canonical = ? AND side = ? AND resolved_at IS NULL",
+                "   AND canonical = ? AND side = ?"
+                "   AND (resolved_at IS NULL OR resolution = 'accept_pending')",
                 (now, resolution, namespace, event_id, alias, canonical, side),
             )
         return cur.rowcount > 0
@@ -212,7 +218,8 @@ class AliasRejectQueue:
     ) -> list[AliasRejectItem]:
         sql = (
             "SELECT * FROM alias_reject"
-            " WHERE namespace = ? AND resolved_at IS NULL"
+            " WHERE namespace = ?"
+            "   AND (resolved_at IS NULL OR resolution = 'accept_pending')"
         )
         params: list[Any] = [namespace]
         if reason:
@@ -227,7 +234,8 @@ class AliasRejectQueue:
     def count_pending(self, namespace: str, *, reason: str | None = None) -> int:
         sql = (
             "SELECT COUNT(*) AS n FROM alias_reject"
-            " WHERE namespace = ? AND resolved_at IS NULL"
+            " WHERE namespace = ?"
+            "   AND (resolved_at IS NULL OR resolution = 'accept_pending')"
         )
         params: list[Any] = [namespace]
         if reason:
@@ -238,11 +246,16 @@ class AliasRejectQueue:
         return int(row["n"]) if row else 0
 
     def stats(self, namespace: str) -> dict[str, int]:
-        """按理由统计未处理的拒绝数 —— 判断「判据该不该改」用这个。"""
+        """按理由统计未处理的拒绝数 —— 判断「判据该不该改」用这个。
+
+        口径与 `count_pending` 一致：`accept_pending`（人已裁决、补边失败）
+        也算未处理，否则这类失败会从「判据该不该改」的统计里消失。
+        """
         with self._lock, self._connect() as conn:
             rows = conn.execute(
                 "SELECT reason, COUNT(*) AS n FROM alias_reject"
-                " WHERE namespace = ? AND resolved_at IS NULL"
+                " WHERE namespace = ?"
+                "   AND (resolved_at IS NULL OR resolution = 'accept_pending')"
                 " GROUP BY reason ORDER BY n DESC",
                 (namespace,),
             ).fetchall()

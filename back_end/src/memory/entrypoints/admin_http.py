@@ -165,6 +165,28 @@ class EntityEditResponse(BaseModel):
     error: str | None = None
 
 
+class EntityEditEntry(BaseModel):
+    """一条纠错痕迹（`:EntityEdit` 节点）。
+
+    「纠错是修正，不是抹除痕迹」—— 写接口一直有，读接口原来没有。
+    `args` 在图上是 JSON 字符串，这里已经解析成对象。
+    """
+
+    op: str
+    target: str | None = None
+    args: dict[str, Any] | str = {}
+    reason: str | None = None
+    operator: str | None = None
+    created_at: str
+    #: `args` 解析失败时为 True，此时 `args` 原样是字符串 —— 不静默吞
+    args_parse_error: bool = False
+
+
+class EntityEditListResponse(BaseModel):
+    items: list[EntityEditEntry]
+    total: int
+
+
 # ---- 打标复核（A24：与上面的 NEED_REVIEW 是**两条独立队列**，字段刻意不同）----
 
 
@@ -229,6 +251,9 @@ class AliasRejectEntry(BaseModel):
     detail: str = ""
     source_text: str | None = None
     created_at: str
+    #: `None` = 真没处理过；`accept_pending` = 人已裁决但补边失败，
+    #: 仍在待办里可重试。列表必须能区分这两者。
+    resolution: str | None = None
 
 
 class AliasRejectListResponse(BaseModel):
@@ -243,7 +268,8 @@ class AliasRejectResolveRequest(BaseModel):
     alias: str
     canonical: str
     side: str
-    #: `accepted`（判据错了，该建边）/ `rejected`（判据对，就该拒）
+    #: `accepted`（判据错了 → 补建边）/ `dismissed`（判据对，就该拒）
+    #: / `deferred`（先放着）
     resolution: str = "accepted"
     namespace: str | None = None
 
@@ -251,6 +277,10 @@ class AliasRejectResolveRequest(BaseModel):
 class AliasRejectResolveResponse(BaseModel):
     resolved: bool
     resolution: str
+    #: `accepted` 时才有意义：别名边是否已经真的写到图上。
+    #: `False` 表示图写入失败，此行的 `resolution` 被记成 `accept_pending`
+    #: 并继续留在待办里 —— 不会假装成功。
+    repaired: bool | None = None
 
 
 class SurnameDeclareRequest(BaseModel):
@@ -618,6 +648,7 @@ def create_app(
                 detail=it.detail,
                 source_text=it.source_text,
                 created_at=it.created_at,
+                resolution=it.resolution,
             )
             for it in queue.list_pending(ns, limit=limit, reason=reason)
         ]
@@ -635,22 +666,44 @@ def create_app(
     def resolve_alias_reject(
         body: AliasRejectResolveRequest,
     ) -> AliasRejectResolveResponse:
-        """把一条被拒的声明标记为已裁决。
+        """裁决一条被拒的别名声明。
 
-        **只标记，不建边**。理由跟 label-review 一致：建边要重走写入链路
-        （`rebind` / 重新 remember），不是这里该做的事。这里记录
-        「人看过并判定了判据对不对」，`accepted` 意味着判据需要修。
+        `accepted` = **判据错了**，这条是真名字 → 顺手把边补建出来。
+        补建走 `repair_accepted_edge()`，它 `force=True` 绕过判据：
+        否则同一道判据会把边再拦一次，人否决了判据、图上却仍然没边。
+
+        **先补图、后落库**，所以「补建失败」本身是个可查的状态：
+        失败记 `accept_pending`，该行继续留在待办里可以重试（`MERGE` 幂等），
+        绝不假装成功。
+
+        `dismissed` / `deferred` 一律不碰图。
         """
+        from memory.services.alias_apply import repair_accepted_edge
         from memory.services.alias_reject import queue_from_settings as reject_q
 
         ns = _namespace(body.namespace)
+        repaired: bool | None = None
+        effective = body.resolution
+
+        if body.resolution == "accepted":
+            repaired = repair_accepted_edge(
+                namespace=ns,
+                event_id=body.event_id,
+                alias=body.alias,
+                canonical=body.canonical,
+                settings=cfg,
+            )
+            if not repaired:
+                # 图写失败：不要记 accepted，否则这行会沉底，人以为修好了
+                effective = "accept_pending"
+
         ok = reject_q(cfg).resolve(
             ns,
             event_id=body.event_id,
             alias=body.alias,
             canonical=body.canonical,
             side=body.side,
-            resolution=body.resolution,
+            resolution=effective,
         )
         if not ok:
             raise HTTPException(
@@ -658,7 +711,7 @@ def create_app(
                 detail="没有待处理的别名拒绝记录（可能已处理或从未入队）",
             )
         return AliasRejectResolveResponse(
-            resolved=True, resolution=body.resolution
+            resolved=True, resolution=effective, repaired=repaired
         )
 
     @app.get(
@@ -845,6 +898,36 @@ def create_app(
                 to_kind=body.to_kind,
                 reason=body.reason,
             )
+        )
+
+    @app.get(
+        "/admin/entities/edits",
+        response_model=EntityEditListResponse,
+        dependencies=[Depends(require_token)],
+    )
+    def admin_list_entity_edits(
+        namespace: str | None = Query(default=None),
+        op: str | None = Query(default=None),
+        target: str | None = Query(default=None),
+        limit: int = Query(default=50, ge=1, le=500),
+    ) -> EntityEditListResponse:
+        """查纠错痕迹（改 / 拆 / 合 / 解挂），按时间倒序。只读。
+
+        「纠错是修正，不是抹除痕迹」—— 光有写接口不算数，痕迹得能查。
+        `op` ∈ {rename, merge, split, rebind}，`target` 是当时操作的实体名。
+        """
+        from memory.services.entity_edit import list_edits
+
+        result = list_edits(
+            _namespace(namespace),
+            settings=cfg,
+            op=op,
+            target=target,
+            limit=limit,
+        )
+        return EntityEditListResponse(
+            items=[EntityEditEntry(**i) for i in result["items"]],
+            total=result["total"],
         )
 
     # ------------------------------------------------------- aliases

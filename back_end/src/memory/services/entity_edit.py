@@ -668,3 +668,70 @@ def rebind_event_entity(
     finally:
         if owns:
             drv.close()  # type: ignore[union-attr]
+
+
+# ---------------------------------------------------------------- 查痕迹
+
+
+#: 查纠错痕迹。`op` / `target` 可选收窄；条件走参数，不拼字符串。
+LIST_EDITS_CYPHER = """
+MATCH (ed:EntityEdit {namespace: $namespace})
+WHERE ($op IS NULL OR ed.op = $op)
+  AND ($target IS NULL OR ed.target = $target)
+RETURN ed.op AS op, ed.target AS target, ed.args AS args,
+       ed.reason AS reason, ed.operator AS operator,
+       ed.created_at AS created_at
+ORDER BY ed.created_at DESC
+LIMIT $limit
+"""
+
+
+def list_edits(
+    namespace: str,
+    *,
+    settings: Settings,
+    op: str | None = None,
+    target: str | None = None,
+    limit: int = 50,
+    driver: object | None = None,
+) -> dict[str, Any]:
+    """列出纠错痕迹，按时间倒序。只读。
+
+    `args` 在图上是 **JSON 字符串**（Neo4j 属性不收嵌套 Map），但查历史的
+    人要看懂，所以出参解析成对象。解析失败**不吞**：原样返回字符串并标
+    `args_parse_error`，让调用方知道自己看到的是残缺数据。
+    """
+    drv, owns = _driver_for(settings, driver)
+    try:
+        with drv.session() as session:  # type: ignore[union-attr]
+            rows = session.run(
+                LIST_EDITS_CYPHER,
+                namespace=namespace,
+                op=op,
+                target=target,
+                limit=int(limit),
+            )
+            items: list[dict[str, Any]] = []
+            for r in rows:
+                raw = r["args"]
+                parsed: Any = raw
+                parse_error = False
+                try:
+                    parsed = json.loads(raw) if raw else {}
+                except (TypeError, ValueError):
+                    parse_error = True
+                item: dict[str, Any] = {
+                    "op": r["op"],
+                    "target": r["target"],
+                    "args": parsed,
+                    "reason": r["reason"],
+                    "operator": r["operator"],
+                    "created_at": r["created_at"],
+                }
+                if parse_error:
+                    item["args_parse_error"] = True
+                items.append(item)
+        return {"items": items, "total": len(items)}
+    finally:
+        if owns:
+            drv.close()  # type: ignore[union-attr]

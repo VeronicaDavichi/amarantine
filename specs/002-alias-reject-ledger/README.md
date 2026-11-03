@@ -50,7 +50,7 @@ transitions:
 
 | 不做 | 理由 / 归属 |
 |---|---|
-| 把 `accepted` 记录自动补建边 | 要重走写入链路（`event_id` 是内容哈希），归 P3 |
+| 把 `accepted` 记录自动补建边 | ~~要重走写入链路~~ → **这句是错的**。补建只需 `AliasClaim`，`event_id` 只作边的 `source_event_id` 属性，与内容哈希无关。已在 `003-admin-closure` 实现 |
 | 改 `event_id` 哈希口径 | D1 已定，改了幂等就废 |
 | 引入 alembic | 全项目 SQLite 表都是服务自建 `CREATE TABLE IF NOT EXISTS` |
 | 姓氏作用域隔离到 namespace | `labeler` 是纯文本层、无 namespace 概念（与 jieba 词典同为进程级） |

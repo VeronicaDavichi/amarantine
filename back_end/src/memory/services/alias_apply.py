@@ -264,3 +264,47 @@ def resolve_namespace_aliases(
                 active_store.close()
             except Exception:  # noqa: BLE001
                 pass
+
+
+# ---------------------------------------------------------------- 人工裁决补建
+
+
+def repair_accepted_edge(
+    *,
+    namespace: str,
+    event_id: str,
+    alias: str,
+    canonical: str,
+    settings: Settings,
+    created_at: str | None = None,
+    driver: object | None = None,
+) -> bool:
+    """人工在 `alias_reject` 上裁决为 `accepted` 后，把那条边补建出来。
+
+    **故意 `force=True` 绕过判据。** `accepted` 的语义就是「判据错了」：
+    人已经看过原始文本并否决了判据，此时再走一遍 `_partition_alias_claims`
+    会把边再拦一次 —— 而且这次连 `skipped` 都不会有人再看。那正是 002
+    要消灭的形态（判据说不行、人说不、结果还是不行，且无声）。
+
+    置信度给 `exact`：人拍的板比任何规则/LLM 推断都硬。
+    `source` 给 `user_declared`：人工裁决属于「用户说的」这一类。
+
+    返回 True 表示边已写上；False 表示图写入失败 —— 调用方此时应把
+    `resolution` 记成 `accept_pending` 以便重试，**不要**记成 `accepted`。
+    """
+    claim = AliasClaim(
+        alias=alias,
+        canonical=canonical,
+        label="exact",
+        source="user_declared",
+    )
+    write = append_alias_edges(
+        event_id,
+        namespace,
+        [claim],
+        settings=settings,
+        created_at=created_at or datetime.now(timezone.utc).isoformat(),
+        driver=driver,
+        force=True,
+    )
+    return write.written > 0

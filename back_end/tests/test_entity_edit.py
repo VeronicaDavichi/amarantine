@@ -360,3 +360,97 @@ def test_edit_result_to_dict() -> None:
     r = EditResult(True, "rename", detail={"from": "a", "to": "b"})
     d = r.to_dict()
     assert d["ok"] is True and d["op"] == "rename"
+
+
+# ---------------- 003 · 查痕迹（写接口一直有，读接口原来没有）----------------
+
+
+class _EditsDriver:
+    """返回预设的 `:EntityEdit` 行，并记下真正发出去的参数。"""
+
+    def __init__(self, rows: list[dict]) -> None:
+        self.rows = rows
+        self.calls: list[tuple[str, dict]] = []
+
+    def session(self):
+        drv = self
+
+        class _S:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            def run(self, cypher, **params):
+                drv.calls.append((cypher, params))
+                return [FakeRow(r) for r in drv.rows]
+
+        return _S()
+
+
+def _row(op: str = "rename", args: str = '{"from": "助手", "to": "豆包"}') -> dict:
+    return {
+        "op": op,
+        "target": "助手",
+        "args": args,
+        "reason": "抽错了",
+        "operator": "admin",
+        "created_at": "2026-11-03T00:00:00+00:00",
+    }
+
+
+def test_list_edits_parses_args_object() -> None:
+    """A7：`args` 在图上是 JSON 字符串，出参要给解析好的对象。
+
+    查历史的人不该自己 `json.loads`。
+    """
+    from memory.services.entity_edit import list_edits
+
+    drv = _EditsDriver([_row()])
+    out = list_edits("work", settings=_settings(), driver=drv)
+    assert out["total"] == 1
+    item = out["items"][0]
+    assert item["args"] == {"from": "助手", "to": "豆包"}
+    assert item["op"] == "rename"
+    assert "args_parse_error" not in item
+
+
+def test_list_edits_bad_args_not_swallowed() -> None:
+    """A7：`args` 坏掉不静默 —— 原样返回 + 标 `args_parse_error`。"""
+    from memory.services.entity_edit import list_edits
+
+    drv = _EditsDriver([_row(args="{不是 json")])
+    out = list_edits("work", settings=_settings(), driver=drv)
+    item = out["items"][0]
+    assert item["args"] == "{不是 json"
+    assert item["args_parse_error"] is True
+
+
+def test_list_edits_passes_filters_and_limit() -> None:
+    """A8：`op`/`target`/`namespace`/`limit` 全部走 cypher 参数，不拼字符串。"""
+    from memory.services.entity_edit import list_edits
+
+    drv = _EditsDriver([])
+    out = list_edits(
+        "work", settings=_settings(), op="merge", target="张三", limit=7, driver=drv
+    )
+    assert out == {"items": [], "total": 0}
+    cypher, params = drv.calls[0]
+    assert "EntityEdit" in cypher
+    assert "$op IS NULL OR ed.op = $op" in cypher, "过滤条件必须是参数占位"
+    assert params["namespace"] == "work"
+    assert params["op"] == "merge"
+    assert params["target"] == "张三"
+    assert params["limit"] == 7
+
+
+def test_list_edits_namespace_isolated() -> None:
+    """A8：namespace 是 MATCH 的必要条件，别的域查不到。"""
+    from memory.services.entity_edit import list_edits
+
+    drv = _EditsDriver([])
+    list_edits("other", settings=_settings(), driver=drv)
+    cypher, params = drv.calls[0]
+    assert "MATCH (ed:EntityEdit {namespace: $namespace})" in cypher
+    assert params["namespace"] == "other"

@@ -15,7 +15,16 @@ from memory.services import graph_outbox as GO
 
 
 def _merge_clauses(cypher: str) -> list[str]:
-    return re.findall(r"MERGE\s*\([^)]*\)", cypher)
+    r"""抽出所有 MERGE 子句，**包括关系型**。
+
+    原来的 `MERGE\s*\([^)]*\)` 只能匹配节点模式，遇到
+    `MERGE (p)-[r:ALIAS_OF]->(a)` 会截成 `MERGE (p)` ——
+    调用方无法区分「节点按 p 合并」和「合并这条关系」。
+    """
+    return re.findall(
+        r"MERGE\s*\([^)]*\)(?:\s*-\s*\[[^\]]*\]\s*->\s*\([^)]*\))?",
+        cypher,
+    )
 
 
 # ---------------- 不带标签合并 ----------------
@@ -109,6 +118,12 @@ def test_all_merges_use_key_not_name() -> None:
         for c in _merge_clauses(cypher):
             if "Alias" in c:
                 continue  # (:Alias) 按 name 建，它本身就是名字容器
+            if "-[" in c:
+                # 合并的是**关系**（`MERGE (p)-[r:ALIAS_OF]->(a)`），
+                # 端点由前面的节点 MERGE 定好了身份，这里不涉及 key。
+                # 它的作用是让一对 (canonical, alias) 只保留一条边 ——
+                # 重复补建边时不会多出平行边。
+                continue
             assert "item.key" in c or "$key" in c, (
                 f"{label} 的 MERGE 必须按 key: {c}"
             )

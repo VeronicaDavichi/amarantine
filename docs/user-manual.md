@@ -708,6 +708,41 @@ POST /admin/alias-surnames        -- 声明（立即生效 + 落库）
 
 **注意 `种` 只在「量词打头」这一条判据上被豁免**，别的判据一点没放宽。
 
+#### 裁决之后会真的补边
+
+「看得见」只是第一步。人看过原文、判定「判据错了」之后，如果还得手工去
+Neo4j 补边，闭环就还差一口气。
+
+所以 `POST /admin/alias-rejects/resolve` 传 `resolution=accepted` 时会
+**顺手把边补出来**：
+
+```
+POST /admin/alias-rejects/resolve
+{"event_id": "...", "alias": "老种", "canonical": "种师道",
+ "side": "canonical", "resolution": "accepted"}
+→ {"resolved": true, "resolution": "accepted", "repaired": true}
+```
+
+关键在 `repaired` 这个字段。`accepted` 的语义是「判据错了」，所以补建
+**必须绕过判据**（内部走 `force=True`）—— 否则同一道判据会把边再拦一次：
+人已经否决了判据，图上却仍然没边，而且这次连痕迹都不会再留。那正是这一版
+要消灭的形态。
+
+补建失败**不静默**：
+
+| 情况 | `repaired` | `resolution` | 还在待办里吗 |
+|---|---|---|---|
+| 图写成功 | `true` | `accepted` | 否 |
+| 图写失败 | `false` | `accept_pending` | **是**，可重试 |
+| `dismissed` / `deferred` | `null` | 原样 | 否 |
+
+**先补图、后落库**，所以「失败」本身是个可查状态。`accept_pending` 的行继续
+出现在 `GET /admin/alias-rejects` 里 —— 列表带 `resolution` 字段，能分辨
+「真没处理过」和「裁决了但没修成」。重试是幂等的，边用 `MERGE`。
+
+如果失败也只打一行 warning、`resolution` 照写 `accepted`，那这行就从待办里
+消失了：**人以为修好了，其实没有**。这一版不接受这种静默。
+
 #### 为什么有些判据仍然偏保守
 
 `X人` 之所以敢放行，是因为它只影响**置信度**。而下面这些判据影响的是
@@ -771,6 +806,29 @@ name   原文，可以随便改      → 显示
 | 拆 split | 一个节点其实是两个东西 | `POST /admin/entities/split` |
 | 合 merge | 两个节点其实是同一个 | `POST /admin/entities/merge` |
 | 解挂 rebind | **这一句的指向错了** | `POST /admin/entities/rebind` |
+
+#### 痕迹可查
+
+四种操作都会在图上留一条 `(:EntityEdit)`：
+
+```
+(:EntityEdit {namespace, op, target, args, reason, operator, created_at})
+op ∈ {rename, merge, split, rebind}
+```
+
+原来只有写接口、没有读接口 —— 文档说「纠错是修正，不是抹除痕迹」，但痕迹
+查不到，这话就只是口号。现在：
+
+```
+GET /admin/entities/edits?op=rename&target=助手&limit=50
+→ {items: [{op, target, args: {...}, reason, operator, created_at}], total}
+```
+
+`args` 在图上是 **JSON 字符串**（Neo4j 属性不收嵌套 Map），出参已经解析成
+对象 —— 查历史的人不该自己 `json.loads`。解析失败**不吞**：原样返回字符串
+并标 `args_parse_error: true`，让你知道看到的是残缺数据。
+
+`op` / `target` 是可选过滤，`namespace` 永远是必要条件（跨域查不到）。
 
 #### 改
 
@@ -1340,3 +1398,4 @@ jieba 切成 `张三/nr 决定/v 项目/n A/x 延期/v 到/v 六月/t`，
 | v0.13 | 2026-11-02 | `人` 不再一刀切当描述标记：`印度人`/`主持人` 放行，`老实人`/`聪明人` 仍拦；修「三哥就是印度人」建不出别名边 |
 | v0.14 | 2026-11-02 | 判据统一成「单字只做位置检查，包含检查只用于多字词」：`家`/`个`/`种`/`位` 换成具体双字词，单字副词/量词走开头检查，`X人` 改降置信度；修 `科学家`/`上海人` 被误伤 |
 | v0.15 | 2026-11-03 | 判据带理由（`reason`/`detail`，`detail` 确定性）；别名声明的拒绝两侧都落 `alias_reject` 表 + 两个管理接口；罕见姓豁免（量词字是姓氏 + jieba `nr` 或用户 `姓X` 声明，≥3 字），修 `种师道` 被量词判据误杀 |
+| v0.16 | 2026-11-03 | 裁决闭环：`accepted` 后绕过判据补建别名边，失败记 `accept_pending` 留在待办可重试；纠错痕迹可查（`GET /admin/entities/edits`，`args` 解析成对象）；新增 `harness/check_spec.py` 校验 spec 骨架 |

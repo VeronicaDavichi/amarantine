@@ -623,6 +623,7 @@ def test_alias_rejects_filter_by_reason(alias_client: TestClient) -> None:
 
 
 def test_alias_rejects_resolve(alias_client: TestClient) -> None:
+    """`dismissed` 只改状态、不碰图（`accepted` 会补边，见 003 的测试）。"""
     eid = "evt_" + "b" * 16
     _seed_reject(alias_client, event_id=eid)
 
@@ -633,12 +634,16 @@ def test_alias_rejects_resolve(alias_client: TestClient) -> None:
             "alias": "三哥主打的",
             "canonical": "有声有色有味",
             "side": "alias",
-            "resolution": "accepted",
+            "resolution": "dismissed",
         },
         headers=AUTH,
     )
     assert r.status_code == 200
-    assert r.json() == {"resolved": True, "resolution": "accepted"}
+    assert r.json() == {
+        "resolved": True,
+        "resolution": "dismissed",
+        "repaired": None,
+    }
     assert alias_client.get("/admin/alias-rejects", headers=AUTH).json()["total"] == 0
 
 
@@ -677,4 +682,143 @@ def test_alias_surnames_declare_then_list(alias_client: TestClient) -> None:
     body = alias_client.get("/admin/alias-surnames", headers=AUTH).json()
     assert [i["char"] for i in body["items"]] == ["种"]
     assert body["items"][0]["evidence"] == "这人姓种"
+
+
+# ---------------- 003 · 裁决后真的补边 + 纠错痕迹可查 ----------------
+
+
+def _patch_repair(monkeypatch, *, ok: bool, calls: list | None = None):
+    import memory.services.alias_apply as AA
+
+    def fake(**kw):
+        if calls is not None:
+            calls.append(kw)
+        return ok
+
+    monkeypatch.setattr(AA, "repair_accepted_edge", fake)
+
+
+def test_resolve_accepted_repairs_edge(
+    alias_client: TestClient, monkeypatch
+) -> None:
+    """accepted = 判据错了 → 图上真的补出边，`repaired=true`。"""
+    _seed_reject(alias_client)
+    calls: list = []
+    _patch_repair(monkeypatch, ok=True, calls=calls)
+
+    r = alias_client.post(
+        "/admin/alias-rejects/resolve",
+        json={
+            "event_id": "evt_" + "b" * 16,
+            "alias": "三哥主打的",
+            "canonical": "有声有色有味",
+            "side": "alias",
+            "resolution": "accepted",
+        },
+        headers=AUTH,
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body == {"resolved": True, "resolution": "accepted", "repaired": True}
+    assert calls, "补建函数没被调用"
+    assert calls[0]["alias"] == "三哥主打的"
+    assert calls[0]["canonical"] == "有声有色有味"
+
+
+def test_resolve_accepted_graph_down_marks_pending(
+    alias_client: TestClient, monkeypatch
+) -> None:
+    """图写失败 → 记 `accept_pending`，**不假装成功**，且仍在待办里。"""
+    _seed_reject(alias_client)
+    _patch_repair(monkeypatch, ok=False)
+
+    r = alias_client.post(
+        "/admin/alias-rejects/resolve",
+        json={
+            "event_id": "evt_" + "b" * 16,
+            "alias": "三哥主打的",
+            "canonical": "有声有色有味",
+            "side": "alias",
+            "resolution": "accepted",
+        },
+        headers=AUTH,
+    )
+    assert r.status_code == 200
+    assert r.json()["repaired"] is False
+    assert r.json()["resolution"] == "accept_pending"
+
+    # 关键：它没有从待办里消失
+    pending = alias_client.get("/admin/alias-rejects", headers=AUTH).json()
+    assert pending["total"] == 1
+    assert pending["items"][0]["resolution"] == "accept_pending"
+
+
+def test_resolve_dismissed_does_not_repair(
+    alias_client: TestClient, monkeypatch
+) -> None:
+    """dismissed = 判据对 → 不碰图，`repaired` 为 null。"""
+    _seed_reject(alias_client)
+    calls: list = []
+    _patch_repair(monkeypatch, ok=True, calls=calls)
+
+    r = alias_client.post(
+        "/admin/alias-rejects/resolve",
+        json={
+            "event_id": "evt_" + "b" * 16,
+            "alias": "三哥主打的",
+            "canonical": "有声有色有味",
+            "side": "alias",
+            "resolution": "dismissed",
+        },
+        headers=AUTH,
+    )
+    assert r.status_code == 200
+    assert r.json()["repaired"] is None
+    assert calls == []
+
+
+def test_entity_edits_requires_token(alias_client: TestClient) -> None:
+    assert alias_client.get("/admin/entities/edits").status_code == 401
+
+
+def test_entity_edits_lists(
+    alias_client: TestClient, monkeypatch
+) -> None:
+    """纠错痕迹可查 —— 光有写接口不算数。"""
+    import memory.services.entity_edit as EE
+
+    seen: dict = {}
+
+    def fake_list(namespace, *, settings, op=None, target=None, limit=50, driver=None):
+        seen.update(namespace=namespace, op=op, target=target, limit=limit)
+        return {
+            "items": [
+                {
+                    "op": "rename",
+                    "target": "助手",
+                    "args": {"from": "助手", "to": "豆包"},
+                    "reason": "抽错了",
+                    "operator": "admin",
+                    "created_at": "2026-11-03T00:00:00+00:00",
+                }
+            ],
+            "total": 1,
+        }
+
+    monkeypatch.setattr(EE, "list_edits", fake_list)
+
+    r = alias_client.get(
+        "/admin/entities/edits",
+        params={"op": "rename", "target": "助手", "limit": 9},
+        headers=AUTH,
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["total"] == 1
+    assert body["items"][0]["op"] == "rename"
+    assert body["items"][0]["args"] == {"from": "助手", "to": "豆包"}
+    assert body["items"][0]["args_parse_error"] is False
+    assert seen["op"] == "rename"
+    assert seen["target"] == "助手"
+    assert seen["limit"] == 9
 

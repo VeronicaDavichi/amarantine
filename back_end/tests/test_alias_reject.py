@@ -17,9 +17,10 @@ from datetime import date, datetime, timezone
 import pytest
 
 from memory.config import Settings
+from memory.models.event_card import AliasClaim
 from memory.services import graph_outbox as GO
 from memory.services.alias_reject import AliasRejectQueue, queue_from_settings
-from memory.services.graph_outbox import OutboxResult
+from memory.services.graph_outbox import AliasWriteResult, OutboxResult
 from memory.services.labeler import (
     NAME_ENDING,
     NAME_LEADING,
@@ -435,3 +436,223 @@ def test_remember_clean_alias_records_nothing(settings: Settings) -> None:
     """正常声明不该在留痕表里留噪声 —— 否则这张表会被淹掉。"""
     _remember(settings, "糖包就是豆包")
     assert queue_from_settings(settings).count_pending("work") == 0
+
+
+# ---------------- 003 · accepted 之后补建边 ----------------
+#
+# 这一段的核心断言只有一句：**accepted 之后图上必须真有边**。
+# 判据在这一步是被人工否决过的，所以补建必须绕过它 ——
+# 否则同一道判据会把边再拦一次，人以为修好了、其实没有。
+
+
+class _AliasSink:
+    """接住 `APPEND_ALIAS_CYPHER` 的参数，不起真 Neo4j。"""
+
+    def __init__(self) -> None:
+        self.captured: dict = {}
+        self.calls = 0
+
+    def session(self):
+        sink = self
+
+        class _S:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            def run(self, cypher, **params):
+                sink.calls += 1
+                sink.captured.update(params)
+
+                class _R:
+                    def consume(self):
+                        return None
+
+                return _R()
+
+        return _S()
+
+
+def _claim(alias: str = "糖包", canonical: str = "这种人") -> AliasClaim:
+    return AliasClaim(
+        alias=alias, canonical=canonical, label="exact", source="user_declared"
+    )
+
+
+def _append(settings: Settings, claim: AliasClaim, *, force: bool):
+    sink = _AliasSink()
+    write = GO.append_alias_edges(
+        "evt_" + "d" * 16,
+        "work",
+        [claim],
+        settings=settings,
+        created_at=NOW.isoformat(),
+        driver=sink,
+        force=force,
+    )
+    return write, sink
+
+
+def test_force_bypasses_judge(settings: Settings) -> None:
+    """A1：`force=True` 让被拒的 canonical 也能建边。"""
+    write, sink = _append(settings, _claim(canonical="这种人"), force=True)
+    assert write.written == 1
+    assert write.skipped == []
+    assert sink.calls == 1
+    assert sink.captured["aliases"][0]["canonical"] == "这种人"
+
+
+def test_force_off_still_rejects(settings: Settings) -> None:
+    """A2：`force=False`（默认）行为不变，判据照拦。"""
+    write, sink = _append(settings, _claim(canonical="这种人"), force=False)
+    assert write.written == 0
+    assert len(write.skipped) == 1
+    assert write.skipped[0].reason == NAME_MARKER
+    assert sink.calls == 0, "被拒的 claim 不该发 cypher"
+
+
+def test_repair_accepted_edge_passes_force(settings: Settings) -> None:
+    """A3：补建走 force，且置信度按人工裁决给 exact。"""
+    from memory.services.alias_apply import repair_accepted_edge
+
+    seen: dict = {}
+
+    def fake_append(event_id, namespace, claims, *, settings, created_at, **kw):
+        seen.update(kw)
+        seen["claims"] = claims
+        seen["event_id"] = event_id
+        return AliasWriteResult(written=1)
+
+    import memory.services.alias_apply as AA
+
+    original = AA.append_alias_edges
+    AA.append_alias_edges = fake_append
+    try:
+        ok = repair_accepted_edge(
+            namespace="work",
+            event_id="evt_" + "d" * 16,
+            alias="糖包",
+            canonical="这种人",
+            settings=settings,
+        )
+    finally:
+        AA.append_alias_edges = original
+
+    assert ok is True
+    assert seen["force"] is True
+    assert seen["event_id"] == "evt_" + "d" * 16
+    assert seen["claims"][0].label == "exact"
+    assert seen["claims"][0].source == "user_declared"
+
+
+def test_repair_accepted_edge_reports_failure(settings: Settings) -> None:
+    """A4：图写失败要返回 False —— 调用方据此记 `accept_pending`，不假装成功。"""
+    from memory.services.alias_apply import repair_accepted_edge
+    import memory.services.alias_apply as AA
+
+    original = AA.append_alias_edges
+    AA.append_alias_edges = lambda *a, **kw: AliasWriteResult(written=0)
+    try:
+        ok = repair_accepted_edge(
+            namespace="work",
+            event_id="evt_" + "d" * 16,
+            alias="糖包",
+            canonical="这种人",
+            settings=settings,
+        )
+    finally:
+        AA.append_alias_edges = original
+    assert ok is False
+
+
+def _seed(settings: Settings, event_id: str = "evt_" + "e" * 16) -> None:
+    queue_from_settings(settings).record_many(
+        "work",
+        event_id,
+        [
+            {
+                "alias": "糖包",
+                "canonical": "这种人",
+                "side": "canonical",
+                "reason": NAME_MARKER,
+                "detail": "这种",
+            }
+        ],
+    )
+
+
+def test_accept_pending_stays_visible(settings: Settings) -> None:
+    """A4/A5：补建失败的行必须还在待办里，否则人以为修好了。"""
+    q = queue_from_settings(settings)
+    _seed(settings)
+    assert q.count_pending("work") == 1
+
+    ok = q.resolve(
+        "work",
+        event_id="evt_" + "e" * 16,
+        alias="糖包",
+        canonical="这种人",
+        side="canonical",
+        resolution="accept_pending",
+    )
+    assert ok is True
+    assert q.count_pending("work") == 1, "accept_pending 不能从待办消失"
+    item = q.list_pending("work")[0]
+    assert item.resolution == "accept_pending"
+    assert q.stats("work") == {NAME_MARKER: 1}
+
+
+def test_accept_pending_can_retry(settings: Settings) -> None:
+    """A5：重试成功后转 accepted，行从待办消失。"""
+    q = queue_from_settings(settings)
+    _seed(settings)
+    for _ in range(1):
+        q.resolve(
+            "work",
+            event_id="evt_" + "e" * 16,
+            alias="糖包",
+            canonical="这种人",
+            side="canonical",
+            resolution="accept_pending",
+        )
+    ok = q.resolve(
+        "work",
+        event_id="evt_" + "e" * 16,
+        alias="糖包",
+        canonical="这种人",
+        side="canonical",
+        resolution="accepted",
+    )
+    assert ok is True
+    assert q.count_pending("work") == 0
+    assert q.stats("work") == {}
+
+
+def test_dismissed_does_not_touch_graph(settings: Settings, monkeypatch) -> None:
+    """A6：`dismissed` 只改状态，图上零新增边。
+
+    用 monkeypatch 真正监测 `append_alias_edges` 有没有被调用 ——
+    只建一个空的 sink 去断言 `calls == 0` 是恒真的假通过。
+    """
+    import memory.services.alias_apply as AA
+
+    calls: list[str] = []
+    monkeypatch.setattr(
+        AA, "append_alias_edges", lambda *a, **kw: calls.append("called")
+    )
+
+    q = queue_from_settings(settings)
+    _seed(settings)
+    ok = q.resolve(
+        "work",
+        event_id="evt_" + "e" * 16,
+        alias="糖包",
+        canonical="这种人",
+        side="canonical",
+        resolution="dismissed",
+    )
+    assert ok is True
+    assert calls == [], "dismissed 不该碰图"
+    assert q.count_pending("work") == 0
