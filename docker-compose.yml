@@ -80,6 +80,47 @@ services:
       start_period: 60s
     restart: unless-stopped
 
+  # ---- rerank（可选，默认不启动）----
+  #
+  # 用 profile 隔离，是因为 rerank 是**增强项**：没有它召回完全正常，
+  # 只是排序退化成 RRF（A27 的降级路径已实现并测过）。
+  #
+  #   有 reranker：bash harness/fetch-reranker.sh
+  #                docker compose --profile rerank up -d reranker
+  #                .env 设 RERANK_ENABLED=true
+  #   没有：什么都不用做，RERANK_ENABLED=false 即可
+  #
+  # 注意：**不能**复用 embedding 那个容器 —— TEI 只会用它 --model-id
+  # 加载的那一个模型做 rerank，拿 bge-m3（embedding 模型）调 /rerank
+  # 会返回 424 "model is not a re-ranker model"。
+  reranker:
+    profiles: ["rerank"]
+    image: infiniflow/text-embeddings-inference:cpu-1.8
+    container_name: amarantine-reranker
+    ports:
+      - "8083:80"
+    command:
+      - "--model-id"
+      - "/models/bge-reranker-v2-m3"
+      - "--port"
+      - "80"
+      # 与 embedding 容器同样的内存取舍（WSL 15 GB）
+      - "--max-batch-tokens"
+      - "2048"
+      - "--max-client-batch-size"
+      - "4"
+      - "--tokenization-workers"
+      - "4"
+    volumes:
+      - ./models:/models:ro
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1:80/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+    restart: unless-stopped
+
   neo4j:
     image: neo4j:5.26-community
     container_name: amarantine-neo4j

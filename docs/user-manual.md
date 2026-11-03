@@ -1464,6 +1464,53 @@ MCP 是长驻进程，只在启动时冷一次。
 - `check_rebuild.py` 报「图有、未删除卡没有 N 个」是**正常**的 ——
   软删的卡在 Weaviate 里被过滤，但图节点还在
 
+### rerank：可选增强，没有也能跑
+
+rerank 是**精排**，让返回顺序更准。它**不是必需品**：
+关掉或服务挂掉时，召回会自动退回 RRF 排序，
+仍然返回 200 和非空材料集，只是顺序粗一点（`trace.rerank_skipped=true`）。
+
+**两种部署形态，代码都支持：**
+
+| 形态 | 要做什么 | 效果 |
+|---|---|---|
+| **不要 rerank**（默认） | 什么都不做，`RERANK_ENABLED=false` | 召回正常，排序 = RRF |
+| **要 rerank** | 下面四步 | 召回正常，排序 = rerank 分 |
+
+```bash
+# 1. 下模型（ModelScope，仓库里直接有 safetensors，不用转换）
+bash harness/fetch-reranker.sh
+#   默认 BAAI/bge-reranker-v2-m3（568M）。想省内存：
+#   bash harness/fetch-reranker.sh bge-reranker-base     # 278M
+
+# 2. 起 reranker 容器（profile 隔离，不影响默认 up）
+docker compose --profile rerank up -d reranker
+
+# 3. 打开开关
+#   在 back_end/.env 里设 RERANK_ENABLED=true
+
+# 4. 重启后端
+```
+
+验证：
+
+```bash
+curl -s -X POST http://127.0.0.1:8083/rerank \
+  -H "Content-Type: application/json" \
+  -d '{"query":"项目进度","texts":["项目A延期到七月","今天天气不错"]}'
+# 期望 [{"index":0,"score":...},{"index":1,"score":...}]，第一条分更高
+```
+
+**为什么不能拿 embedding 容器当 reranker**：
+TEI 只会用它 `--model-id` 加载的那**一个**模型做 rerank。
+拿 `bge-m3`（embedding 模型）调 `/rerank` 会返回
+`424 model is not a re-ranker model` —— 代码把它归成「不可用」并降级，
+所以不会崩，但也不会有精排效果。
+
+**开 rerank 的一个副作用**（值得知道）：阈值 `RECALL_COUNT_MIN_SCORE`
+之后是在 **rerank 分**的尺度上判断，不再是 RRF 分。两套分数不能混用于同一个
+排序，只能整套换掉。
+
 ### 起不来，只有 exit code 1
 
 日志在 `LOG_FILE` 指向的文件里（**stderr 没有日志**，这是刻意的）。
