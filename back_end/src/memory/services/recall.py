@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import logging
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timezone
 from typing import Any
 
@@ -34,6 +34,7 @@ from memory.core.time_resolver import DateRange, resolve_from_query
 from memory.services.embedding import EmbeddingError
 from memory.services.graph_search import search_by_entities
 from memory.services.labeler import extract_entities
+from memory.services.rerank import rerank
 from memory.services.weaviate_store import WeaviateStore, WeaviateStoreError
 
 logger = logging.getLogger("memory.recall")
@@ -83,6 +84,7 @@ def recall(
     counter: Any | None = None,
     budget_ms: int | None = None,
     trace_store: Any | None = None,
+    rerank_client: Any | None = None,
 ) -> RecallResult:
     """召回与 query 相关的记忆材料。
 
@@ -311,6 +313,37 @@ def recall(
                 trace_store=trace_store, namespace=namespace, query=query,
             )
 
+        # 8.5) rerank 精排（A27）
+        #
+        # **位置**：RRF 融合之后、动态 K 截断之前 —— 截断后再 rerank 没有意义，
+        # 候选已经丢了。
+        #
+        # **失败不抛**：rerank 是增强项，挂了就退回 RRF 顺序继续，整体仍是 200。
+        # 这是 ADR A27 的核心断言（kill 服务后材料集非空 + trace 标 skipped）。
+        rerank_result = rerank(
+            query,
+            [
+                (c.event_id, str(meta.get(c.event_id, {}).get("summary") or ""))
+                for c in scored
+            ],
+            settings=settings,
+            client=rerank_client,
+        )
+        if not rerank_result.skipped and rerank_result.scores:
+            # **必须换分数，改 list 顺序没用。**
+            # `decide_k` 的 docstring 明说「顺序不限，本函数自己排」，
+            # 而 `Candidate` 是 frozen —— 所以只能 replace 出一个新候选。
+            #
+            # 代价：阈值（min_score / drop_ratio / gap_ratio）之后是在
+            # **rerank 分的尺度**上判断，不再是 RRF 分。这是 rerank 生效的
+            # 必然结果 —— 两套分数不能混用于同一个排序，只能整套换掉。
+            scored = [
+                replace(c, score=rerank_result.scores[c.event_id])
+                if c.event_id in rerank_result.scores
+                else c
+                for c in scored
+            ]
+
         # 9) 动态 K
         decision = decide_k(
             scored,
@@ -350,6 +383,7 @@ def recall(
                     "errors": errors,
                     "date_range": _range_dict(date_range),
                     "gate": gate_trace,
+                    **rerank_result.to_trace(),
                 },
             ),
             trace_store=trace_store, namespace=namespace, query=query,
