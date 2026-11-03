@@ -38,6 +38,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, ConfigDict, Field
 
 from memory.config import Settings, load_settings
+from memory.services.graph_search import event_degrees
 from memory.core.forget_policy import (
     BUCKET_NEED_REVIEW,
     BUCKET_PROTECTED,
@@ -143,6 +144,10 @@ class SweepResponse(BaseModel):
     buckets: dict[str, int]
     dry_run: bool
     sample: list[ReviewItem]
+    #: A10：图查询失败时为 true。此时 `graph_degree` 一律按 0 处理，
+    #: 「图枢纽」这条硬信号**本次未生效** —— 必须显式告诉调用方，
+    #: 否则报告看起来一切正常，实则少了一类保护。
+    graph_degraded: bool = False
 
 
 # ---- 别名推断（P2：把描述性声明解析成具体名字）----
@@ -1215,6 +1220,19 @@ def create_app(
 
         ns = _namespace(body.namespace)
         rows = _load_all(cfg, ns)[: body.limit]
+
+        # A10 第 4 类硬信号：图结构位置。
+        # 图不可用时 event_degrees 返回 None —— 一律按 degree=0 继续，
+        # 但要在响应里标 graph_degraded，不能让「少了一类保护」静默通过。
+        degrees = event_degrees(
+            [c.event_id for c in rows], ns, settings=cfg
+        )
+        graph_degraded = degrees is None
+        if degrees is not None:
+            rows = [
+                replace(c, graph_degree=degrees.get(c.event_id, 0)) for c in rows
+            ]
+
         report = sweep(
             rows,
             today=date.today(),
@@ -1222,6 +1240,8 @@ def create_app(
             min_recalls=cfg.FORGET_MIN_RECALLS,
             grace_days=cfg.FORGET_GRACE_DAYS,
             protect_importance=cfg.PROTECT_IMPORTANCE_REVIEW,
+            graph_hub_degree=cfg.GRAPH_HUB_DEGREE,
+            confirmed_min=cfg.CONFIRMED_MIN,
         )
         summaries = {r.event_id: r.summary for r in rows}
         # 报告只抽样 SAFE_TO_DELETE，供人工判断误删率
@@ -1236,7 +1256,12 @@ def create_app(
             )
             for v in report.by_bucket(BUCKET_SAFE_TO_DELETE)
         ]
-        return SweepResponse(buckets=report.buckets, dry_run=True, sample=sample)
+        return SweepResponse(
+            buckets=report.buckets,
+            dry_run=True,
+            sample=sample,
+            graph_degraded=graph_degraded,
+        )
 
     # ------------------------------------------------- events（4.6 / 4.7 / 4.4）
 
@@ -1836,6 +1861,10 @@ def _load_all(cfg: Settings, namespace: str) -> list[ForgetCandidate]:
                 retention=str(r.get("retention") or "normal"),
                 pinned=bool(r.get("pinned")),
                 unresolved=list(r.get("unresolved") or []),
+                # A10 第 5 类硬信号：卡上已存 `confirmed_by_use`，直接搬过来。
+                # graph_degree 不在这里填 —— 它要查 Neo4j，属于 IO，
+                # 由 sweep 端点按需批量查（见 admin_sweep）。
+                confirmed_by_use=int(r.get("confirmed_by_use") or 0),
                 review_verdict=r.get("review_verdict"),
                 summary=r.get("summary"),
             )

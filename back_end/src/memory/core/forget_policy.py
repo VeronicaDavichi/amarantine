@@ -43,6 +43,13 @@ class ForgetCandidate:
     retention: str = "normal"
     pinned: bool = False
     unresolved: list[str] = field(default_factory=list)
+    #: 图结构位置（A10 第 4 类硬信号）：`:Event` 节点的入边 + 出边数。
+    #: 默认 0 = 图查询不可用或该卡没建图节点，**不触发保护**（宁可漏保护，
+    #: 也不让一次图抖动把所有卡都锁成永久保留）。
+    graph_degree: int = 0
+    #: 被有效引用次数（A10 第 5 类硬信号）：`confirmed_by_use` 累计值。
+    #: 默认 0 = 从未被引用，不触发保护。
+    confirmed_by_use: int = 0
     #: 人工裁决（D5 resolve）。`None` = 还没人看过；`keep` / `delete` 都是终局。
     review_verdict: str | None = None
     #: 仅用于管理接口展示，不参与分桶判定
@@ -90,6 +97,8 @@ def classify(
     min_recalls: int,
     grace_days: int,
     protect_importance: float,
+    graph_hub_degree: int = 8,
+    confirmed_min: int = 2,
 ) -> ForgetVerdict:
     """把一条卡分进三桶之一。
 
@@ -100,6 +109,8 @@ def classify(
         min_recalls: 召回次数阈值（`FORGET_MIN_RECALLS`）。
         grace_days: 宽限期（`FORGET_GRACE_DAYS`）。
         protect_importance: importance 灰区阈值（`PROTECT_IMPORTANCE_REVIEW`）。
+        graph_hub_degree: 图枢纽阈值（`GRAPH_HUB_DEGREE`），A10 第 4 类硬信号。
+        confirmed_min: 有效引用阈值（`CONFIRMED_MIN`），A10 第 5 类硬信号。
 
     Returns:
         ForgetVerdict。
@@ -108,6 +119,8 @@ def classify(
         raise ValueError("idle_days / min_recalls / grace_days 不能为负")
     if not 0.0 <= protect_importance <= 1.0:
         raise ValueError(f"protect_importance 必须在 [0,1]：{protect_importance}")
+    if graph_hub_degree < 0 or confirmed_min < 0:
+        raise ValueError("graph_hub_degree / confirmed_min 不能为负")
 
     created = candidate.created_at or today
     age = _days_between(today, created)
@@ -134,6 +147,13 @@ def classify(
         return verdict(BUCKET_PROTECTED, f"retention={candidate.retention}")
     if candidate.unresolved:
         return verdict(BUCKET_PROTECTED, "unresolved")
+    # 第 4 类：图结构位置。阈值 > 0 才启用 —— 配 0 等于关掉这条信号，
+    # 而不是「所有卡 degree 都 >= 0 于是全被保护」。
+    if graph_hub_degree > 0 and candidate.graph_degree >= graph_hub_degree:
+        return verdict(BUCKET_PROTECTED, "graph_hub")
+    # 第 5 类：有效引用次数。同样 0 表示关闭。
+    if confirmed_min > 0 and candidate.confirmed_by_use >= confirmed_min:
+        return verdict(BUCKET_PROTECTED, "confirmed_by_use")
 
     # ---- 3) 人工裁决 `delete`：**不推翻硬信号**，放在它们之后 ----
     # 为什么不在最前：一次误点不该能删掉 pinned / 有未决事项的卡。
@@ -176,6 +196,8 @@ def sweep(
     min_recalls: int,
     grace_days: int,
     protect_importance: float,
+    graph_hub_degree: int = 8,
+    confirmed_min: int = 2,
     dry_run: bool = True,
 ) -> SweepReport:
     """批量分类，产出分桶报告。
@@ -196,6 +218,8 @@ def sweep(
             min_recalls=min_recalls,
             grace_days=grace_days,
             protect_importance=protect_importance,
+            graph_hub_degree=graph_hub_degree,
+            confirmed_min=confirmed_min,
         )
         for c in candidates
     ]

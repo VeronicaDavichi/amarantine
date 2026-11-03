@@ -384,3 +384,72 @@ def search_by_entities(
                 drv.close()
             except Exception:  # noqa: BLE001
                 logger.warning("关闭 Neo4j driver 失败", exc_info=True)
+
+
+# ---------------------------------------------------------------- A10 第 4 类硬信号
+
+_DEGREE_CYPHER = """
+UNWIND $event_ids AS eid
+MATCH (e:Event {namespace: $namespace, event_id: eid})
+RETURN eid AS event_id, size([(e)--() | 1]) AS degree
+"""
+
+
+def event_degrees(
+    event_ids: list[str],
+    namespace: str,
+    *,
+    settings: Any,
+    driver: Any | None = None,
+    timeout_s: float = 3.0,
+) -> dict[str, int] | None:
+    """批量查 `:Event` 节点的度（入边 + 出边数）。
+
+    A10 第 4 类硬信号「图结构位置」的数据来源。
+
+    **返回值有三种含义，不要混淆**：
+
+    - `{...}`：正常，没查到的 event_id 不在字典里（调用方按 0 处理）
+    - `None`：**图不可用**。调用方必须降级（当 0 用），并在响应里标注
+      `graph_degraded=true` —— 不能把「查不了」当成「度为 0」静默处理
+
+    Args:
+        event_ids: 要查的 event_id 列表。
+        namespace: 记忆域。
+        settings: 提供 Neo4j 连接参数。
+        driver: 可注入的 driver（测试用）。
+        timeout_s: 连接超时。
+
+    Returns:
+        `{event_id: degree}`，或 `None` 表示图不可用。
+    """
+    if not event_ids:
+        return {}
+
+    owns_driver = driver is None
+    drv = driver
+    try:
+        if drv is None:
+            from neo4j import GraphDatabase
+
+            drv = GraphDatabase.driver(
+                settings.NEO4J_URI,
+                auth=(settings.NEO4J_USER, settings.NEO4J_PASSWORD),
+                connection_timeout=timeout_s,
+            )
+        with drv.session() as session:
+            records = session.run(
+                _DEGREE_CYPHER,
+                event_ids=list(event_ids),
+                namespace=namespace,
+            )
+            return {r["event_id"]: int(r["degree"]) for r in records}
+    except Exception as exc:  # noqa: BLE001 - 图不可用必须让调用方知道，但不抛
+        logger.warning("查事件度失败（将降级为 0）: %s namespace=%s", exc, namespace)
+        return None
+    finally:
+        if owns_driver and drv is not None:
+            try:
+                drv.close()
+            except Exception:  # noqa: BLE001
+                logger.warning("关闭 Neo4j driver 失败", exc_info=True)
