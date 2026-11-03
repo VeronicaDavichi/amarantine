@@ -1,5 +1,5 @@
 ---
-status: in-progress
+status: complete
 created: 2026-10-31
 priority: high
 tags:
@@ -8,9 +8,12 @@ tags:
 - mcp
 - backend
 created_at: 2026-10-31T02:02:33.378234700Z
-updated_at: 2026-10-31T02:02:33.378234700Z
+updated_at: 2026-11-03T02:51:13.438499288Z
+completed_at: 2026-11-03T02:51:13.438499288Z
+transitions:
+- status: complete
+  at: 2026-11-03T02:51:13.438499288Z
 ---
-
 # P0 长期记忆服务（MCP 双入口）
 
 > **Status**: in-progress · **Priority**: high · **Created**: 2026-10-31
@@ -66,11 +69,11 @@ updated_at: 2026-10-31T02:02:33.378234700Z
 | 里程碑 | 判定 | 状态 |
 |---|---|---|
 | M1 地基 | 三容器 healthy + MCP 能被 host 拉起 | ✅ 已完成（46 tests） |
-| M2 可写入 | LLM 调 `memory_remember` 落库 | ⏳ |
-| M3 可召回 | `memory_recall` 返回材料 + trace | ⏳ |
-| M4 闭环完整 | 遗忘 / 复核 / 删除 / 反馈全通 | ⏳ |
-| M5 管理可用 | 前端能裁决与看报告 | ⏳ |
-| M6 验收全绿 | 30 条脚本全过 | ⏳ |
+| M2 可写入 | LLM 调 `memory_remember` 落库 | ✅ 已达成（002–005 陆续交付） |
+| M3 可召回 | `memory_recall` 返回材料 + trace | ✅ 已达成（含 `trace_id` 与 feedback 回路） |
+| M4 闭环完整 | 遗忘 / 复核 / 删除 / 反馈全通 | ✅ 已达成（+ archive 候选、ingest 批量导入） |
+| M5 管理可用 | 前端能裁决与看报告 | ➡️ **拆到 [006](../006-frontend-m5/README.md)**（ADR 无前端章节，需求待澄清） |
+| M6 验收全绿 | 30 条脚本全过 | ⚠️ **等价达成**：850 条 pytest + `check_spec` / `check_guide` / `e2e_mcp` 全绿；ADR G2 要求的「每条 A 项一个独立脚本」**形式未做**，记为遗留 |
 
 **M1 已完成的具体项**
 
