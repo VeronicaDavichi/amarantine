@@ -42,6 +42,14 @@ def rrf_fuse(
     w = weights or {}
     scores: dict[str, float] = {}
 
+    # **合并键是 event_id，不是实体名 —— 这是故意的，不是漏了去重。**
+    #
+    # A6：同实体的两个版本（「项目A延期到六月」/「又延期到七月」）是两张卡，
+    # 各有各的时间戳，必须都返回。把它们按实体折成一条，等于丢掉「变更」，
+    # 而变更恰恰是记忆最该记住的信息。
+    #
+    # 所以：**不要**在这里加「按 entity_name 去重」的优化。
+    # 约束的测试在 `tests/test_conflict_versions.py`。
     for name, ids in channels.items():
         weight = float(w.get(name, 1.0))
         if weight <= 0:
