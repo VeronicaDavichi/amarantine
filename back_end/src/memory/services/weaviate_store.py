@@ -484,6 +484,38 @@ class WeaviateStore:
         logger.info("追加别名 claim %d 条 | event_id=%s", len(added), event_id)
         return len(added)
 
+    def update_vector(
+        self, namespace: str, event_id: str, vector: list[float]
+    ) -> bool:
+        """**只**替换向量，不碰任何属性（A14 派生层重建用）。
+
+        为什么用 PATCH 而不是 PUT：PUT 是整对象替换，漏传 properties 会把
+        卡的内容清空。PATCH 只改指定字段。
+
+        返回是否成功。失败抛 `WeaviateStoreError` —— 重建脚本需要知道
+        哪条没成功，不能静默跳过。
+        """
+        expected = self._settings.EMBEDDING_DIM
+        if len(vector) != expected:
+            raise MixedModelError(
+                f"向量维度 {len(vector)} 与 EMBEDDING_DIM={expected} 不一致，"
+                "拒绝写入（混模型会让检索结果失去可比性）"
+            )
+        self.ensure_collection()
+        uid = deterministic_uuid(namespace, event_id)
+        try:
+            resp = self._http.patch(
+                f"{self._base}/v1/objects/{COLLECTION}/{uid}",
+                json={"class": COLLECTION, "id": uid, "vector": vector},
+            )
+        except httpx.HTTPError as exc:
+            raise WeaviateStoreError(f"更新向量失败（{event_id}）: {exc}") from exc
+        if resp.status_code not in (200, 204):
+            raise WeaviateStoreError(
+                f"更新向量失败（{event_id}）: {resp.status_code} {resp.text[:200]}"
+            )
+        return True
+
     def _backfill_content_fields(self, uid: str, props: dict[str, Any]) -> int:
         """把已有对象**缺失的**内容字段补上，返回补了几个。
 

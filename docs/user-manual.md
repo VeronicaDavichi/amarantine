@@ -1434,6 +1434,36 @@ MCP 是长驻进程，只在启动时冷一次。
 
 ## 七、排障
 
+### 派生层重建（图 / 向量）
+
+事实层（事件卡）是唯一真相源，图与向量都可以从它重建。
+三个脚本都在仓库根目录跑，**默认 dry-run**，先看数字再加 `--apply`。
+
+```bash
+# 1. 看会重建多少（不动图）
+./harness/dev-linux.sh python ../harness/rebuild_graph.py --namespace work
+
+# 2. 真写图节点
+./harness/dev-linux.sh python ../harness/rebuild_graph.py --namespace work --apply
+
+# 3. 重算向量（先小步试 2 条）
+./harness/dev-linux.sh python ../harness/rebuild_vectors.py --namespace work --limit 2
+./harness/dev-linux.sh python ../harness/rebuild_vectors.py --namespace work --apply
+
+# 4. 验证双向可解析
+./harness/dev-linux.sh python ../harness/check_rebuild.py --namespace work
+```
+
+**风险提示**
+
+- `--apply` 会真写。重建图**不会删**已有节点（`MERGE` 语义），
+  但重建向量会覆盖现有向量 —— 如果 `EMBEDDING_MODEL` 改过，
+  必须先删掉旧 collection 再重建，否则两种模型的向量会混在一起
+  （维度可能相同、空间不同，检索会静默变错；`rebuild_vectors.py` 会先拦一次）
+- 重建期间不要同时写入
+- `check_rebuild.py` 报「图有、未删除卡没有 N 个」是**正常**的 ——
+  软删的卡在 Weaviate 里被过滤，但图节点还在
+
 ### 起不来，只有 exit code 1
 
 日志在 `LOG_FILE` 指向的文件里（**stderr 没有日志**，这是刻意的）。

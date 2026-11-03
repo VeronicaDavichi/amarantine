@@ -411,7 +411,9 @@ class EventDeleteResponse(BaseModel):
 
 
 class ArchiveRequest(BaseModel):
-    window_days: int = 180
+    #: 不传则用 `ARCHIVE_WINDOW_DAYS`（A4：环境变量必须能改变冷热划分）。
+    #: 原来这里硬编码 180，导致配置项改了也不生效 —— 配置在、逻辑不在。
+    window_days: int | None = None
     dry_run: bool = True
     namespace: str | None = None
 
@@ -1481,14 +1483,19 @@ def create_app(
         `forget` 按**空闲 + 召回收**淘汰三桶。两者不共用一个 service。
         """
         ns = _namespace(body.namespace)
-        if body.window_days < 1:
+        # A4：不传就用配置。**不能硬编码默认值** —— 那样 ARCHIVE_WINDOW_DAYS
+        # 改了对行为零影响，配置项形同虚设。
+        window_days = (
+            body.window_days if body.window_days is not None else cfg.ARCHIVE_WINDOW_DAYS
+        )
+        if window_days < 1:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="window_days 必须 >= 1",
             )
 
         cutoff = (
-            datetime.now(timezone.utc) - timedelta(days=body.window_days)
+            datetime.now(timezone.utc) - timedelta(days=window_days)
         ).isoformat()
         store = _event_store()
         try:
@@ -1502,7 +1509,7 @@ def create_app(
             store.close()
 
         return ArchiveResponse(
-            window_days=body.window_days,
+            window_days=window_days,
             candidates=candidates,
             scanned=scanned,
         )
