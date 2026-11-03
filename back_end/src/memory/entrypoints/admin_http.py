@@ -79,6 +79,13 @@ from memory.services.weaviate_store import WeaviateStore, WeaviateStoreError
 
 logger = logging.getLogger("memory.admin")
 
+#: `GET /raw` 反查事件卡时一次最多扫多少条。
+#:
+#: 超过这个数 `event_ids` 就可能不全，响应里的 `truncated` 会为 true。
+#: 与 `POST /admin/archive` 的扫描上限是同一类取舍，所以两边都用 `scanned`
+#: 告诉调用方「这个结论建立在多少条之上」。
+_RAW_SCAN_LIMIT = 5000
+
 #: 允许的 bucket 取值（A24：NEED_REVIEW 与 LABEL_REVIEW 是两条队列，禁止混用）
 ALLOWED_BUCKETS = (BUCKET_NEED_REVIEW, BUCKET_PROTECTED, BUCKET_SAFE_TO_DELETE)
 
@@ -479,6 +486,16 @@ class RawQuoteResponse(BaseModel):
     session_id: str | None = None
     #: 这条原文生成了哪些事件卡（扫 Weaviate 反查，不建反向索引）
     event_ids: list[str] = []
+    #: 反查时实际扫了多少张卡。`event_ids` 只在这个范围内成立 ——
+    #: 与 `POST /admin/archive` 的 `scanned` 同口径。
+    scanned: int = 0
+    #: 扫描触到 `_RAW_SCAN_LIMIT` 上限，`event_ids` **可能不全**。
+    #: 单给 `scanned` 不够：调用方还得自己比 5000，容易漏。
+    truncated: bool = False
+    #: false = 反查失败，`event_ids` **不可信**。
+    #: 与「确定没有关联」（`lookup_ok=true` + `event_ids=[]`）必须分开，
+    #: 否则一次 Weaviate 抖动就会被读成「这张记忆没有出处」。
+    lookup_ok: bool = True
 
 
 # ---- NEED_REVIEW 裁决（D5：与上面的 LABEL_REVIEW 是另一条队列）----
@@ -1642,13 +1659,16 @@ def create_app(
             )
 
         store = _event_store()
+        lookup_ok = True
+        rows: list = []
         try:
-            rows = store.list_all(ns, limit=5000)
+            rows = store.list_all(ns, limit=_RAW_SCAN_LIMIT)
         except WeaviateStoreError as exc:
-            # 原文是事实层，反查失败不该把 404 也变成 503 之外的假象：
-            # 原文查到了就返回，只把 event_ids 留空并记日志。
-            logger.warning("原文反查事件卡失败（event_ids 留空）: %s", exc)
-            rows = []
+            # 原文是事实层，反查挂了不该把原文也藏起来（A32 的精神）；
+            # 但**更不能返回空 event_ids 假装「这张卡没生成过事件」** ——
+            # 所以降级成 `lookup_ok=false`，让「不知道」和「确定没有」分得开。
+            logger.warning("原文反查事件卡失败（lookup_ok=false）: %s", exc)
+            lookup_ok = False
         finally:
             store.close()
 
@@ -1659,7 +1679,13 @@ def create_app(
         ]
         payload = raw.to_dict()
         payload.pop("created_at", None)
-        return RawQuoteResponse(**payload, event_ids=event_ids)
+        return RawQuoteResponse(
+            **payload,
+            event_ids=event_ids,
+            scanned=len(rows),
+            truncated=len(rows) >= _RAW_SCAN_LIMIT,
+            lookup_ok=lookup_ok,
+        )
 
     return app
 

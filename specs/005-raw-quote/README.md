@@ -227,6 +227,23 @@ ADR 4.2 明确：这是「拒绝」，不是「收下了」。FastAPI 的 `statu
 **测试全绿时发现的问题** —— 没有任何一条断言检查「失败时计数对不对」。
 和 004 的 reason 枚举是同一类：加新字段/新计数时，先问「它和谁构成等式」。
 
+### 一致性修正：`GET /raw` 的三个诚实字段
+
+初版只返回 `event_ids`，反查失败时返回空列表 —— 调用方会把一次 Weaviate
+抖动读成「这张记忆没有出处」，并据此删掉一条好记忆。补三个字段：
+
+| 字段 | 说什么 |
+|---|---|
+| `scanned` | 这个结论基于扫了多少张卡（与 `POST /admin/archive` 同口径） |
+| `truncated` | 扫描触到上限，`event_ids` 可能不全 |
+| `lookup_ok` | 反查到底成没成；`false` 时 `event_ids` 不可信 |
+
+为什么不是「反查失败就 503」：原文是事实层，A32 要求软删后仍可读，
+把原文也一起藏起来是另一种不诚实。降级 + 明确标记，比二选一都好。
+
+单给 `scanned` 不够 —— 调用方还得自己拿它跟上限比才知道有没有截断，
+而这个上限不该泄漏到调用方。所以 `truncated` 是同一件事的另一半。
+
 ### 依赖关系
 
 本 spec 的 A13 用到 004 的 `DELETE /admin/event`，属于**软依赖**（只为验证
@@ -235,7 +252,7 @@ ADR 4.2 明确：这是「拒绝」，不是「收下了」。FastAPI 的 `statu
 
 ### 验收证据
 
-- 单测：`pytest tests -q` → **847 passed**（827 + 20 新增），零回归；`e2e_mcp.py` 全绿
+- 单测：`pytest tests -q` → **850 passed**（827 + 23 新增），零回归；`e2e_mcp.py` 全绿
 - 真库：11/11 全绿（真 Weaviate + 真 Neo4j + 真 LLM 切分，ns `raw73c6a7`）
   - A4 `job=job_8c9a06282fb5209f status=queued` —— 生产语义是真的异步
   - A9 `status=done events=3` —— 切分出 3 条摘要，各成一张卡
@@ -243,5 +260,6 @@ ADR 4.2 明确：这是「拒绝」，不是「收下了」。FastAPI 的 `statu
     证明 `raw_quote_ids` 真的进了 Weaviate 且反查可用
   - A13 `del=200 raw=200` —— 软删事件卡后原文不可删
   - A7 `status=rejected job=None` —— 全批拦截走 200 且不发 job_id
+- 真库二次验证：7/7 全绿（ns `scan61c22a`）—— `scanned=1 truncated=False lookup_ok=True`
 - 守门：`check_guide.py` / `check_spec.py` exit 0
 

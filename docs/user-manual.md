@@ -256,11 +256,19 @@ curl -s -H "Authorization: Bearer $TOKEN" \
   "http://127.0.0.1:8765/admin/raw/msg_xxxx?namespace=work"
 ```
 
-返回 `{quote_id, text, role, ts, source, session_id, event_ids:[...]}`：
+返回 `{quote_id, text, role, ts, source, session_id, event_ids, scanned, truncated, lookup_ok}`：
 
 - `text` 是**原文**，与导入时一字不差
 - `event_ids` 是这条原文生成了哪些事件卡（反查出来的）
 - **软删事件卡后仍返回 200**（ADR A32）—— `raw_quote` 没有删除路径，这是设计如此，不是漏了
+- `scanned` 是反查时实际扫了多少张卡 —— `event_ids` 只在这个范围里成立
+- `truncated: true` 表示扫描触到上限，`event_ids` **可能不全**（别当成「全都没有」）
+- `lookup_ok: false` 表示反查失败，`event_ids` **不可信** —— 与「确定没有关联」（`lookup_ok:true` + `event_ids:[]`）不是一回事
+
+> 三个字段一起看才有意义：`scanned` 说「基于多少条」，
+> `truncated` 说「是不是没扫完」，`lookup_ok` 说「这次反查到底成没成」。
+> 只看 `event_ids: []` 会把它误读成「这张记忆没有出处」——
+> 一次 Weaviate 抖动就能让人据此删掉一条好记忆。
 
 召回材料里也带 `raw_quote_ids`，所以「模型引用了这条记忆」和「这条记忆出自哪句话」串得起来。
 

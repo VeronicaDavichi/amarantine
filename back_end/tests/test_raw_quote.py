@@ -406,6 +406,108 @@ def test_ingest_requires_token(env) -> None:
     assert r.status_code == 401
 
 
+def test_get_raw_reports_scan_scope(env) -> None:
+    """A15：`scanned` 要说清结论建立在多少条之上（与 archive 同口径）。
+
+    没有它，`event_ids: []` 到底是「真没有」还是「没扫到」就分不清。
+    """
+    client, _, _, cards = env
+    turns = [_turn("扫描范围要可见")]
+    client.post(
+        "/admin/ingest", json={"dedupe_key": "k15", "turns": turns}, headers=AUTH
+    )
+    qid = quote_id_for(
+        namespace=NS,
+        source="chat",
+        session_id=None,
+        ts=turns[0]["ts"],
+        text=turns[0]["text"],
+    )
+    cards.extend(
+        [
+            {"event_id": "evt_1", "raw_quote_ids": [qid]},
+            {"event_id": "evt_2", "raw_quote_ids": ["msg_other"]},
+        ]
+    )
+
+    body = client.get(f"/admin/raw/{qid}", headers=AUTH).json()
+    assert body["scanned"] == 2
+    assert body["truncated"] is False
+    assert body["lookup_ok"] is True
+    assert body["event_ids"] == ["evt_1"]
+
+
+def test_get_raw_marks_truncated_at_scan_limit(env, monkeypatch) -> None:
+    """A16：扫到上限就置 `truncated` —— 否则「不全」会被读成「全都没有」。"""
+    client, _, _, cards = env
+    import memory.entrypoints.admin_http as mod
+
+    monkeypatch.setattr(mod, "_RAW_SCAN_LIMIT", 2)
+
+    turns = [_turn("会被截断")]
+    client.post(
+        "/admin/ingest", json={"dedupe_key": "k16", "turns": turns}, headers=AUTH
+    )
+    qid = quote_id_for(
+        namespace=NS,
+        source="chat",
+        session_id=None,
+        ts=turns[0]["ts"],
+        text=turns[0]["text"],
+    )
+    cards.extend(
+        [
+            {"event_id": "evt_1", "raw_quote_ids": ["msg_x"]},
+            {"event_id": "evt_2", "raw_quote_ids": ["msg_y"]},
+        ]
+    )
+
+    body = client.get(f"/admin/raw/{qid}", headers=AUTH).json()
+    assert body["scanned"] == 2
+    assert body["truncated"] is True
+    # 没在这两条里找到，但**不能说**它没有出处
+    assert body["event_ids"] == []
+
+
+def test_get_raw_lookup_failure_is_not_empty_result(env, monkeypatch) -> None:
+    """A17：反查挂了 ≠ 没有关联事件。
+
+    降级成 `lookup_ok=false` 而不是返回空列表 —— 后者会让调用方
+    把一次 Weaviate 抖动读成「这张记忆没有出处」，并据此删掉它。
+    """
+    client, _, _, _ = env
+    import memory.entrypoints.admin_http as mod
+    from memory.services.weaviate_store import WeaviateStoreError
+
+    turns = [_turn("反查会挂")]
+    client.post(
+        "/admin/ingest", json={"dedupe_key": "k17", "turns": turns}, headers=AUTH
+    )
+    qid = quote_id_for(
+        namespace=NS,
+        source="chat",
+        session_id=None,
+        ts=turns[0]["ts"],
+        text=turns[0]["text"],
+    )
+
+    class BrokenStore:
+        def list_all(self, namespace: str, *, limit: int = 1000):
+            raise WeaviateStoreError("weaviate 挂了")
+
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr(mod, "WeaviateStore", lambda cfg: BrokenStore())
+
+    r = client.get(f"/admin/raw/{qid}", headers=AUTH)
+    assert r.status_code == 200, "原文本身可读，不该因为反查挂了就 503"
+    body = r.json()
+    assert body["text"] == "反查会挂"
+    assert body["lookup_ok"] is False
+    assert body["scanned"] == 0
+
+
 def test_card_failure_does_not_inflate_turns_skipped(env, monkeypatch) -> None:
     """写卡失败 ≠ turn 被跳过。两个计数混一起，沉默损失就看不见了。
 
