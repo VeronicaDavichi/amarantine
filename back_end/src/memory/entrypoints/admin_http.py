@@ -23,7 +23,15 @@ from dataclasses import replace
 from typing import Any, Literal
 
 import uvicorn
-from fastapi import Depends, FastAPI, HTTPException, Query, status
+from fastapi import (
+    BackgroundTasks,
+    Depends,
+    FastAPI,
+    HTTPException,
+    Query,
+    Response,
+    status,
+)
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -58,6 +66,15 @@ from memory.services.label_review import LabelReviewQueue, queue_from_settings
 from memory.services.recall import RecallUnavailableError, recall
 from memory.services.recall_count import RecallCounter, db_path_from_settings
 from memory.services.recall_trace import trace_store_from_settings
+from memory.services.raw_quote import (
+    JOB_QUEUED,
+    JOB_REJECTED,
+    IngestJobStore,
+    RawQuoteStore,
+    normalize_turn,
+    quote_id_for,
+    run_ingest,
+)
 from memory.services.weaviate_store import WeaviateStore, WeaviateStoreError
 
 logger = logging.getLogger("memory.admin")
@@ -407,6 +424,61 @@ class RecallFeedbackResponse(BaseModel):
     #: `confirmed_by_use` 实际 +1 的材料
     incremented: list[str] = []
     rejected: list[str] = []
+
+
+# ---- 原文层（ADR 4.2 批量导入 / 4.8 原文溯源）----
+
+
+class IngestTurn(BaseModel):
+    text: str
+    role: str = "user"
+    ts: str | None = None
+    #: 标注了就不产卡（ADR 4.2 的指令拦截）
+    do_not_store: bool = False
+    model_config = ConfigDict(extra="ignore")
+
+
+class IngestRequest(BaseModel):
+    source: str = "chat"
+    session_id: str | None = None
+    #: 客户端用它防重复提交；同值的第二次提交返回**已有 job**，不重跑
+    dedupe_key: str
+    turns: list[IngestTurn]
+    namespace: str | None = None
+
+
+class IngestResponse(BaseModel):
+    job_id: str | None = None
+    status: str
+    #: 只有整批被 `do_not_store` 拦下时才给 `"do_not_store"`
+    reason: str | None = None
+    events_created: int = 0
+    turns_total: int = 0
+    turns_skipped: int = 0
+
+
+class IngestJobResponse(BaseModel):
+    job_id: str
+    status: str
+    events_created: int = 0
+    turns_total: int = 0
+    turns_skipped: int = 0
+    source: str = "chat"
+    session_id: str | None = None
+    error: str | None = None
+    created_at: str
+    updated_at: str
+
+
+class RawQuoteResponse(BaseModel):
+    quote_id: str
+    text: str
+    role: str
+    ts: str | None = None
+    source: str
+    session_id: str | None = None
+    #: 这条原文生成了哪些事件卡（扫 Weaviate 反查，不建反向索引）
+    event_ids: list[str] = []
 
 
 # ---- NEED_REVIEW 裁决（D5：与上面的 LABEL_REVIEW 是另一条队列）----
@@ -1406,6 +1478,188 @@ def create_app(
             incremented=list(outcome.incremented or []),
             rejected=list(outcome.rejected or []),
         )
+
+    # ------------------------------------------------- 原文层（4.2 / 4.8）
+
+    @app.post(
+        "/admin/ingest",
+        response_model=IngestResponse,
+        status_code=status.HTTP_202_ACCEPTED,
+        dependencies=[Depends(require_token)],
+    )
+    def admin_ingest(
+        body: IngestRequest, background: BackgroundTasks, response: Response
+    ) -> IngestResponse:
+        """批量导入历史对话（ADR 4.2）。
+
+        三件事按顺序发生，缺一件都会让 202 变成黑洞：
+
+        1. **原文先同步落库**：202 返回时 `GET /raw/{quote_id}` 就该能查到。
+           如果等后台再写，调用方拿到 job_id 的那一秒是查不到原文的。
+        2. **dedupe_key 幂等**：同值再提交返回**已有 job**，不重跑 ——
+           重跑会把 LLM 切分结果变一遍，同一批对话产出不同的卡。
+        3. **整批 do_not_store 走 200 rejected**：`job_id` 为 null，
+           因为它压根不会执行（ADR 4.2 的响应语义）。
+        """
+        ns = _namespace(body.namespace)
+        dedupe_key = (body.dedupe_key or "").strip()
+        if not dedupe_key:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="dedupe_key 不能为空（客户端靠它防重复提交）",
+            )
+        if not body.turns:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail="turns 不能为空"
+            )
+
+        normalized = [normalize_turn(t.model_dump()) for t in body.turns]
+        valid = [t for t in normalized if t is not None]
+        invalid = len(body.turns) - len(valid)
+        if not valid:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="没有一条合法的 turn（需要非空 text + 合法 role）",
+            )
+
+        job_store = IngestJobStore(db_path_from_settings(cfg))
+        existing = job_store.find_by_dedupe(ns, dedupe_key)
+        if existing is not None:
+            # 幂等：连状态一起回，调用方不用猜上一次跑完没有
+            return IngestResponse(
+                job_id=existing.job_id,
+                status=existing.status,
+                events_created=existing.events_created,
+                turns_total=existing.turns_total,
+                turns_skipped=existing.turns_skipped,
+            )
+
+        usable = [t for t in valid if not t["do_not_store"]]
+        skipped = (len(valid) - len(usable)) + invalid
+
+        if not usable:
+            job_store.create(
+                namespace=ns,
+                dedupe_key=dedupe_key,
+                source=body.source,
+                session_id=body.session_id,
+                turns_total=len(valid),
+                turns_skipped=skipped,
+                status=JOB_REJECTED,
+                error="do_not_store",
+            )
+            # ADR 4.2：整批被拦是 **200**，不是 202 —— 它根本不会执行
+            response.status_code = status.HTTP_200_OK
+            return IngestResponse(
+                job_id=None,
+                status=JOB_REJECTED,
+                reason="do_not_store",
+                turns_total=len(valid),
+                turns_skipped=skipped,
+            )
+
+        raw_store = RawQuoteStore(db_path_from_settings(cfg))
+        quote_ids: list[str] = []
+        for turn in usable:
+            qid = quote_id_for(
+                namespace=ns,
+                source=body.source,
+                session_id=body.session_id,
+                ts=turn["ts"],
+                text=turn["text"],
+            )
+            raw_store.put(
+                namespace=ns,
+                quote_id=qid,
+                text=turn["text"],
+                role=turn["role"],
+                source=body.source,
+                ts=turn["ts"],
+                session_id=body.session_id,
+            )
+            quote_ids.append(qid)
+
+        job = job_store.create(
+            namespace=ns,
+            dedupe_key=dedupe_key,
+            source=body.source,
+            session_id=body.session_id,
+            turns_total=len(valid),
+            turns_skipped=skipped,
+            status=JOB_QUEUED,
+        )
+        background.add_task(
+            run_ingest,
+            job_id=job.job_id,
+            namespace=ns,
+            turns=usable,
+            quote_ids=quote_ids,
+            settings=cfg,
+        )
+        return IngestResponse(
+            job_id=job.job_id,
+            status=job.status,
+            turns_total=job.turns_total,
+            turns_skipped=job.turns_skipped,
+        )
+
+    @app.get(
+        "/admin/ingest/{job_id}",
+        response_model=IngestJobResponse,
+        dependencies=[Depends(require_token)],
+    )
+    def admin_ingest_job(job_id: str) -> IngestJobResponse:
+        """查导入进度（ADR 未定义，但 `202 {job_id}` 之后必须有它）。
+
+        没有这个接口，`202` 就只是「我收到了」四个字 ——
+        调用方永远不知道那批对话到底进去没有。
+        """
+        job = IngestJobStore(db_path_from_settings(cfg)).get(job_id)
+        if job is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail=f"任务不存在: {job_id}"
+            )
+        return IngestJobResponse(**job.to_dict())
+
+    @app.get(
+        "/admin/raw/{quote_id}",
+        response_model=RawQuoteResponse,
+        dependencies=[Depends(require_token)],
+    )
+    def admin_raw(quote_id: str, namespace: str | None = None) -> RawQuoteResponse:
+        """按 quote_id 取回原文（ADR 4.8）。
+
+        **软删事件卡后仍返回 200**（A32）—— `raw_quote` 没有删除路径，
+        所以这里不需要任何 `is_deleted` 判断。不是漏了，是设计如此。
+
+        `event_ids` 靠扫 Weaviate 反查（不建反向索引，理由见 005 Notes）。
+        """
+        ns = _namespace(namespace)
+        raw = RawQuoteStore(db_path_from_settings(cfg)).get(ns, quote_id)
+        if raw is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail=f"原文不存在: {quote_id}"
+            )
+
+        store = _event_store()
+        try:
+            rows = store.list_all(ns, limit=5000)
+        except WeaviateStoreError as exc:
+            # 原文是事实层，反查失败不该把 404 也变成 503 之外的假象：
+            # 原文查到了就返回，只把 event_ids 留空并记日志。
+            logger.warning("原文反查事件卡失败（event_ids 留空）: %s", exc)
+            rows = []
+        finally:
+            store.close()
+
+        event_ids = [
+            str(r.get("event_id"))
+            for r in rows
+            if quote_id in (r.get("raw_quote_ids") or [])
+        ]
+        payload = raw.to_dict()
+        payload.pop("created_at", None)
+        return RawQuoteResponse(**payload, event_ids=event_ids)
 
     return app
 

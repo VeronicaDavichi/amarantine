@@ -106,6 +106,10 @@ SCHEMA_PROPERTIES: list[dict[str, Any]] = [
     # `invertedIndexConfig`（indexNullState）在 1.28 的建表请求里会被静默忽略，
     # 而 `IsNull` 过滤又强制要求它。布尔字段走普通倒排索引，没有这个坑。
     {"name": "is_deleted", "dataType": ["boolean"]},
+    # 原文层溯源（ADR 4.8）：这条卡出自哪些原始消息。
+    # 一直是空列表，直到 ingest 开始填 —— 召回材料要带出来，
+    # 否则 `GET /raw/{quote_id}` 的验收（A5/A32）没有入口。
+    {"name": "raw_quote_ids", "dataType": ["text[]"]},
     # 保留时间戳供审计展示（不参与过滤）
     {"name": "deleted_at", "dataType": ["date"]},
     # 管理面改过这张卡的时刻（ADR 4.6 的 `updated_at`）。
@@ -172,6 +176,8 @@ def to_properties(card: EventCard, *, anomaly: str | None = None) -> dict[str, A
         "types": list(card.types),
         "entity_names": [e.name for e in card.entities],
         "unresolved": list(card.unresolved),
+        # 原文溯源：这张卡由哪些原始消息生成（ingest 填，LLM 实时写入时为空）
+        "raw_quote_ids": list(card.raw_quote_ids),
         "resolves": list(card.resolves),
         "importance": card.importance,
         "retention": card.retention,
@@ -838,6 +844,7 @@ class WeaviateStore:
       pinned_source
       unresolved
       entity_names
+      raw_quote_ids
       retention
       recall_count
       confirmed_by_use
@@ -858,6 +865,7 @@ class WeaviateStore:
       pinned
       unresolved
       entity_names
+      raw_quote_ids
       _additional { distance score }"""
 
     @staticmethod

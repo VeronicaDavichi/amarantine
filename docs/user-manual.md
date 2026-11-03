@@ -212,8 +212,57 @@ curl -s -X POST -H "Authorization: Bearer $TOKEN" \
 | `archive` 的 `dry_run` 传 `false` 也 **`moved:0`** | P0 只出候选；误删率闸门没过之前不自动搬迁 |
 
 > `DELETE` 的响应里有 `raw_quote_preserved: true`。它的字面含义是真的（事实层没删任何原文），
-> **但原文层还没实现**，所以今天还不能真的按 `quote_id` 查回原文 —— 那部分是 005。
-> 别把这个字段当成「溯源已可用」。
+> 按 `quote_id` 查回原文的能力见下一节 —— 从 005 起**真的可用了**。
+
+#### 导入历史对话（批量补数据）
+
+LLM 的实时写入走 `memory_remember`；**历史对话批量补库**走这个接口：
+
+```bash
+# 提交一批对话 → 202 + job_id（后台切分 + 写卡）
+curl -s -X POST -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+        "source":"chat",
+        "session_id":"s_001",
+        "dedupe_key":"s_001:2026-10-30",
+        "namespace":"work",
+        "turns":[
+          {"text":"我上周决定接受那家公司的 offer 了","role":"user","ts":"2026-10-30T10:21:14+08:00"},
+          {"text":"通勤要一小时，但薪资涨了不少","role":"assistant","ts":"2026-10-30T10:22:01+08:00"}
+        ]
+      }' \
+  http://127.0.0.1:8765/admin/ingest
+
+# 查进度（202 之后必须靠它，否则 job_id 就是个黑洞）
+curl -s -H "Authorization: Bearer $TOKEN" \
+  http://127.0.0.1:8765/admin/ingest/job_xxxx
+```
+
+| 行为 | 说明 |
+|---|---|
+| `202 {job_id, status:"queued"}` | 收下了，后台切分。**原文在 202 返回时已经能查**，不等后台 |
+| 同 `dedupe_key` 再提交 | 返回**同一个** `job_id`，不重跑（重跑会让同一批对话产出不同的卡） |
+| 整批 `do_not_store` | **200** `{job_id:null, status:"rejected", reason:"do_not_store"}` —— 它压根不会执行 |
+| 部分 `do_not_store` | 正常 202，`turns_skipped` 记下被跳过的条数 |
+| 单条写卡失败 | 只跳过这一条，不整批失败。`events_created` 与 `turns_skipped` 的差值就是沉默损失 |
+
+`status` 取值：`queued` → `running` → `done`；`rejected`（全批被拦）/ `failed`（连切分都做不了）。
+
+#### 溯源：一条记忆出自哪句话
+
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "http://127.0.0.1:8765/admin/raw/msg_xxxx?namespace=work"
+```
+
+返回 `{quote_id, text, role, ts, source, session_id, event_ids:[...]}`：
+
+- `text` 是**原文**，与导入时一字不差
+- `event_ids` 是这条原文生成了哪些事件卡（反查出来的）
+- **软删事件卡后仍返回 200**（ADR A32）—— `raw_quote` 没有删除路径，这是设计如此，不是漏了
+
+召回材料里也带 `raw_quote_ids`，所以「模型引用了这条记忆」和「这条记忆出自哪句话」串得起来。
 
 ### 冒烟验证
 
@@ -1455,3 +1504,4 @@ jieba 切成 `张三/nr 决定/v 项目/n A/x 延期/v 到/v 六月/t`，
 | v0.15 | 2026-11-03 | 判据带理由（`reason`/`detail`，`detail` 确定性）；别名声明的拒绝两侧都落 `alias_reject` 表 + 两个管理接口；罕见姓豁免（量词字是姓氏 + jieba `nr` 或用户 `姓X` 声明，≥3 字），修 `种师道` 被量词判据误杀 |
 | v0.16 | 2026-11-03 | 裁决闭环：`accepted` 后绕过判据补建别名边，失败记 `accept_pending` 留在待办可重试；纠错痕迹可查（`GET /admin/entities/edits`，`args` 解析成对象）；新增 `harness/check_spec.py` 校验 spec 骨架 |
 | v0.17 | 2026-11-03 | 事件管理面补齐五个 ADR 接口：`PATCH /admin/event`（白名单 + 幂等 + `pinned_source`）、`DELETE /admin/event`（只软删，`hard=true` 拒绝）、`POST /admin/archive`（P0 不搬）、`POST /admin/recall` + `.../{trace_id}/feedback`（带 `trace_id` 才能关联）；`retention_expired` 成为独立审计原因 |
+| v0.18 | 2026-11-03 | 原文层落地：`POST /admin/ingest`（异步导入 + `dedupe_key` 幂等 + `do_not_store` 拦截）、`GET /admin/ingest/{job_id}`（`202` 的配套查询接口）、`GET /admin/raw/{quote_id}`（原文溯源，软删事件卡后仍可读）；`raw_quote_ids` 第一次真的被填上，召回材料也带出来了 |

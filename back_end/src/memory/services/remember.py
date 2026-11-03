@@ -147,6 +147,7 @@ def remember_event(
     important: bool = False,
     emotion_intensity: float = 0.0,
     context: str | None = None,
+    raw_quote_ids: list[str] | None = None,
     settings: Settings,
     store: WeaviateStore | None = None,
     counter: DirectiveCounter | None = None,
@@ -167,6 +168,8 @@ def remember_event(
         important: 用户是否强调重要。
         emotion_intensity: 情绪强度 0–1。
         context: 当前对话话题（如 ``"A股"``）。给了才在图上建 Context 边。
+        raw_quote_ids: 这条摘要出自哪些原始消息（`ingest` 传入）。
+            **不进 `event_id` 哈希**，所以同一摘要重复导入仍幂等。
         settings: 配置。
         store: 可注入的 Weaviate 封装（测试用）。
         counter: 可注入的护栏计数器（测试用）。
@@ -270,6 +273,9 @@ def remember_event(
         pinned=decision.pinned,
         pinned_source=decision.pinned_source,
         user_directive=decision.user_directive,
+        # 原文溯源（ADR 4.8）。**不参与 `event_id` 哈希** —— 否则同一段摘要
+        # 因为挂在不同 quote 上会被当成两个事件，幂等直接失效。
+        raw_quote_ids=list(raw_quote_ids or []),
     )
     card.check_invariants()
 
