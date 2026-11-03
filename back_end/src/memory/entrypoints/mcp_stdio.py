@@ -19,7 +19,7 @@ from memory.config import Settings, load_settings
 from memory.core.logging import fatal, setup_logging
 from memory.core.tools import INSTRUCTIONS, PROTOCOL_VERSION, SERVER_NAME, SERVER_VERSION, TOOLS
 from memory.services.feedback import submit_feedback
-from memory.services.forget import forget_event
+from memory.services.forget import MCP_REASONS, forget_event
 from memory.services.recall import recall
 from memory.services.recall_trace import trace_store_from_settings
 from memory.services.remember import remember_event
@@ -125,6 +125,10 @@ def _tool_forget(settings: Settings, args: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("event_id 必须是非空字符串")
 
     reason = args.get("reason", "user_forget")
+    # 入口自己收窄：service 的 `ALLOWED_REASONS` 含管理侧专用的
+    # `retention_expired`，那个理由 LLM 没有能力判断，不该从这里进来。
+    if reason not in MCP_REASONS:
+        raise ValueError(f"reason 必须是 {MCP_REASONS} 之一，收到 {reason!r}")
     result = forget_event(
         namespace=namespace,
         event_id=event_id,

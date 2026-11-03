@@ -34,6 +34,12 @@ ALLOWED_REASONS = ("user_forget", "outdated", "retention_expired")
 #: MCP 工具允许的 reason 子集（入口自己收窄，不靠 service 拦）。
 MCP_REASONS = ("user_forget", "outdated")
 
+#: 管理侧 `DELETE /admin/event/{event_id}` 允许的 reason（ADR 4.7）。
+#:
+#: **不含 `outdated`**：那是 MCP 的语义（内容过时了），
+#: 管理面删卡只有「用户开口」和「保留期到了」两种。
+ADMIN_REASONS = ("user_forget", "retention_expired")
+
 
 class ForgetError(RuntimeError):
     """遗忘失败（对象不存在、Weaviate 不可用等）。"""

@@ -256,6 +256,12 @@ def test_delete_reason_enum_and_retention_expired(env) -> None:
     )
     assert bad.status_code == 400
 
+    # `outdated` 是 MCP 的语义（内容过时），管理面删卡不认它
+    outdated = client.request(
+        "DELETE", "/admin/event/evt_a", json={"reason": "outdated"}, headers=AUTH
+    )
+    assert outdated.status_code == 400
+
     ok = client.request(
         "DELETE",
         "/admin/event/evt_a",

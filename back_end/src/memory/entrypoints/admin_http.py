@@ -47,7 +47,12 @@ from memory.services.entity_edit import (
     rename_entity,
     split_entity,
 )
-from memory.services.forget import ALLOWED_REASONS, ForgetError, forget_event
+from memory.services.forget import (
+    ADMIN_REASONS,
+    ALLOWED_REASONS,
+    ForgetError,
+    forget_event,
+)
 from memory.services.feedback import FeedbackError, TraceNotFoundError, submit_feedback
 from memory.services.label_review import LabelReviewQueue, queue_from_settings
 from memory.services.recall import RecallUnavailableError, recall
@@ -1231,10 +1236,10 @@ def create_app(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="只允许软删：hard=true 被拒绝（D7/A9 事实层永不物理删）",
             )
-        if req.reason not in ("user_forget", "retention_expired"):
+        if req.reason not in ADMIN_REASONS:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="reason 必须是 user_forget / retention_expired",
+                detail=f"reason 必须是 {ADMIN_REASONS} 之一",
             )
 
         store = _event_store()

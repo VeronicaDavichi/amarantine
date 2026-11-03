@@ -214,13 +214,31 @@ ADR 的响应体因此多一个字段（向后兼容）。
 做 `POST /v1/schema/{class}/properties`，所以不需要重建、不丢数据。
 旧对象读新字段得到 `None`，语义正好是「从没被管理面改过」。
 
+**5 · 入口收窄：`ALLOWED_REASONS` 扩了，MCP 不能跟着放宽。**
+T3 把 reason 扩成三个（管理面 `DELETE` 要用 `retention_expired`），
+但 `mcp_stdio._tool_forget` 原本**完全不校验** reason —— 于是 MCP 侧也
+静默接受了 `retention_expired`。而 LLM 没有能力判断「保留期到了」，
+放开它等于给模型一个会误删的理由。
+
+同一次改动里必须把三个入口的子集分开：
+
+| 入口 | 可用 reason | 为什么 |
+|---|---|---|
+| MCP `memory_forget` | `user_forget` / `outdated` | ADR 4.9；LLM 只该说这两种 |
+| `DELETE /admin/event` | `user_forget` / `retention_expired` | ADR 4.7；`outdated` 反而该拒 |
+| `POST /admin/forget` | 三个都认 | 管理面历史入口，保持兼容 |
+
+**这是自审时发现的**，不是测试报出来的 —— 单测当时全绿，因为没有任何
+一条断言「MCP 不该接受第三个 reason」。扩枚举时顺手检查「谁在共用它」，
+比多写十行测试更管用。
+
 ### 验收证据
 
-- 单测：`pytest tests -q` → **826 passed**（805 + 21 新增），零回归
+- 单测：`pytest tests -q` → **827 passed**（805 + 22 新增），零回归
 - 真库：15/15 全绿（真 Weaviate + 真 Neo4j + TestClient，namespace `event0d8fcf`）
   - A1 `raw.pinned=True raw.source=manual`
   - A3 两次 `updated_at` 完全相同 → 幂等成立
   - A7 `deleted_at` 两次相同 → 重复删不刷新时间戳
   - A5b 软删后 `/admin/recall` 命中 0 条 → 检索侧真的过滤掉了
   - A11 `trace_id=tr_977a60dd2a49` 非空 → feedback 链路串得起来
-- 守门：`check_guide.py` / `check_spec.py` 均 exit 0
+- 守门：`check_guide.py` / `check_spec.py` / `e2e_mcp.py` 均 exit 0

@@ -212,3 +212,23 @@ def test_feedback_validates_before_touching_storage() -> None:
         mcp_stdio._tool_feedback(settings, {"trace_id": "", "used_material_ids": ["x"]})
     with pytest.raises(ValueError, match="used_material_ids"):
         mcp_stdio._tool_feedback(settings, {"trace_id": "tr_x", "used_material_ids": []})
+
+
+def test_forget_rejects_admin_only_reason() -> None:
+    """`retention_expired` 是管理侧专用，MCP 入口必须拒。
+
+    service 的 `ALLOWED_REASONS` 含它（`DELETE /admin/event` 要用），
+    但 LLM 没能力判断「保留期到了」—— 放开它等于给模型一个会误删的理由。
+    所以入口自己收窄成 `MCP_REASONS`，不靠 service 拦。
+
+    校验在 `forget_event` 之前，所以这条不碰任何存储。
+    """
+    from memory.entrypoints import mcp_stdio
+
+    settings = mcp_stdio.load_settings().model_copy(
+        update={"MEMORY_NAMESPACE": "agent-a"}
+    )
+    with pytest.raises(ValueError, match="reason"):
+        mcp_stdio._tool_forget(
+            settings, {"event_id": "evt_x", "reason": "retention_expired"}
+        )
