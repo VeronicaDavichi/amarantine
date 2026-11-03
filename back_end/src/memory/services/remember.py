@@ -31,6 +31,7 @@ from memory.core.time_resolver import resolve_date_hint
 from memory.models.event_card import EventCard
 from memory.services.directive_counter import DirectiveCounter
 from memory.services.embedding import EmbeddingError, embed_one
+from memory.services.embedding_guard import EmbeddingIndexMeta
 from memory.services.graph_outbox import write_event_node
 from memory.services.labeler import label_by_rules
 from memory.services.weaviate_store import WeaviateStore, WeaviateStoreError
@@ -155,6 +156,7 @@ def remember_event(
     graph_writer: object | None = None,
     llm_labeler: object | None = None,
     intent_store: object | None = None,
+    meta: EmbeddingIndexMeta | None = None,
     now: datetime | None = None,
     today: date | None = None,
 ) -> RememberResult:
@@ -195,6 +197,16 @@ def remember_event(
 
     moment = now or datetime.now(timezone.utc)
     base_day = today or moment.date()
+
+    # 1.5) A25：索引模型校验
+    #
+    # **必须放在 embed 之前**：不一致时白调一次 embedding 服务，既花钱又慢，
+    # 而且调用成功会让「写入失败」看起来像「编码失败」，误导排查。
+    #
+    # 为什么是错误而不是告警：不同模型的向量可能维度相同、空间完全不同，
+    # 混写不会报错，只会让相似度静默变错（见 embedding_guard 模块头）。
+    meta_store = meta or EmbeddingIndexMeta(_db_path(settings))
+    meta_store.ensure_model(namespace, settings.EMBEDDING_MODEL)
 
     # 2) 时间解析（规则层）
     date_range = resolve_date_hint(date_hint, today=base_day)
