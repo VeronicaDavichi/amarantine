@@ -214,6 +214,19 @@ ADR 4.2 明确：这是「拒绝」，不是「收下了」。FastAPI 的 `statu
 改不动响应码的话，调用方会把「被拦下」当成「已排队」。
 （`job_id` 也必须是 `null` —— 它压根不会执行。）
 
+**5 · 写卡失败不能算进 `turns_skipped`（自审抓到的语义 bug）。**
+`turns_skipped` 记的是「被 `do_not_store` 拦下的 turn 数」。第一版把
+「摘要写卡失败」也加进了这一栏 —— 于是 `events_created + turns_skipped`
+凑不出可解释的总数，而本节下面恰恰主张「差额就是沉默损失」。
+差额被自己填平了，沉默损失就永远看不见。
+
+修法：写卡失败只进 `errors`，不动任何计数。这样
+`events_created + turns_skipped < turns_total` 才真的等于丢掉的那部分。
+单测 `test_card_failure_does_not_inflate_turns_skipped` 钉住它。
+
+**测试全绿时发现的问题** —— 没有任何一条断言检查「失败时计数对不对」。
+和 004 的 reason 枚举是同一类：加新字段/新计数时，先问「它和谁构成等式」。
+
 ### 依赖关系
 
 本 spec 的 A13 用到 004 的 `DELETE /admin/event`，属于**软依赖**（只为验证
@@ -222,7 +235,7 @@ ADR 4.2 明确：这是「拒绝」，不是「收下了」。FastAPI 的 `statu
 
 ### 验收证据
 
-- 单测：`pytest tests -q` → **847 passed**（827 + 20 新增），零回归
+- 单测：`pytest tests -q` → **847 passed**（827 + 20 新增），零回归；`e2e_mcp.py` 全绿
 - 真库：11/11 全绿（真 Weaviate + 真 Neo4j + 真 LLM 切分，ns `raw73c6a7`）
   - A4 `job=job_8c9a06282fb5209f status=queued` —— 生产语义是真的异步
   - A9 `status=done events=3` —— 切分出 3 条摘要，各成一张卡

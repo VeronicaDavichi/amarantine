@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import hashlib
 import logging
-import re
 import sqlite3
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -84,8 +83,6 @@ def _now_iso(now: datetime | None = None) -> str:
 #: 允许的 turn role。白名单而不是自由字符串：`role` 会原样回给调用方，
 #: 让任意值进来等于给了一个不受控的字段。
 ALLOWED_ROLES = ("user", "assistant", "system", "tool")
-
-_SAFE_ID = re.compile(r"[^A-Za-z0-9_-]")
 
 
 def quote_id_for(
@@ -500,7 +497,10 @@ def run_ingest(
             )
             outcome.events_created += 1
         except Exception as exc:  # noqa: BLE001 - 单条失败只跳过
-            outcome.turns_skipped += 1 if idx < len(usable) else 0
+            # **不**把它计进 `turns_skipped`：那一栏记的是「被 do_not_store
+            # 拦下的 turn 数」，写卡失败是「摘要没变成卡」，两码事。
+            # 混在一起，`events_created + turns_skipped` 就凑不出可解释的总数，
+            # 沉默损失（errors 里那些）也就看不见了。
             outcome.errors.append(f"第 {idx + 1} 条: {type(exc).__name__}: {exc}")
             logger.warning("ingest 单条写卡失败 %s #%d: %s", job_id, idx + 1, exc)
 
@@ -513,9 +513,3 @@ def run_ingest(
         error="; ".join(outcome.errors[:3]) if outcome.errors else None,
     )
     return outcome
-
-
-def sanitize_id(value: str, *, fallback: str = "x") -> str:
-    """把外部传入的 session_id 等清成安全字符集（只用于日志/展示）。"""
-    cleaned = _SAFE_ID.sub("", value or "")
-    return cleaned or fallback

@@ -25,7 +25,6 @@ from memory.services.raw_quote import (
     RawQuoteStore,
     db_path_from_settings,
     quote_id_for,
-    sanitize_id,
 )
 
 TOKEN = "test-token"
@@ -407,7 +406,32 @@ def test_ingest_requires_token(env) -> None:
     assert r.status_code == 401
 
 
-def test_sanitize_id() -> None:
-    assert sanitize_id("s_001") == "s_001"
-    assert sanitize_id("../../etc/passwd") == "etcpasswd"
-    assert sanitize_id("") == "x"
+def test_card_failure_does_not_inflate_turns_skipped(env, monkeypatch) -> None:
+    """写卡失败 ≠ turn 被跳过。两个计数混一起，沉默损失就看不见了。
+
+    `turns_skipped` 只记「被 do_not_store 拦下的 turn」；
+    写卡失败进 `errors` + 让 `events_created` 不涨。所以
+    `events_created + turns_skipped < turns_total` 时，差额就是丢掉的。
+    """
+    client, _, _, _ = env
+    import memory.services.remember as remember_mod
+
+    def boom(**kw):
+        raise RuntimeError("LLM 超时")
+
+    monkeypatch.setattr(remember_mod, "remember_event", boom)
+
+    r = client.post(
+        "/admin/ingest",
+        json={"dedupe_key": "k_fail", "turns": [_turn("这条会失败")]},
+        headers=AUTH,
+    )
+    assert r.status_code == 202
+    job_id = r.json()["job_id"]
+
+    got = client.get(f"/admin/ingest/{job_id}", headers=AUTH).json()
+    assert got["events_created"] == 0
+    # 关键：不是 1 —— 没有任何 turn 被 do_not_store 拦下
+    assert got["turns_skipped"] == 0
+    assert got["status"] == "failed"
+    assert "LLM 超时" in (got["error"] or "")
