@@ -1302,6 +1302,54 @@ sqlite3 back_end/data/memory.db \
 
 ---
 
+## 浏览器管理台（`/ui`）
+
+不想敲 curl 的时候用这个。它是 `admin_http` 自带的一个静态页 —— 零构建、
+零依赖，跟着后端一起起，不需要另开前端服务。
+
+```
+浏览器打开 http://127.0.0.1:8765/ui/
+```
+
+### 三步进入
+
+1. 右上角 Token 填入 `ADMIN_TOKEN`（存在浏览器 localStorage，只需填一次）
+2. 顶部「切换」输入记忆域（如 `work`），点「应用」
+3. 页面顶部会一直显示**当前域** —— 它是这个系统里唯一的安全锚点
+
+### 四个页面
+
+| 页面 | 做什么 | 能不能改 |
+|---|---|---|
+| 复核队列 | 列 `bucket=NEED_REVIEW` 的卡，逐条接受/拒绝 | ✅ 裁决可写 |
+| 误删率报告 | 跑 `forget/sweep` 的 `dry_run`，看分桶与抽检样本 | ❌ 只读 |
+| 事件列表 | 分页列出当前域的卡，可点原文、可软删 | ✅ 软删可写 |
+| 溯源（抽屉） | 点 `raw_quote_ids` 看原文与关联事件 | ❌ 只读 |
+
+### 软删为什么要手输域名
+
+「不做登录」意味着没有第二道防线。所以软删的确认框会要求你**把当前域名
+再打一遍** —— 打错或取消就什么都不删。
+
+这不是仪式感：它让「在 `work` 域手滑删掉 `personal` 的卡」在物理上做不到。
+换域之后列表会**清空重拉**，上一域的行不会残留。
+
+### 不给你的按钮
+
+- **没有「物理删除」**：`DELETE /admin/event` 的 `hard=true` 在服务端就被
+  400 关死了。页面上不给按钮，比给了再拦更省事。
+- **没有「开自动遗忘」**：`dry_run` 在前端是**写死**的 `true`，不是默认值。
+  按 ADR A12，误删候选率 < 5% 才允许开自动 —— 这个决定不该由一个按钮做出。
+
+### 风险（明说）
+
+- Token 明文存在 `localStorage`，`/ui` 的 HTML 本身不鉴权（它不含任何秘密，
+  真正的边界在 `/admin/*` 上）
+- 所以**只适合本机单人用**。要放到别人能访问的网络里，这个设计必须重做
+  —— 先做登录，再谈别的。
+
+---
+
 ## 五、FAQ
 
 **Q：LLM 说记得某件事，但召回是空的？**
@@ -1513,3 +1561,4 @@ jieba 切成 `张三/nr 决定/v 项目/n A/x 延期/v 到/v 六月/t`，
 | v0.16 | 2026-11-03 | 裁决闭环：`accepted` 后绕过判据补建别名边，失败记 `accept_pending` 留在待办可重试；纠错痕迹可查（`GET /admin/entities/edits`，`args` 解析成对象）；新增 `harness/check_spec.py` 校验 spec 骨架 |
 | v0.17 | 2026-11-03 | 事件管理面补齐五个 ADR 接口：`PATCH /admin/event`（白名单 + 幂等 + `pinned_source`）、`DELETE /admin/event`（只软删，`hard=true` 拒绝）、`POST /admin/archive`（P0 不搬）、`POST /admin/recall` + `.../{trace_id}/feedback`（带 `trace_id` 才能关联）；`retention_expired` 成为独立审计原因 |
 | v0.18 | 2026-11-03 | 原文层落地：`POST /admin/ingest`（异步导入 + `dedupe_key` 幂等 + `do_not_store` 拦截）、`GET /admin/ingest/{job_id}`（`202` 的配套查询接口）、`GET /admin/raw/{quote_id}`（原文溯源，软删事件卡后仍可读）；`raw_quote_ids` 第一次真的被填上，召回材料也带出来了 |
+| v0.19 | 2026-11-03 | 浏览器管理台（`/ui`）：零构建单页，复核队列可裁决、事件列表可软删（**手输域名**二次确认）、误删率报告只读（`dry_run` 写死）、点 `raw_quote_ids` 看原文；新增 `GET /admin/events`（分页列表，只读）；`GET /raw` 补 `scanned` / `truncated` / `lookup_ok` 三个诚实字段 |

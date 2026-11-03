@@ -1,0 +1,390 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="data:,">
+<title>记忆管理台</title>
+<style>
+  :root {
+    --fg: #1f2328; --bg: #ffffff; --muted: #656d76; --line: #d0d7de;
+    --accent: #0969da; --danger: #cf222e; --warn: #9a6700; --ok: #1a7f37;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 0; font: 14px/1.55 -apple-system, "Segoe UI", "Noto Sans SC", sans-serif;
+    color: var(--fg); background: #f6f8fa;
+  }
+  header {
+    display: flex; gap: 12px; align-items: center; flex-wrap: wrap;
+    padding: 10px 16px; background: var(--bg); border-bottom: 1px solid var(--line);
+    position: sticky; top: 0; z-index: 10;
+  }
+  header .brand { font-weight: 600; }
+  /* 当前域必须一直可见 —— 它是这个系统里唯一的安全锚点 */
+  #cur-ns {
+    font-family: ui-monospace, monospace; font-size: 13px;
+    padding: 2px 8px; border-radius: 4px;
+    background: #ddf4ff; color: var(--accent); border: 1px solid #54aeff66;
+  }
+  header label { color: var(--muted); font-size: 12px; }
+  input, button, select { font: inherit; }
+  input[type=text], input[type=password] {
+    padding: 4px 8px; border: 1px solid var(--line); border-radius: 6px; background: #fff;
+  }
+  button {
+    padding: 4px 10px; border: 1px solid var(--line); border-radius: 6px;
+    background: #f6f8fa; cursor: pointer;
+  }
+  button:hover { background: #eaeef2; }
+  button.primary { background: var(--accent); color: #fff; border-color: transparent; }
+  button.danger { color: var(--danger); }
+  nav {
+    display: flex; gap: 4px; padding: 8px 16px 0; background: var(--bg);
+    border-bottom: 1px solid var(--line);
+  }
+  nav button { border-bottom-left-radius: 0; border-bottom-right-radius: 0; border-bottom: none; }
+  nav button.active { background: #fff; font-weight: 600; }
+  main { padding: 16px; max-width: 1100px; }
+  table { width: 100%; border-collapse: collapse; background: #fff; }
+  th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { background: #f6f8fa; font-size: 12px; color: var(--muted); font-weight: 600; }
+  td.mono, .mono { font-family: ui-monospace, monospace; font-size: 12px; }
+  .muted { color: var(--muted); }
+  .empty { padding: 24px; text-align: center; color: var(--muted); }
+  #toast {
+    position: fixed; right: 16px; bottom: 16px; padding: 8px 14px; border-radius: 6px;
+    background: #1f2328; color: #fff; opacity: 0; transition: opacity .15s; pointer-events: none;
+    max-width: 420px;
+  }
+  #toast.show { opacity: 1; }
+  #toast.err { background: var(--danger); }
+  #toast.ok { background: var(--ok); }
+  .kv { background: #fff; border: 1px solid var(--line); border-radius: 6px; padding: 12px; margin: 0 0 12px; }
+  .kv h3 { margin: 0 0 8px; font-size: 13px; color: var(--muted); }
+  .kv pre { margin: 0; white-space: pre-wrap; word-break: break-word; }
+  .tag { display: inline-block; padding: 0 6px; border-radius: 4px; background: #eaeef2; font-size: 12px; }
+</style>
+</head>
+<body>
+
+<header>
+  <span class="brand">记忆管理台</span>
+  <span>当前域 <span id="cur-ns">（未设置）</span></span>
+  <label>切换 <input id="ns-input" type="text" placeholder="namespace" size="14"></label>
+  <button id="ns-apply">应用</button>
+  <span style="flex:1"></span>
+  <label>Token <input id="token-input" type="password" placeholder="ADMIN_TOKEN" size="18"></label>
+  <button id="token-save">保存</button>
+</header>
+
+<nav>
+  <button data-tab="review">复核队列</button>
+  <button data-tab="sweep">误删率报告</button>
+  <button data-tab="events">事件列表</button>
+</nav>
+
+<main id="view"></main>
+<div id="toast"></div>
+
+<script>
+'use strict';
+
+// ---------------------------------------------------------------- 状态
+
+// 所有状态就这么点。没有框架，也没有「为什么这里能改那里不能改」的争议。
+const S = {
+  token: localStorage.getItem('mem.token') || '',
+  ns: localStorage.getItem('mem.ns') || '',
+  tab: 'review',
+};
+
+const $ = (sel) => document.querySelector(sel);
+const esc = (s) => String(s == null ? '' : s)
+  .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  .replace(/"/g, '&quot;');
+
+let toastTimer = null;
+function toast(msg, kind) {
+  const el = $('#toast');
+  el.textContent = msg;
+  el.className = 'show' + (kind ? ' ' + kind : '');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { el.className = ''; }, 4000);
+}
+
+// ---------------------------------------------------------------- API
+
+async function api(path, opts) {
+  opts = opts || {};
+  const headers = Object.assign({ 'Content-Type': 'application/json' }, opts.headers || {});
+  if (S.token) headers['Authorization'] = 'Bearer ' + S.token;
+  const res = await fetch(path, Object.assign({}, opts, { headers }));
+  if (res.status === 401 || res.status === 403) {
+    toast('token 无效或没配 —— 请在右上角重填', 'err');
+    throw new Error(res.status + ' unauthorized');
+  }
+  if (!res.ok) {
+    let detail = '';
+    try { detail = JSON.stringify(await res.json()); }
+    catch (e) { detail = await res.text(); }
+    throw new Error(res.status + ' ' + detail);
+  }
+  if (res.status === 204) return null;
+  return res.json();
+}
+
+const nsq = () => 'namespace=' + encodeURIComponent(S.ns);
+
+// ---------------------------------------------------------------- 渲染工具
+
+function requireNs() {
+  if (!S.ns) {
+    $('#view').innerHTML = '<div class="empty">先在顶部设置一个记忆域（namespace）—— ' +
+      '不设域就没法确定「删的是谁的记忆」。</div>';
+    return false;
+  }
+  return true;
+}
+
+function renderRows(rows, onErr) {
+  if (!rows.length) return '<div class="empty">没有数据。</div>';
+  return rows;
+}
+
+// ---------------------------------------------------------------- 复核队列
+
+async function renderReview() {
+  if (!requireNs()) return;
+  const view = $('#view');
+  view.innerHTML = '<div class="empty">加载中…</div>';
+  try {
+    const d = await api('/admin/review?bucket=NEED_REVIEW&' + nsq());
+    if (!d.items.length) {
+      view.innerHTML = '<div class="empty">复核队列是空的 —— 没有需要人工裁决的卡。</div>';
+      return;
+    }
+    const rows = d.items.map((it) => `
+      <tr>
+        <td class="mono">${esc(it.event_id)}</td>
+        <td>${esc(it.summary || '（无摘要）')}</td>
+        <td class="muted">${esc(it.reason)}<br>闲置 ${esc(it.idle_days)} 天 / 共 ${esc(it.age_days)} 天</td>
+        <td>
+          <button data-resolve="accepted" data-id="${esc(it.event_id)}">接受</button>
+          <button data-resolve="rejected" data-id="${esc(it.event_id)}" class="danger">拒绝</button>
+        </td>
+      </tr>`).join('');
+    view.innerHTML = `
+      <div class="kv"><h3>复核队列（bucket=NEED_REVIEW）共 ${esc(d.total)} 条</h3>
+      <p class="muted" style="margin:0">裁决后该条会从队列里消失。这是可逆的低风险操作（不改事实层）。</p></div>
+      <table>
+        <thead><tr><th>event_id</th><th>摘要</th><th>原因</th><th>裁决</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>`;
+
+    view.querySelectorAll('[data-resolve]').forEach((btn) => {
+      btn.onclick = () => resolveLabel(btn.dataset.id, btn.dataset.resolve);
+    });
+  } catch (e) {
+    view.innerHTML = '<div class="empty">加载失败：' + esc(e.message) + '</div>';
+  }
+}
+
+async function resolveLabel(eventId, resolution) {
+  try {
+    await api('/admin/label-review/' + encodeURIComponent(eventId) + '/resolve', {
+      method: 'POST',
+      body: JSON.stringify({ resolution, namespace: S.ns }),
+    });
+    toast('已裁决：' + eventId + ' → ' + resolution, 'ok');
+    renderReview();
+  } catch (e) {
+    toast('裁决失败：' + e.message, 'err');
+  }
+}
+
+// ---------------------------------------------------------------- 误删率报告
+
+async function renderSweep() {
+  if (!requireNs()) return;
+  const view = $('#view');
+  view.innerHTML = '<div class="empty">加载中…</div>';
+  try {
+    // dry_run 恒为 true：P0 不允许前端触发自动遗忘（ADR A12 的闸门）。
+    // 这里不是「默认 true」，是**写死** —— 不给改的入口。
+    const d = await api('/admin/forget/sweep', {
+      method: 'POST',
+      body: JSON.stringify({ dry_run: true, limit: 200, namespace: S.ns }),
+    });
+    const buckets = Object.keys(d.buckets || {}).map((k) =>
+      `<span class="tag">${esc(k)}: ${esc(d.buckets[k])}</span>`).join(' ');
+    const sample = (d.sample || []).map((it) => `
+      <tr>
+        <td class="mono">${esc(it.event_id)}</td>
+        <td>${esc(it.summary || '（无摘要）')}</td>
+        <td class="muted">${esc(it.reason)}</td>
+      </tr>`).join('');
+    view.innerHTML = `
+      <div class="kv">
+        <h3>误删率报告（dry_run=true，只算不删）</h3>
+        <p style="margin:0 0 8px">分桶：${buckets || '<span class="muted">无</span>'}</p>
+        <p class="muted" style="margin:0">抽检 ${esc((d.sample || []).length)} 条。
+        按 ADR A12，误删候选率 &lt; 5% 才允许开自动；这里只是把数字摆出来。</p>
+      </div>
+      ${sample ? `<table>
+        <thead><tr><th>event_id</th><th>摘要</th><th>原因</th></tr></thead>
+        <tbody>${sample}</tbody></table>` : '<div class="empty">没有候选。</div>'}`;
+  } catch (e) {
+    view.innerHTML = '<div class="empty">加载失败：' + esc(e.message) + '</div>';
+  }
+}
+
+// ---------------------------------------------------------------- 事件列表
+
+async function renderEvents() {
+  if (!requireNs()) return;
+  const view = $('#view');
+  view.innerHTML = '<div class="empty">加载中…</div>';
+  try {
+    const d = await api('/admin/events?' + nsq() + '&limit=50&offset=0');
+    if (!d.items.length) {
+      view.innerHTML = '<div class="empty">这个域里还没有事件卡。</div>';
+      return;
+    }
+    const rows = d.items.map((it) => {
+      const quotes = (it.raw_quote_ids || []);
+      const quoteBtn = quotes.length
+        ? quotes.slice(0, 3).map((q) =>
+            `<button data-quote="${esc(q)}" class="mono" style="font-size:11px">${esc(q.slice(0, 12))}…</button>`).join(' ')
+          + (quotes.length > 3 ? ` <span class="muted">+${quotes.length - 3}</span>` : '')
+        : '<span class="muted">（无原文）</span>';
+      return `
+        <tr>
+          <td class="mono">${esc(it.event_id)}</td>
+          <td>${esc(it.summary)}<br>
+            <span class="muted">${esc(it.date_start)} · ${esc(it.importance)} ·
+            ${esc((it.types || []).join('/'))}</span></td>
+          <td>${quoteBtn}</td>
+          <td><button data-del="${esc(it.event_id)}" class="danger">软删</button></td>
+        </tr>`;
+    }).join('');
+    view.innerHTML = `
+      <div class="kv"><h3>事件列表 共 ${esc(d.total)} 条（显示前 ${esc(d.items.length)} 条）</h3>
+      <p class="muted" style="margin:0">「软删」只是让它检索不到，事实层不删。
+      注意：这里<b>没有</b>物理删除按钮 —— 那是设计如此，不是漏了。</p></div>
+      <table>
+        <thead><tr><th>event_id</th><th>摘要</th><th>原文</th><th></th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+      <div id="raw-detail"></div>`;
+
+    view.querySelectorAll('[data-del]').forEach((btn) => {
+      btn.onclick = () => softDelete(btn.dataset.del);
+    });
+    view.querySelectorAll('[data-quote]').forEach((btn) => {
+      btn.onclick = () => showRaw(btn.dataset.quote);
+    });
+  } catch (e) {
+    view.innerHTML = '<div class="empty">加载失败：' + esc(e.message) + '</div>';
+  }
+}
+
+async function softDelete(eventId) {
+  // 二次确认要求**手输当前域名**。没有登录系统的系统里，
+  // 这是唯一能拦住「在 work 域手滑删掉 personal 的卡」的闸门。
+  const typed = window.prompt(
+    '软删后这张卡将不再被检索到（事实层不删）。\n\n' +
+    '当前域：' + S.ns + '\n' +
+    '请输入域名以确认删除：'
+  );
+  if (typed !== S.ns) {
+    toast('域名不一致或已取消 —— 没有删除', 'err');
+    return;
+  }
+  try {
+    await api('/admin/event/' + encodeURIComponent(eventId), {
+      method: 'DELETE',
+      body: JSON.stringify({ reason: 'user_forget', namespace: S.ns }),
+    });
+    toast('已软删：' + eventId, 'ok');
+    renderEvents();
+  } catch (e) {
+    toast('删除失败：' + e.message, 'err');
+  }
+}
+
+async function showRaw(quoteId) {
+  const box = $('#raw-detail');
+  if (!box) return;
+  box.innerHTML = '<div class="empty">加载原文…</div>';
+  try {
+    const d = await api('/admin/raw/' + encodeURIComponent(quoteId) + '?' + nsq());
+    // lookup_ok=false 时 event_ids 不可信 —— 必须明说，不能当成「没有关联」
+    const evLine = d.lookup_ok === false
+      ? '<span style="color:var(--warn)">反查失败，event_ids 不可信</span>'
+      : esc((d.event_ids || []).join(', ')) || '（无关联卡）';
+    const trunc = d.truncated
+      ? '<br><span style="color:var(--warn)">扫描触到上限，event_ids 可能不全</span>' : '';
+    box.innerHTML = `
+      <div class="kv">
+        <h3>原文 ${esc(d.quote_id)}</h3>
+        <pre>${esc(d.text)}</pre>
+        <p class="muted" style="margin:8px 0 0">
+          ${esc(d.role)} · ${esc(d.ts || '无时间')} · ${esc(d.source)}<br>
+          关联事件：${evLine}<br>
+          扫描范围：${esc(d.scanned)} 张卡${trunc}
+        </p>
+      </div>`;
+  } catch (e) {
+    box.innerHTML = '<div class="empty">原文读取失败：' + esc(e.message) + '</div>';
+  }
+}
+
+// ---------------------------------------------------------------- tab & 启动
+
+const TABS = { review: renderReview, sweep: renderSweep, events: renderEvents };
+
+function render() {
+  $('#cur-ns').textContent = S.ns || '（未设置）';
+  document.querySelectorAll('nav button').forEach((b) => {
+    b.classList.toggle('active', b.dataset.tab === S.tab);
+  });
+  TABS[S.tab]();
+}
+
+document.querySelectorAll('nav button').forEach((btn) => {
+  btn.onclick = () => { S.tab = btn.dataset.tab; render(); };
+});
+
+$('#ns-apply').onclick = () => {
+  const v = $('#ns-input').value.trim();
+  if (!v) { toast('域名不能为空', 'err'); return; }
+  S.ns = v;
+  localStorage.setItem('mem.ns', v);
+  $('#ns-input').value = '';
+  // 切域后**清空重拉**：不允许上一个域的行残留，否则会看错、删错
+  $('#view').innerHTML = '';
+  render();
+  toast('已切换到域：' + v, 'ok');
+};
+
+$('#token-save').onclick = () => {
+  const v = $('#token-input').value.trim();
+  if (!v) { toast('token 不能为空', 'err'); return; }
+  S.token = v;
+  localStorage.setItem('mem.token', v);
+  $('#token-input').value = '';
+  toast('token 已保存（存在 localStorage）', 'ok');
+  render();
+};
+
+// 启动：把已保存的域回填到提示里（不回填 token，避免明文显示）
+$('#ns-input').placeholder = S.ns || 'namespace';
+if (!S.ns) {
+  $('#view').innerHTML = '<div class="empty">先在顶部输入一个记忆域（例如 work），再点「应用」。</div>';
+} else {
+  render();
+}
+</script>
+</body>
+</html>

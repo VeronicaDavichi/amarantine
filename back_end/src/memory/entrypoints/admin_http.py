@@ -20,6 +20,7 @@ import time
 from contextlib import asynccontextmanager, suppress
 from datetime import date, datetime, timedelta, timezone
 from dataclasses import replace
+from pathlib import Path
 from typing import Any, Literal
 
 import uvicorn
@@ -32,6 +33,7 @@ from fastapi import (
     Response,
     status,
 )
+from fastapi.staticfiles import StaticFiles
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -85,6 +87,13 @@ logger = logging.getLogger("memory.admin")
 #: 与 `POST /admin/archive` 的扫描上限是同一类取舍，所以两边都用 `scanned`
 #: 告诉调用方「这个结论建立在多少条之上」。
 _RAW_SCAN_LIMIT = 5000
+
+#: `GET /admin/events` 一次最多拉多少条。分页在应用层做 ——
+#: Weaviate 的 `Get` 不支持 offset，与其假装支持，不如一次拉回来再切。
+_EVENTS_SCAN_LIMIT = 5000
+
+#: 前端静态页目录（`/ui`）。跟代码放一起，pip 安装时也会带上。
+_WEB_DIR = Path(__file__).parent / "web"
 
 #: 允许的 bucket 取值（A24：NEED_REVIEW 与 LABEL_REVIEW 是两条队列，禁止混用）
 ALLOWED_BUCKETS = (BUCKET_NEED_REVIEW, BUCKET_PROTECTED, BUCKET_SAFE_TO_DELETE)
@@ -475,6 +484,28 @@ class IngestJobResponse(BaseModel):
     error: str | None = None
     created_at: str
     updated_at: str
+
+
+class EventListItem(BaseModel):
+    """管理台列表用的一张卡（比召回材料窄，只留列表要显示的）。"""
+
+    event_id: str
+    summary: str
+    date_start: str
+    date_end: str | None = None
+    types: list[str] = []
+    importance: str = ""
+    pinned: bool = False
+    #: `list_all()` 只返回未删的卡，所以这里恒为 false ——
+    #: 保留字段是为了让前端知道「这个字段存在且已用上」，而不是以为漏了。
+    is_deleted: bool = False
+    raw_quote_ids: list[str] = []
+    recall_count: int = 0
+
+
+class EventListResponse(BaseModel):
+    total: int
+    items: list[EventListItem]
 
 
 class RawQuoteResponse(BaseModel):
@@ -1686,6 +1717,65 @@ def create_app(
             truncated=len(rows) >= _RAW_SCAN_LIMIT,
             lookup_ok=lookup_ok,
         )
+
+    @app.get(
+        "/admin/events",
+        response_model=EventListResponse,
+        dependencies=[Depends(require_token)],
+    )
+    def admin_events(
+        namespace: str | None = None,
+        limit: int = Query(50, ge=1, le=500),
+        offset: int = Query(0, ge=0),
+    ) -> EventListResponse:
+        """列出当前域的事件卡（分页，按 `date_start` 倒序）。
+
+        「软删可写」的前提是**先能看见卡**。现有接口里只有 `/admin/review`
+        （仅复核队列）和 `/admin/entities/edits`（仅纠错痕迹），
+        没有一个「列出这个域的卡」的入口 —— 所以补这一个，只读。
+
+        `list_all()` 本身已排除已软删的卡，这里不再过滤；
+        否则「已删的看不见」这个行为会被实现两遍，将来改一处漏一处。
+        """
+        ns = _namespace(namespace)
+        store = _event_store()
+        try:
+            rows = store.list_all(ns, limit=_EVENTS_SCAN_LIMIT)
+        except WeaviateStoreError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=f"事件库不可用: {exc}",
+            ) from exc
+        finally:
+            store.close()
+
+        # `Get` 不保证顺序，显式按日期倒序 —— 列表页最上面应该是最近的事
+        rows.sort(key=lambda r: str(r.get("date_start") or ""), reverse=True)
+        page = rows[offset : offset + limit]
+        items = [
+            EventListItem(
+                event_id=str(r.get("event_id")),
+                summary=str(r.get("summary") or ""),
+                date_start=str(r.get("date_start") or ""),
+                date_end=r.get("date_end"),
+                types=[str(t) for t in (r.get("types") or [])],
+                importance=str(r.get("importance") or ""),
+                pinned=bool(r.get("pinned", False)),
+                is_deleted=bool(r.get("is_deleted", False)),
+                raw_quote_ids=[str(q) for q in (r.get("raw_quote_ids") or [])],
+                recall_count=int(r.get("recall_count") or 0),
+            )
+            for r in page
+        ]
+        return EventListResponse(total=len(rows), items=items)
+
+    # ------------------------------------------------- 管理台静态页（M5 / 006）
+
+    if _WEB_DIR.is_dir():
+        # `/ui` 下的 HTML 本身不鉴权 —— 它只是一个空壳，所有数据都要 token。
+        # 把 token 挡在 HTML 外面没有意义（静态文件不含任何秘密），
+        # 真正的边界在 `/admin/*` 的 `require_token` 上。
+        app.mount("/ui", StaticFiles(directory=str(_WEB_DIR), html=True), name="ui")
 
     return app
 
