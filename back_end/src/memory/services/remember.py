@@ -32,6 +32,7 @@ from memory.models.event_card import EventCard
 from memory.services.directive_counter import DirectiveCounter
 from memory.services.embedding import EmbeddingError, embed_one
 from memory.services.embedding_guard import EmbeddingIndexMeta
+from memory.services.vocab_version import current_version
 from memory.services.graph_outbox import write_event_node
 from memory.services.labeler import label_by_rules
 from memory.services.weaviate_store import WeaviateStore, WeaviateStoreError
@@ -208,6 +209,11 @@ def remember_event(
     meta_store = meta or EmbeddingIndexMeta(_db_path(settings))
     meta_store.ensure_model(namespace, settings.EMBEDDING_MODEL)
 
+    # 1.6) A23：记下打标用的词表版本
+    # 半年后回看这张卡的 types 时，需要知道它是按哪版词表打的 —— 否则
+    # 词表改过之后，标签就失去了可解释性。版本表在同一个 SQLite 里。
+    vocab_version = current_version(settings)
+
     # 2) 时间解析（规则层）
     date_range = resolve_date_hint(date_hint, today=base_day)
 
@@ -368,7 +374,12 @@ def remember_event(
             raise EmbeddingError(f"编码函数返回了非向量: {type(vector)}")
 
         # 9) 写事实源
-        weaviate_id = active_store.insert_event(card, vector, anomaly=decision.anomaly)
+        weaviate_id = active_store.insert_event(
+            card,
+            vector,
+            anomaly=decision.anomaly,
+            vocab_version=vocab_version,
+        )
 
         # 10) 写入成功才记账（否则失败也会消耗配额）
         if decision.pinned:

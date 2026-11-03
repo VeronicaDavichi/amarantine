@@ -39,6 +39,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from memory.config import Settings, load_settings
 from memory.services.graph_search import event_degrees
+from memory.services.vocab_version import VocabRegistry, effective_vocab
 from memory.core.forget_policy import (
     BUCKET_NEED_REVIEW,
     BUCKET_PROTECTED,
@@ -148,6 +149,14 @@ class SweepResponse(BaseModel):
     #: 「图枢纽」这条硬信号**本次未生效** —— 必须显式告诉调用方，
     #: 否则报告看起来一切正常，实则少了一类保护。
     graph_degraded: bool = False
+
+
+class VocabResponse(BaseModel):
+    """A23：词表 + 版本号。"""
+
+    version: str
+    vocab: list[str]
+    count: int
 
 
 # ---- 别名推断（P2：把描述性声明解析成具体名字）----
@@ -784,6 +793,39 @@ def create_app(
         )
 
     # ------------------------------------------------------ label review（B5）
+
+    @app.get(
+        "/label/vocab",
+        response_model=VocabResponse,
+        dependencies=[Depends(require_token)],
+    )
+    def get_label_vocab(
+        version: str | None = Query(
+            default=None,
+            description="按版本回溯（如 v1-a1b2c3d4）；不填返回当前生效词表",
+        ),
+    ) -> VocabResponse:
+        """查词表，以及某版词表长什么样（A23）。
+
+        **为什么需要它**：词表是代码常量。改过之后，历史卡的 `types`
+        就没人知道是按哪版打的 —— 而标签体系的价值全在可回溯。
+
+        不带 `version` → 当前生效词表 + 它的版本号（顺带登记新版本）；
+        带 `version` → 那一版的词表原文，不存在则 404。
+        """
+        registry = VocabRegistry(db_path_from_settings(cfg))
+        if version is None:
+            current = registry.current(cfg)
+            vocab = effective_vocab(cfg)
+            return VocabResponse(version=current, vocab=vocab, count=len(vocab))
+
+        vocab = registry.get(version)
+        if vocab is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"词表版本不存在: {version}",
+            )
+        return VocabResponse(version=version, vocab=vocab, count=len(vocab))
 
     @app.get(
         "/admin/label-review",

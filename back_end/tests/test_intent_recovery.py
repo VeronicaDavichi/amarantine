@@ -50,7 +50,7 @@ class FakeStore:
     def get_by_event_id(self, namespace: str, event_id: str):
         return self.rows.get((namespace, event_id))
 
-    def insert_event(self, card, vector, *, anomaly=None) -> str:
+    def insert_event(self, card, vector, *, anomaly=None, vocab_version=None) -> str:
         uid = f"uuid-{card.event_id}"
         self.rows[(card.namespace, card.event_id)] = {
             "id": uid,

@@ -41,7 +41,7 @@ class FakeStore:
     def get_by_event_id(self, namespace: str, event_id: str) -> dict | None:
         return self.rows.get((namespace, event_id))
 
-    def insert_event(self, card, vector, *, anomaly=None) -> str:
+    def insert_event(self, card, vector, *, anomaly=None, vocab_version=None) -> str:
         self.insert_calls += 1
         if self.fail_insert:
             raise MixedModelError("模拟写入失败")

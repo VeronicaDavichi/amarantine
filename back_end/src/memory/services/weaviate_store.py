@@ -42,6 +42,11 @@ class WeaviateStoreError(RuntimeError):
     """Weaviate 不可用或写入被拒。工具层应转 503 / isError。"""
 
 
+#: A23：版本化之前写入的卡没有 `vocab_version` 字段。读出时补这个占位值，
+#: 语义是「早于版本化」，不是「版本未知」。与 `vocab_version.LEGACY_VERSION` 一致。
+LEGACY_VOCAB_VERSION = "v0-legacy"
+
+
 class MixedModelError(WeaviateStoreError):
     """向量维度与配置不一致（A26）。"""
 
@@ -84,6 +89,8 @@ SCHEMA_PROPERTIES: list[dict[str, Any]] = [
     {"name": "user_directive", "dataType": ["text"]},
     {"name": "recall_count", "dataType": ["int"]},
     {"name": "confirmed_by_use", "dataType": ["int"]},
+    # A23：这条卡的标签是按哪版词表打的。历史卡没有这个字段 → 读出时补 v0-legacy
+    {"name": "vocab_version", "dataType": ["text"]},
     {"name": "ingested_at", "dataType": ["date"]},
     {"name": "observed_at", "dataType": ["date"]},
     # 护栏降级留痕（A33）
@@ -163,10 +170,17 @@ _BACKFILL_FIELDS = frozenset(
 )
 
 
-def to_properties(card: EventCard, *, anomaly: str | None = None) -> dict[str, Any]:
+def to_properties(
+    card: EventCard,
+    *,
+    anomaly: str | None = None,
+    vocab_version: str | None = None,
+) -> dict[str, Any]:
     """EventCard → Weaviate 属性字典。
 
     `anomaly` 是护栏降级的留痕（A33 要求可查），不属于 EventCard 模型。
+    `vocab_version` 是打标时用的词表版本（A23）—— 同理不进 EventCard：
+    它是**写入环境**的属性，不是内容的一部分（不进 event_id 哈希）。
     """
     props: dict[str, Any] = {
         "namespace": card.namespace,
@@ -190,6 +204,8 @@ def to_properties(card: EventCard, *, anomaly: str | None = None) -> dict[str, A
         # 新对象一律未删 —— 检索侧的 `is_deleted = false` 过滤依赖它存在且为 false
         "is_deleted": False,
     }
+    if vocab_version is not None:
+        props["vocab_version"] = vocab_version
     if card.date_end is not None:
         props["date_end"] = _rfc3339(card.date_end)
     if card.conclusion is not None:
@@ -329,6 +345,7 @@ class WeaviateStore:
         vector: list[float],
         *,
         anomaly: str | None = None,
+        vocab_version: str | None = None,
     ) -> str:
         """upsert 一条事件卡，返回 Weaviate 对象 UUID。
 
@@ -348,7 +365,7 @@ class WeaviateStore:
 
         self.ensure_collection()
         uid = deterministic_uuid(card.namespace, card.event_id)
-        props = to_properties(card, anomaly=anomaly)
+        props = to_properties(card, anomaly=anomaly, vocab_version=vocab_version)
         body = {
             "class": COLLECTION,
             "id": uid,
@@ -820,6 +837,10 @@ class WeaviateStore:
         props.setdefault("entity_names", [])
         props["unresolved"] = props.get("unresolved") or []
         props["entity_names"] = props.get("entity_names") or []
+        # A23：版本化之前写入的卡没有这个字段。补占位值而不是留空 ——
+        # 留空会让调用方以为「词表版本未知」，而其实语义是「早于版本化」。
+        if not props.get("vocab_version"):
+            props["vocab_version"] = LEGACY_VOCAB_VERSION
         props["score"] = score
         props["distance"] = extra.get("distance")
         return props
@@ -849,6 +870,7 @@ class WeaviateStore:
       recall_count
       confirmed_by_use
       review_verdict
+      vocab_version
       reviewer
       observed_at"""
 

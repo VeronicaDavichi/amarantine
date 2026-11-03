@@ -341,7 +341,7 @@ class FakeStore:
     def get_by_event_id(self, namespace, event_id):
         return self.rows.get((namespace, event_id))
 
-    def insert_event(self, card, vector, *, anomaly=None) -> str:
+    def insert_event(self, card, vector, *, anomaly=None, vocab_version=None) -> str:
         self.rows[(card.namespace, card.event_id)] = to_properties(
             card, anomaly=anomaly
         )

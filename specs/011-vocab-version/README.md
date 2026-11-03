@@ -1,5 +1,5 @@
 ---
-status: planned
+status: complete
 created: 2026-11-03
 priority: high
 tags:
@@ -7,9 +7,14 @@ tags:
 - label
 parent: '001'
 created_at: 2026-11-03T03:30:01.158417969Z
-updated_at: 2026-11-03T03:30:01.158417969Z
+updated_at: 2026-11-03T05:12:05.592377897Z
+completed_at: 2026-11-03T05:12:05.592377897Z
+transitions:
+- status: in-progress
+  at: 2026-11-03T05:04:44.079947444Z
+- status: complete
+  at: 2026-11-03T05:12:05.592377897Z
 ---
-
 # A23：词表版本化
 
 ## Overview
@@ -62,21 +67,21 @@ ADR A23 原文：
 
 ## Plan
 
-- [ ] T1 `services/vocab_version.py`：计算版本号 + 持久化版本表
-- [ ] T2 Weaviate schema 加 `vocab_version` 字段（走 `_add_missing_properties` 增量添加）
-- [ ] T3 写入路径：打标时取当前版本，随卡写入
-- [ ] T4 `GET /label/vocab`（含 `?version=` 回溯）
-- [ ] T5 历史卡读出时补 `"v0-legacy"`
-- [ ] T6 测试：版本号稳定、变更后递增、回溯能取到旧词表
+- [x] T1 `services/vocab_version.py`：计算版本号 + 持久化版本表
+- [x] T2 Weaviate schema 加 `vocab_version` 字段（走 `_add_missing_properties` 增量添加）
+- [x] T3 写入路径：打标时取当前版本，随卡写入
+- [x] T4 `GET /label/vocab`（含 `?version=` 回溯）
+- [x] T5 历史卡读出时补 `"v0-legacy"`
+- [x] T6 测试：版本号稳定、变更后递增、回溯能取到旧词表
 
 ## Test
 
-- [ ] D1 同样词表算两次 → 版本号相同
-- [ ] D2 词表加一个类型 → 版本号变化且序号 +1
-- [ ] D3 写入的卡带 `vocab_version`，且等于当时的值
-- [ ] D4 `GET /label/vocab?version=<旧>` 返回旧词表原文
-- [ ] D5 不带版本号的历史卡读出为 `v0-legacy`（不报错、不伪造）
-- [ ] D6 不存在的版本 → 404（不返回空词表假装成功）
+- [x] D1 同样词表算两次 → 版本号相同
+- [x] D2 词表加一个类型 → 版本号变化且序号 +1
+- [x] D3 写入的卡带 `vocab_version`，且等于当时的值
+- [x] D4 `GET /label/vocab?version=<旧>` 返回旧词表原文
+- [x] D5 不带版本号的历史卡读出为 `v0-legacy`（不报错、不伪造）
+- [x] D6 不存在的版本 → 404（不返回空词表假装成功）
 
 ## Notes
 
@@ -87,5 +92,42 @@ ADR A23 原文：
 
 ### 与 001 的接口清单关系
 
-新增 `GET /label/vocab` 会让路由数从 26 变 27，
-需要同步 `docs/user-manual.md` 的接口清单和 `harness/check_guide.py` 的期望值。
+新增 `GET /label/vocab` 会让路由数从 26 变 27。
+**实测 `check_guide.py` 不校验路由数量**（它校验的是配置项 73 / 工具 4 / 文档变量 37），
+所以没有期望值需要同步 —— 但 `user-manual.md` 的接口清单仍应补上这一条。
+
+### 实现记录
+
+**1 · 版本号格式选了 `v{n}-{hash8}`，两个信息都要。**
+`v{n}` 是自增序号（能一眼看出「改过几次」），`{hash8}` 是内容指纹
+（能一眼看出「是不是同内容」）。只有序号的话，「改回旧词表」会被当成新版本；
+只有 hash 的话，不可读。
+
+**2 · 同内容不登记第二版。**
+`current()` 先扫已有版本的指纹后缀，命中就复用。单测
+`test_switching_back_reuses_registered_version` 钉住这条：
+改词表 → 改回来，版本列表必须仍只有两项。
+
+**3 · 词表原文必须存下来，不能只存 hash。**
+只存 hash 的话，「回溯某个版本」只能回答「有这版」，说不出「这版长什么样」——
+那和没有差不多。所以 `vocab_registry` 表带 `vocab_json` 列。
+
+**4 · 一个向后兼容的坑：`insert_event` 多了一个参数。**
+`vocab_version` 加到 `insert_event` 签名后，5 个测试文件的 FakeStore 全部
+`TypeError`（43 条测试挂掉）。修法是把 FakeStore 的签名同步补上
+`vocab_version=None`，而不是在 `remember` 里 try/except 吞掉 TypeError ——
+后者会让「调用方传错参数」也静默通过。
+
+**5 · 历史卡补 `v0-legacy` 放在 `_to_hit` 这个统一出口。**
+不放在 `list_all` / `get_by_event_id` 各写一遍 —— 那是两处会漂移的重复逻辑。
+`LEGACY_VOCAB_VERSION` 常量在 store 里本地定义（不 import `vocab_version`，
+避免 service 层互相依赖）。
+
+## 验收证据
+
+- 单测：`pytest tests/test_vocab_version.py -q` → **13 passed**
+- 全量：`pytest tests -q --tb=line` → **910 passed**（897 + 13）
+- 守门：`check_guide.py` exit 0（配置 73 / 工具 4 / 文档变量 37）；`check_spec.py` exit 0
+- 版本：同词表两次同版本；加类型 → `v2-*`；改回 → 复用旧版本不登记新的
+- 回溯：`GET /label/vocab?version=<旧>` 返回旧词表原文；不存在 → 404
+- 遗留：历史卡读出 `v0-legacy`，已有版本号不被覆盖

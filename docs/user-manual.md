@@ -147,6 +147,13 @@ curl -s -X POST -H "Authorization: Bearer $TOKEN" \
   -d '{"resolution":"kept_llm","namespace":"work"}' \
   http://127.0.0.1:8765/admin/label-review/evt_xxx/resolve
 
+# 查当前词表 + 版本号（A23）；历史卡的 types 按哪版打的标签看这个
+curl -s -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8765/label/vocab
+
+# 回溯某一版词表原文（版本号从上一个响应里抄）
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "http://127.0.0.1:8765/label/vocab?version=v1-a1b2c3d4"
+
 # 看即将被清理的记忆（只出报告，不删）
 curl -s -X POST -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
