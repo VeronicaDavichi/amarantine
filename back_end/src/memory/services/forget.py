@@ -23,8 +23,16 @@ from memory.services.weaviate_store import WeaviateStore, WeaviateStoreError
 
 logger = logging.getLogger("memory.forget")
 
-#: reason 枚举（ADR 4.9：user_forget / outdated）
-ALLOWED_REASONS = ("user_forget", "outdated")
+#: reason 全集。
+#:
+#: MCP `memory_forget` 只暴露前两个（ADR 4.9）；
+#: `retention_expired` 是管理侧 `DELETE /admin/event/{event_id}` 专用（ADR 4.7），
+#: 表示「不是因为用户开口，而是保留期到了」—— 审计上必须和 `user_forget`
+#: 分得开，所以不能把管理侧的原因硬映射成 `outdated`。
+ALLOWED_REASONS = ("user_forget", "outdated", "retention_expired")
+
+#: MCP 工具允许的 reason 子集（入口自己收窄，不靠 service 拦）。
+MCP_REASONS = ("user_forget", "outdated")
 
 
 class ForgetError(RuntimeError):

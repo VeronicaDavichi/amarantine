@@ -44,6 +44,15 @@ class FeedbackError(RuntimeError):
     """feedback 请求不合法（不是系统故障，调用方应该修正参数重试）。"""
 
 
+class TraceNotFoundError(FeedbackError):
+    """trace 不存在或已过期。
+
+    单独立一个子类，是因为管理面要把它映射成 **404**，而「不属于当前记忆域」
+    「id 不在该 trace 返回集里」都该是 **400**。靠 `str(exc)` 里有不含
+    「不存在」来区分太脆 —— 改一个字就静默降级成 400，调用方以为是自己传错了。
+    """
+
+
 def submit_feedback(
     *,
     namespace: str,
@@ -88,7 +97,7 @@ def submit_feedback(
 
     record = active_trace.get_trace(trace_id)
     if record is None:
-        raise FeedbackError(f"trace_id 不存在或已过期: {trace_id}")
+        raise TraceNotFoundError(f"trace_id 不存在或已过期: {trace_id}")
     if record.namespace != namespace:
         # 跨域引用一律拒绝：不泄露别的 namespace 有没有这张卡
         raise FeedbackError(f"trace_id 不属于当前记忆域: {trace_id}")

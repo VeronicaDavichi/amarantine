@@ -160,6 +160,61 @@ curl -s -X POST -H "Authorization: Bearer $TOKEN" \
   http://127.0.0.1:8765/admin/forget
 ```
 
+#### 事件管理（ADR 4.4 / 4.6 / 4.7）
+
+这五个接口是 ADR 承诺的管理面能力，2026-11-03 补齐：
+
+```bash
+# 把一条钉住（pinned=true 会自动带上 pinned_source=manual）
+curl -s -X PATCH -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"pinned":true,"namespace":"work"}' \
+  http://127.0.0.1:8765/admin/event/evt_xxx
+
+# 改保留策略
+curl -s -X PATCH -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"retention":"long","namespace":"work"}' \
+  http://127.0.0.1:8765/admin/event/evt_xxx
+
+# 软删一条（Delete 的正式入口；/admin/forget 是同义的旧名）
+curl -s -X DELETE -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"reason":"retention_expired","namespace":"work"}' \
+  http://127.0.0.1:8765/admin/event/evt_xxx
+
+# 看有多少卡将进入冷区（只出数字，不搬）
+curl -s -X POST -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"window_days":180,"namespace":"work"}' \
+  http://127.0.0.1:8765/admin/archive
+
+# 召回 + 上报引用（两个接口是配对的：前者给 trace_id，后者用它）
+curl -s -X POST -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"query":"上个月的 offer","namespace":"work"}' \
+  http://127.0.0.1:8765/admin/recall
+
+curl -s -X POST -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"used_material_ids":["evt_xxx"],"namespace":"work"}' \
+  http://127.0.0.1:8765/admin/recall/tr_xxxx/feedback
+```
+
+三条必须知道的行为：
+
+| 行为 | 为什么 |
+|---|---|
+| `PATCH` 只认 `pinned` / `retention`，传 `summary` 会 **400 且一个字节都不写** | 这两个字段参与 `event_id` 的内容哈希，直接改会让卡与图/向量对不上 |
+| `PATCH` 重复置同一值 → 200 但 `updated_at` **不变** | 否则审计里「这条被改过几次」永久失真 |
+| `DELETE` 传 `hard=true` → **400**（不是「暂不支持」） | D7 + A9：事实层永不物理删，入口就关死 |
+| `DELETE` 重复删 → 200 且 `deleted_at` **保持原值** | 重试不该刷新「什么时候删的」 |
+| `archive` 的 `dry_run` 传 `false` 也 **`moved:0`** | P0 只出候选；误删率闸门没过之前不自动搬迁 |
+
+> `DELETE` 的响应里有 `raw_quote_preserved: true`。它的字面含义是真的（事实层没删任何原文），
+> **但原文层还没实现**，所以今天还不能真的按 `quote_id` 查回原文 —— 那部分是 005。
+> 别把这个字段当成「溯源已可用」。
+
 ### 冒烟验证
 
 改完代码想快速确认没炸：
@@ -1399,3 +1454,4 @@ jieba 切成 `张三/nr 决定/v 项目/n A/x 延期/v 到/v 六月/t`，
 | v0.14 | 2026-11-02 | 判据统一成「单字只做位置检查，包含检查只用于多字词」：`家`/`个`/`种`/`位` 换成具体双字词，单字副词/量词走开头检查，`X人` 改降置信度；修 `科学家`/`上海人` 被误伤 |
 | v0.15 | 2026-11-03 | 判据带理由（`reason`/`detail`，`detail` 确定性）；别名声明的拒绝两侧都落 `alias_reject` 表 + 两个管理接口；罕见姓豁免（量词字是姓氏 + jieba `nr` 或用户 `姓X` 声明，≥3 字），修 `种师道` 被量词判据误杀 |
 | v0.16 | 2026-11-03 | 裁决闭环：`accepted` 后绕过判据补建别名边，失败记 `accept_pending` 留在待办可重试；纠错痕迹可查（`GET /admin/entities/edits`，`args` 解析成对象）；新增 `harness/check_spec.py` 校验 spec 骨架 |
+| v0.17 | 2026-11-03 | 事件管理面补齐五个 ADR 接口：`PATCH /admin/event`（白名单 + 幂等 + `pinned_source`）、`DELETE /admin/event`（只软删，`hard=true` 拒绝）、`POST /admin/archive`（P0 不搬）、`POST /admin/recall` + `.../{trace_id}/feedback`（带 `trace_id` 才能关联）；`retention_expired` 成为独立审计原因 |

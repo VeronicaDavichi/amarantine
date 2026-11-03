@@ -108,6 +108,10 @@ SCHEMA_PROPERTIES: list[dict[str, Any]] = [
     {"name": "is_deleted", "dataType": ["boolean"]},
     # 保留时间戳供审计展示（不参与过滤）
     {"name": "deleted_at", "dataType": ["date"]},
+    # 管理面改过这张卡的时刻（ADR 4.6 的 `updated_at`）。
+    # 只在 `PATCH /admin/event` 真的改了值时才写 —— 幂等要求重复置同一值
+    # 时 `updated_at` 不变，所以它不能由写入链路无条件覆盖。
+    {"name": "updated_at", "dataType": ["date"]},
     # 人工裁决留痕（D5 resolve）。旧对象没有这两个属性，读出来是 None，
     # 语义正好是「还没人看过」——所以加字段不需要回填。
     {"name": "review_verdict", "dataType": ["text"]},
@@ -732,6 +736,69 @@ class WeaviateStore:
             return "{operator: And, operands: [" + ", ".join(operands) + "]}"
         return "{operator: And, operands: [" + ", ".join(operands) + "]}"
 
+    # ---------- 事件管理（ADR 4.6 / 4.4） ----------
+
+    def update_fields(
+        self, event_id: str, namespace: str, *, properties: dict[str, Any]
+    ) -> bool:
+        """按白名单改事件卡属性。返回 False 表示目标不存在（404）。
+
+        **校验放在发请求之前**：非法字段要立刻 400，不能发出去一半再报错 ——
+        那会在索引里留下半截状态。
+
+        白名单只有 `pinned` / `pinned_source` / `retention`。
+        `summary` / `types` / `date_*` 故意不含：它们参与 `event_id` 的内容哈希，
+        直接改会让卡与图/向量的派生关系对不上，必须走标签复核或重建。
+        """
+        if not properties:
+            raise ValueError("properties 不能为空")
+        bad = sorted(set(properties) - self._MUTABLE_PROPERTIES)
+        if bad:
+            raise ValueError(
+                f"这些字段不允许直接改：{bad}；可改：{sorted(self._MUTABLE_PROPERTIES)}"
+            )
+
+        self.ensure_collection()
+        uid = deterministic_uuid(namespace, event_id)
+        url = f"{self._base}/v1/objects/{COLLECTION}/{uid}"
+        try:
+            resp = self._http.patch(
+                url, json={"class": COLLECTION, "properties": properties}
+            )
+        except httpx.HTTPError as exc:
+            raise WeaviateStoreError(f"更新事件卡失败: {exc}") from exc
+        if resp.status_code == 404:
+            return False
+        if resp.status_code not in (200, 204):
+            raise WeaviateStoreError(
+                f"更新事件卡失败: HTTP {resp.status_code} {resp.text[:200]}"
+            )
+        return True
+
+    def count_older_than(
+        self, namespace: str, *, cutoff: str, limit: int = 5000
+    ) -> tuple[int, int]:
+        """统计 `observed_at < cutoff` 的卡数，返回 `(candidates, scanned)`。
+
+        **这不是精确全量**：只扫描 `list_all` 能拉到的最近 `limit` 条。
+        所以把 `scanned` 一起返回 —— 调用方能看到这个数字建立在多少条之上，
+        而不是把一个可能不全的计数当全量报出去。
+
+        Weaviate 的 `Aggregate` 在本机版本上没验证过，宁可用已知可用的
+        `Get` 拉回来数。P0 的 `archive` 只出候选、`mode=logical`，
+        这个精度够用；真到上万条再换 aggregate 或游标。
+
+        时间比较直接比字符串：`observed_at` 统一是 ISO-8601 UTC，
+        同格式下字典序即时间序。
+        """
+        rows = self.list_all(namespace, limit=limit)
+        older = 0
+        for row in rows:
+            ts = row.get("observed_at")
+            if ts and str(ts) < cutoff:
+                older += 1
+        return older, len(rows)
+
     @staticmethod
     def _to_hit(obj: dict[str, Any], *, score: float) -> dict[str, Any]:
         """GraphQL 对象 → 扁平 dict。
@@ -751,6 +818,12 @@ class WeaviateStore:
         props["distance"] = extra.get("distance")
         return props
 
+    #: 管理面允许直接改的属性。`summary` / `types` / `date_*` 不在其中 ——
+    #: 它们参与 `event_id` 的内容哈希，改了会让卡与图/向量对不上。
+    _MUTABLE_PROPERTIES: frozenset[str] = frozenset(
+        {"pinned", "pinned_source", "retention", "updated_at"}
+    )
+
     #: 管理接口要的字段集（不能用 `_FIELDS` 拼接：它结尾是 `_additional`，
     #: GraphQL 里继续追加字段会直接语法错误）
     _ADMIN_FIELDS = """
@@ -769,7 +842,8 @@ class WeaviateStore:
       recall_count
       confirmed_by_use
       review_verdict
-      reviewer"""
+      reviewer
+      observed_at"""
 
     #: 两路都要请求：`distance` 给向量通道，`score` 给 BM25 通道。
     #: 缺失的那个 Weaviate 会返回 null，不影响。

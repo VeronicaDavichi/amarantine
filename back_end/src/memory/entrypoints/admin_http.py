@@ -18,14 +18,14 @@ import logging
 import os
 import time
 from contextlib import asynccontextmanager, suppress
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from dataclasses import replace
 from typing import Any, Literal
 
 import uvicorn
 from fastapi import Depends, FastAPI, HTTPException, Query, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from memory.config import Settings, load_settings
 from memory.core.forget_policy import (
@@ -48,8 +48,11 @@ from memory.services.entity_edit import (
     split_entity,
 )
 from memory.services.forget import ALLOWED_REASONS, ForgetError, forget_event
+from memory.services.feedback import FeedbackError, TraceNotFoundError, submit_feedback
 from memory.services.label_review import LabelReviewQueue, queue_from_settings
+from memory.services.recall import RecallUnavailableError, recall
 from memory.services.recall_count import RecallCounter, db_path_from_settings
+from memory.services.recall_trace import trace_store_from_settings
 from memory.services.weaviate_store import WeaviateStore, WeaviateStoreError
 
 logger = logging.getLogger("memory.admin")
@@ -302,6 +305,103 @@ class SurnameListResponse(BaseModel):
     items: list[SurnameEntry]
     #: 进程内当前生效的（含启动时从表里灌的）
     active: list[str]
+
+
+# ---- 事件管理（ADR 4.6 PATCH / 4.7 DELETE / 4.4 archive）----
+
+
+class EventPatchRequest(BaseModel):
+    """改事件的 `pinned` / `retention`。**白名单之外一律 400。**
+
+    没有 `summary` / `types`：它们参与 `event_id` 的内容哈希，直接改会让
+    卡与图/向量的派生关系对不上，必须走标签复核或重建。
+
+    `extra="allow"` 是故意的：未知字段要能被端点**看见并拒绝**（400）。
+    默认的 `ignore` 会让 `{"summary": "..."}` 静默通过 —— 请求 200 了、
+    什么都没改，调用方以为改成功了。
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    pinned: bool | None = None
+    retention: str | None = None
+    namespace: str | None = None
+
+
+class EventPatchResponse(BaseModel):
+    event_id: str
+    pinned: bool | None = None
+    pinned_source: str | None = None
+    retention: str | None = None
+    #: 只在**真的改了值**时更新；幂等重复置同一值不会变（ADR 4.6）
+    updated_at: str | None = None
+
+
+class EventDeleteRequest(BaseModel):
+    """软删一条事件卡。**`hard=true` 会被 400 拒绝**，这是设计上关死的。
+
+    不是「暂未实现物理删除」：D7 + A9 规定事实层永不物理删。
+    """
+
+    #: `user_forget`（用户开口）或 `retention_expired`（保留期到了）
+    reason: str = "user_forget"
+    hard: bool = False
+    namespace: str | None = None
+
+
+class EventDeleteResponse(BaseModel):
+    event_id: str
+    soft_deleted: bool = True
+    #: 事实层零改动，所以恒 true。**但原文层尚未实现（005）**，
+    #: 这个字段目前只表示「没删任何原文」，不代表「能查到原文」。
+    raw_quote_preserved: bool = True
+    deleted_at: str | None = None
+
+
+class ArchiveRequest(BaseModel):
+    window_days: int = 180
+    dry_run: bool = True
+    namespace: str | None = None
+
+
+class ArchiveResponse(BaseModel):
+    window_days: int
+    #: `observed_at < now - window_days` 的卡数
+    candidates: int
+    #: 这次计数建立在多少条之上 —— 不是精确全量，别把数字当全库
+    scanned: int
+    #: P0 恒 0（ADR 4.4：只出候选，不搬迁）
+    moved: int = 0
+    mode: str = "logical"
+
+
+class AdminRecallRequest(BaseModel):
+    query: str
+    namespace: str | None = None
+    budget_ms: int | None = None
+
+
+class AdminRecallResponse(BaseModel):
+    materials: list[dict[str, Any]] = []
+    degraded: bool = False
+    partial: bool = False
+    trace: dict[str, Any] = {}
+    #: 非空才能调 feedback —— 4.9 两个接口的唯一耦合点
+    trace_id: str | None = None
+
+
+class RecallFeedbackRequest(BaseModel):
+    used_material_ids: list[str]
+    namespace: str | None = None
+
+
+class RecallFeedbackResponse(BaseModel):
+    trace_id: str
+    accepted: int = 0
+    deduped: int = 0
+    #: `confirmed_by_use` 实际 +1 的材料
+    incremented: list[str] = []
+    rejected: list[str] = []
 
 
 # ---- NEED_REVIEW 裁决（D5：与上面的 LABEL_REVIEW 是另一条队列）----
@@ -1012,6 +1112,295 @@ def create_app(
             for v in report.by_bucket(BUCKET_SAFE_TO_DELETE)
         ]
         return SweepResponse(buckets=report.buckets, dry_run=True, sample=sample)
+
+    # ------------------------------------------------- events（4.6 / 4.7 / 4.4）
+
+    def _event_store() -> WeaviateStore:
+        # 每次新开一个：管理接口是低频人工操作，不值得维护长连接池，
+        # 而且用完就 close 能让「忘了关」这类问题当场暴露。
+        return WeaviateStore(cfg)
+
+    @app.patch(
+        "/admin/event/{event_id}",
+        response_model=EventPatchResponse,
+        dependencies=[Depends(require_token)],
+    )
+    def admin_patch_event(
+        event_id: str, body: EventPatchRequest
+    ) -> EventPatchResponse:
+        """改 `pinned` / `retention`（ADR 4.6）。
+
+        **幂等**：值没变就不写，`updated_at` 保持不变。这不是省事 ——
+        如果每次都写，审计里「这条被改过几次」就永久失真了。
+
+        `pinned=true` 同时写 `pinned_source="manual"`：缺了它就没法区分
+        人工钉住和规则钉住，而 D7 的保护逻辑要靠这个区分。
+        解钉时**不动** `pinned_source`，保留「曾被谁钉过」的痕迹。
+        """
+        ns = _namespace(body.namespace)
+        extra_keys = set(body.model_extra or {}) - {"namespace"}
+        if extra_keys:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    f"这些字段不允许直接改: {sorted(extra_keys)}；"
+                    "只能改 pinned / retention（改 summary/types 请走标签复核或重建）"
+                ),
+            )
+        if body.pinned is None and body.retention is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="至少要改一个字段：pinned / retention",
+            )
+
+        store = _event_store()
+        try:
+            current = store.get_by_event_id(ns, event_id)
+            if current is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"事件卡不存在: {event_id}",
+                )
+
+            props: dict[str, Any] = {}
+            if body.pinned is not None and bool(current.get("pinned")) != body.pinned:
+                props["pinned"] = body.pinned
+                if body.pinned:
+                    props["pinned_source"] = "manual"
+            if (
+                body.retention is not None
+                and current.get("retention") != body.retention
+            ):
+                props["retention"] = body.retention
+
+            if props:
+                props["updated_at"] = datetime.now(timezone.utc).isoformat()
+                try:
+                    found = store.update_fields(event_id, ns, properties=props)
+                except ValueError as exc:
+                    # 白名单外字段：校验在发请求前，索引里不会留半截状态
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+                    ) from exc
+                if not found:
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail=f"事件卡不存在: {event_id}",
+                    )
+                current = store.get_by_event_id(ns, event_id) or {
+                    **current,
+                    **props,
+                }
+
+            return EventPatchResponse(
+                event_id=event_id,
+                pinned=current.get("pinned"),
+                pinned_source=current.get("pinned_source"),
+                retention=current.get("retention"),
+                updated_at=current.get("updated_at"),
+            )
+        except WeaviateStoreError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=f"索引层不可用: {exc}",
+            ) from exc
+        finally:
+            store.close()
+
+    @app.delete(
+        "/admin/event/{event_id}",
+        response_model=EventDeleteResponse,
+        dependencies=[Depends(require_token)],
+    )
+    def admin_delete_event(
+        event_id: str, body: EventDeleteRequest | None = None
+    ) -> EventDeleteResponse:
+        """软删一条事件卡（ADR 4.7）。
+
+        **`hard=true` 一律 400**。这不是「还没实现」—— D7 + A9 规定事实层
+        永不物理删，所以它在入口就被关死，连降级路径都没有。
+
+        **幂等**：已软删的直接返回原来的 `deleted_at`，不再写一次。
+        否则每次重试刷新时间戳，审计里「什么时候删的」就永远是最后一次调用。
+        """
+        req = body or EventDeleteRequest()
+        ns = _namespace(req.namespace)
+
+        if req.hard:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="只允许软删：hard=true 被拒绝（D7/A9 事实层永不物理删）",
+            )
+        if req.reason not in ("user_forget", "retention_expired"):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="reason 必须是 user_forget / retention_expired",
+            )
+
+        store = _event_store()
+        try:
+            current = store.get_by_event_id(ns, event_id)
+            if current is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"事件卡不存在: {event_id}",
+                )
+            if current.get("is_deleted"):
+                return EventDeleteResponse(
+                    event_id=event_id, deleted_at=current.get("deleted_at")
+                )
+
+            forget_event(
+                namespace=ns,
+                event_id=event_id,
+                reason=req.reason,
+                settings=cfg,
+                store=store,
+            )
+            after = store.get_by_event_id(ns, event_id) or {}
+            return EventDeleteResponse(
+                event_id=event_id, deleted_at=after.get("deleted_at")
+            )
+        except ForgetError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
+            ) from exc
+        except WeaviateStoreError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=f"索引层不可用: {exc}",
+            ) from exc
+        finally:
+            store.close()
+
+    @app.post(
+        "/admin/archive",
+        response_model=ArchiveResponse,
+        dependencies=[Depends(require_token)],
+    )
+    def admin_archive(body: ArchiveRequest) -> ArchiveResponse:
+        """热冷逻辑分层报告（ADR 4.4）。
+
+        **P0 一条都不搬**：不管传什么 `dry_run`，`moved` 恒 0、`mode` 恒
+        `logical`。先让「有多少卡进入冷区」这个数字可见，再决定何时开搬 ——
+        自动搬迁和 `forget` 的 `dry_run=true` 强制是同一套谨慎逻辑。
+
+        与 `forget` 的职责分离（4.7 硬约束）：`archive` 按**时间**分层，
+        `forget` 按**空闲 + 召回收**淘汰三桶。两者不共用一个 service。
+        """
+        ns = _namespace(body.namespace)
+        if body.window_days < 1:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="window_days 必须 >= 1",
+            )
+
+        cutoff = (
+            datetime.now(timezone.utc) - timedelta(days=body.window_days)
+        ).isoformat()
+        store = _event_store()
+        try:
+            candidates, scanned = store.count_older_than(ns, cutoff=cutoff)
+        except WeaviateStoreError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=f"索引层不可用: {exc}",
+            ) from exc
+        finally:
+            store.close()
+
+        return ArchiveResponse(
+            window_days=body.window_days,
+            candidates=candidates,
+            scanned=scanned,
+        )
+
+    # ------------------------------------------------- recall 调试（4.9）
+
+    @app.post(
+        "/admin/recall",
+        response_model=AdminRecallResponse,
+        dependencies=[Depends(require_token)],
+    )
+    def admin_recall(body: AdminRecallRequest) -> AdminRecallResponse:
+        """管理侧召回（调试用）。与 MCP `memory_recall` 走同一套 service。
+
+        **必须带 `trace_store`**：不传就不产 `trace_id`，
+        下游 `/admin/recall/{trace_id}/feedback` 永远关联不上 ——
+        这是 4.9 两个接口唯一的耦合点。
+
+        存储初始化容错（与 MCP 侧同策略）：trace 是辅助数据，
+        账本写不了不该连累「查记忆」这件正事。
+        """
+        ns = _namespace(body.namespace)
+        if not body.query or not body.query.strip():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="query 必须是非空字符串",
+            )
+
+        try:
+            trace_store = trace_store_from_settings(cfg)
+        except Exception as exc:  # noqa: BLE001 - 放弃 feedback 能力，召回照常
+            logger.warning("引用凭据存储不可用，本次召回不带 trace_id: %s", exc)
+            trace_store = None
+
+        try:
+            result = recall(
+                body.query,
+                namespace=ns,
+                settings=cfg,
+                trace_store=trace_store,
+                budget_ms=body.budget_ms,
+            )
+        except RecallUnavailableError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=f"事实源不可用: {exc}",
+            ) from exc
+        return AdminRecallResponse(**result.to_payload())
+
+    @app.post(
+        "/admin/recall/{trace_id}/feedback",
+        response_model=RecallFeedbackResponse,
+        dependencies=[Depends(require_token)],
+    )
+    def admin_recall_feedback(
+        trace_id: str, body: RecallFeedbackRequest
+    ) -> RecallFeedbackResponse:
+        """回报本次引用了哪些材料（ADR 4.9 / C.B6）。
+
+        `confirmed_by_use` 的**唯一写入通道** —— 系统不猜「提到」还是「用了」。
+        幂等键 `(trace_id, event_id)`，重复上报只计一次。
+
+        trace 不存在 → **404**（调用方传错了 id）；
+        域不匹配 / id 不在返回集里 → **400**（请求本身有问题）。
+        两者必须分开，否则调用方分不清「重试」还是「改参数」。
+        """
+        ns = _namespace(body.namespace)
+        try:
+            outcome = submit_feedback(
+                namespace=ns,
+                trace_id=trace_id,
+                used_material_ids=body.used_material_ids,
+                settings=cfg,
+            )
+        except TraceNotFoundError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
+            ) from exc
+        except FeedbackError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+            ) from exc
+
+        return RecallFeedbackResponse(
+            trace_id=trace_id,
+            accepted=outcome.accepted,
+            deduped=outcome.deduped,
+            incremented=list(outcome.incremented or []),
+            rejected=list(outcome.rejected or []),
+        )
 
     return app
 
