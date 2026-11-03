@@ -275,6 +275,12 @@ def main() -> int:
     warmed = warm_up_dictionary(settings.MEMORY_NAMESPACE, settings=settings)
     log.info("分词词典预热完成，新增 %d 个词", warmed)
 
+    # 灌回已声明的姓氏（`这人姓种`）。jieba 未必认识生僻姓，但用户说过，
+    # 判据要靠这个才放过 `种小明` 这类名字。
+    from memory.services.surname_decl import load_into_labeler
+
+    log.info("姓氏声明加载完成，新增 %d 个", load_into_labeler(settings))
+
     # 补上上次进程被杀时欠下的图写入。
     #
     # **这是 SIGKILL 之后唯一的补课机会**：关闭时的钩子（atexit / SIGTERM）

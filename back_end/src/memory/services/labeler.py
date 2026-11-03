@@ -354,13 +354,236 @@ _LEADING_MEASURES = frozenset("个位种")
 
 #: 位置检查：开头出现这些字，就不是名字。
 #:
-#: 单字判据只走这一条路（另一条是 `_looks_like_name` 里的结尾检查）。
+#: 单字判据只走这一条路（另一条是 `_judge_name` 里的结尾检查）。
 #: 三条都只看首尾，**不做包含式匹配** —— 见 `_DESCRIPTIVE_MARKERS`。
 _LEADING_CHARS = _PRONOUN_CHARS | _LEADING_ADVERBS | _LEADING_MEASURES
 
 
 #: 位置检查：结尾出现这些助词/描述词，就不是名字（`三哥主打的` / `前面说的`）
 _DESCRIPTIVE_ENDINGS = frozenset("的者地了呢吧啊")
+
+
+#: 「这人姓种」—— `姓X` 且 X 后面**不接汉字**。
+#:
+#: 为什么要求后面不接汉字：`姓` 是高频构词字，
+#: `姓名` / `姓氏` / `老百姓` / `百家姓` 都会误命中。
+#: 只认句末/标点前的形式，代价是 `这人姓种啊` 认不出来 ——
+#: 那种情况仍然会进 `alias_reject`（`reason="leading"`），看得见、能补。
+SURNAME_DECL_RE = re.compile(r"姓\s*([\u4e00-\u9fa5])(?![\u4e00-\u9fa5])")
+
+#: `姓` 后面跟着这些字时不是姓氏声明（`姓名` / `姓氏`）
+_NOT_SURNAME_CHARS = frozenset("名氏")
+
+
+def parse_surname_declarations(text: str) -> list[str]:
+    """从原话里抽姓氏声明。返回去重后的单字列表（保持出现顺序）。
+
+    捕获到的字还要再过一道 `_NOT_SURNAME_CHARS`：`姓名` / `姓氏` 里
+    `姓` 后面确实跟着一个汉字，而且它后面没有汉字 —— 正则拦不住，
+    只能按字排掉。
+    """
+    out: list[str] = []
+    for match in SURNAME_DECL_RE.finditer(text):
+        ch = match.group(1)
+        if ch in _NOT_SURNAME_CHARS:
+            continue
+        if ch not in out:
+            out.append(ch)
+    return out
+
+
+# ==================== 罕见姓豁免 ====================
+# 「量词打头」这条判据会误伤罕见姓：`种师道`（种读 chóng）是真人名，
+# 但 `种` 就在 `_LEADING_MEASURES` 里。两条独立的豁免路径：
+#
+# 1. **jieba 词典**：整串就是词典里的单一人名词条（`nr`）。
+#    `种师道` → `[('种师道','nr')]`；`种人` → `[('种人','n')]`。
+#    免费，且覆盖词典里所有人名。
+# 2. **用户声明**：`这人姓种` 这种话，解析后登记成姓氏。
+#    jieba 不认识的生僻姓（`姓种，种小明`）靠这条。
+#
+# 两条都只**豁免量词那一条**，不放宽别的判据。
+
+#: 在 `_LEADING_MEASURES` 里、**同时是姓氏**的字。
+#:
+#: 只有这类字有机会走豁免。`个`/`位` 不是姓氏，所以 `位小明` 即使被
+#: jieba 的 HMM 误标成 `nr` 也不放行 —— 实测 jieba 确实会把 `位小明`
+#: 标成 `nr`，没有这层过滤，豁免就变成「量词后面跟个像名字的就行」。
+#:
+#: 汉典 `种` 条：`●种 chóng — 姓。如宋代有种师道。`
+_MEASURE_SURNAMES = frozenset("种")
+
+#: 本次进程内已登记的姓氏（启动时从 `surname_decl` 表灌进来）
+_DECLARED_SURNAMES: set[str] = set()
+
+
+def declared_surnames() -> frozenset[str]:
+    """当前生效的已声明姓氏（只读快照）。"""
+    return frozenset(_DECLARED_SURNAMES)
+
+
+def register_surnames(chars: object) -> int:
+    """登记姓氏。返回新登记了几个（重复的不算）。"""
+    fresh = {c for c in chars if isinstance(c, str) and len(c) == 1} - _DECLARED_SURNAMES
+    _DECLARED_SURNAMES.update(fresh)
+    return len(fresh)
+
+
+def reset_surnames() -> None:
+    """清空登记（测试用；也供启动时重新加载）。"""
+    _DECLARED_SURNAMES.clear()
+
+
+def _is_person_name_token(candidate: str) -> bool:
+    """整串是不是 jieba 词典里的**单一**人名词条（`nr`）。
+
+    只在「首字是量词」这条窄路才被调用，所以开销可以忽略。
+    要求「单一词条且覆盖整串」，避免 `种师道也叫老种` 这种句子蒙混过关。
+    """
+    if not _jieba_ready():
+        return False
+    try:
+        import jieba.posseg as pseg
+
+        pairs = [(p.word, p.flag) for p in pseg.cut(candidate)]
+    except Exception:  # noqa: BLE001 - 词典挂了不该影响判据
+        return False
+    return (
+        len(pairs) == 1
+        and pairs[0][0] == candidate
+        and str(pairs[0][1]).startswith("nr")
+    )
+
+
+def _measure_word_exempt(candidate: str) -> bool:
+    """量词打头的例外：这其实是罕见姓。
+
+    **先看这个量词字是不是姓氏**，不是就直接不豁免 —— 否则 jieba 的
+    HMM 会把 `位小明` 这种也标成 `nr`，豁免就漏成筛子。
+
+    是姓氏时，两个条件任一成立：
+    - 用户在 namespace 里声明过它，且**名字至少 3 个字**（姓 + 名≥2）；
+    - jieba 词典认得整串是人名。
+
+    2 个字（`种明`）且 jieba 不认识的情况判不准，选择不豁免 ——
+    但它会进 `alias_reject` 表，`reason="leading"`，看得见、可修。
+    """
+    first = candidate[:1]
+    if first not in _MEASURE_SURNAMES and first not in _DECLARED_SURNAMES:
+        return False
+    if first in _DECLARED_SURNAMES and len(candidate) >= 3:
+        return True
+    return _is_person_name_token(candidate)
+
+
+def _leading_blocks(candidate: str) -> tuple[bool, str]:
+    """开头位置检查。返回 `(是否拦住, 命中的字符)`。"""
+    first = candidate[:1]
+    if first not in _LEADING_CHARS:
+        return False, ""
+    if first in _LEADING_MEASURES and _measure_word_exempt(candidate):
+        return False, ""
+    return True, first
+
+
+# ==================== 裁决：带理由，不是布尔 ====================
+#
+# 原来判据只回答「过 / 不过」。不过的时候**什么都不留**，于是
+# `印度人` 建不出边这件事，花了两个会话、查了真库才发现。
+# 现在每一次判定都带 `reason`，`reason` 会进 `alias_reject` 表。
+
+NAME_OK = "ok"
+NAME_EMPTY = "empty"
+NAME_TOO_LONG = "too_long"
+NAME_MARKER = "marker"
+NAME_LEADING = "leading"
+NAME_ENDING = "ending"
+
+#: 所有可能的拒绝理由 —— 文档和 `alias_reject.reason` 共用这套词
+NAME_REJECT_REASONS = (
+    NAME_EMPTY,
+    NAME_TOO_LONG,
+    NAME_MARKER,
+    NAME_LEADING,
+    NAME_ENDING,
+)
+
+
+@dataclass(frozen=True)
+class NameVerdict:
+    """一个串能不能当名字，以及**为什么**。
+
+    `detail` 放具体的证据：命中的标记 / 开头的那个字。
+    没有它，`alias_reject` 表只能说「被拒了」，说不出被什么拒的。
+    """
+
+    ok: bool
+    reason: str = NAME_OK
+    detail: str = ""
+
+    def to_dict(self) -> dict[str, object]:
+        return {"ok": self.ok, "reason": self.reason, "detail": self.detail}
+
+
+def _judge_name(candidate: str) -> NameVerdict:
+    """名字判据的**唯一实现**。`_is_clean_name` 只是它的布尔壳。"""
+    if not candidate:
+        return NameVerdict(False, NAME_EMPTY)
+    if len(candidate) > 6:
+        return NameVerdict(False, NAME_TOO_LONG, str(len(candidate)))
+    marker = _first_marker(candidate)
+    if marker is not None:
+        return NameVerdict(False, NAME_MARKER, marker)
+    blocked, hit = _leading_blocks(candidate)
+    if blocked:
+        return NameVerdict(False, NAME_LEADING, hit)
+    if candidate[-1:] in _DESCRIPTIVE_ENDINGS:
+        return NameVerdict(False, NAME_ENDING, candidate[-1:])
+    return NameVerdict(True)
+
+
+def _first_marker(candidate: str) -> str | None:
+    """命中的描述标记里挑一个**确定性**的。
+
+    `_DESCRIPTIVE_MARKERS` 是 frozenset，`next(iter(...))` 的结果随
+    字符串哈希种子变化（每个进程不同）。而 `detail` 是要落
+    `alias_reject` 表的 —— 让它随机，等于「同一句话两次记下不同理由」，
+    查起来会莫名其妙。
+
+    排序键：最早出现 → 最长 → 字典序最小。
+    """
+    hits = [m for m in _DESCRIPTIVE_MARKERS if m in candidate]
+    if not hits:
+        return None
+    return min(hits, key=lambda m: (candidate.index(m), -len(m), m))
+
+
+@dataclass(frozen=True)
+class AliasReject:
+    """一条被拒的别名声明 —— 带理由，不静默。
+
+    `side` 区分是哪一头被拒：
+
+    - ``alias``：左值（`三哥主打的`）。拒绝发生在 `extract_alias_claims`，
+      这样的串**连 claim 都不会生成**，所以必须单独记。
+    - ``canonical``：右值（`那个ai中最弱智的`）。claim 会生成、留在卡上，
+      只是建边时被跳过 —— 记下来，让 LLM/人能看见。
+    """
+
+    alias: str
+    canonical: str
+    side: str
+    reason: str
+    detail: str = ""
+
+    def to_dict(self) -> dict[str, str]:
+        return {
+            "alias": self.alias,
+            "canonical": self.canonical,
+            "side": self.side,
+            "reason": self.reason,
+            "detail": self.detail,
+        }
 
 
 def _strip_prefix(name: str) -> str:
@@ -385,9 +608,13 @@ def _looks_like_name(candidate: str) -> bool:
     就会在名词里误伤，而且误伤之后没有任何痕迹。
 
     这条规则的具体落点：
-    - 开头：`_LEADING_CHARS`（代词 + 副词），见 `_is_clean_name`
-    - 结尾：下面的助词表
+    - 开头：`_LEADING_CHARS`（代词 + 单字副词 + 单字量词）
+    - 结尾：`_DESCRIPTIVE_ENDINGS`
     - 包含：只有 `_DESCRIPTIVE_MARKERS`，且**一个单字都没有**
+
+    实现只有一份：`_judge_name`。这个函数和 `_is_clean_name` 都是它的
+    布尔壳，两处判据永远一致（以前分成两个函数，`_looks_like_name` 少查
+    开头，改一处忘另一处就会不一致）。
 
     ## 为什么要卡左侧
 
@@ -400,30 +627,17 @@ def _looks_like_name(candidate: str) -> bool:
     """
     if not candidate:
         return False
-    if len(candidate) > 6:
-        return False
-    if any(marker in candidate for marker in _DESCRIPTIVE_MARKERS):
-        return False
-    # 以助词/描述词结尾的不是名字（`三哥主打的` / `前面说的`）
-    if candidate[-1:] in _DESCRIPTIVE_ENDINGS:
-        return False
-    return True
+    return _judge_name(candidate).ok
 
 
 def _is_clean_name(candidate: str) -> bool:
-    """能不能作为名字写入图。
+    """能不能作为名字写入图 —— `_judge_name` 的布尔壳。
 
-    `_looks_like_name` 之外再查**开头**的停用字（代词 + 单字副词）。
-
-    不能用 `_has_stop_char` 全程扫：那个函数会误伤名字内部的常用字
-    （「明」在 `_STOP_CHARS` 里，来自「证明」）。但首尾不一样 ——
-    `我`/`这`/`最` 开头、「的」结尾，基本就是句子片段。
+    要理由的时候直接调 `_judge_name`。保留这个名字是因为它散落在
+    `graph_outbox` / `extract_alias_claims` 里，全是「过不过」的用法。
     """
-    if not _looks_like_name(candidate):
-        return False
-    if candidate[0] in _LEADING_CHARS:
-        return False
-    return True
+    return _judge_name(candidate).ok
+
 
 def _alias_label(canonical: str) -> str:
     """判断一条别名声明的置信度。
@@ -441,12 +655,13 @@ def _alias_label(canonical: str) -> str:
     `老实人` 是评价，退回 ``uncertain``（`_is_descriptive_ren`）。
 
     注意这里查的是**置信度**，不是准入 —— 被打成 uncertain 的右边
-    仍然会建边（`_is_clean_name` 只拦首尾和明显描述，不拦 `X人`）。
+    仍然会建边（`_judge_name` 只拦首尾和明显描述，不拦 `X人`）。
     准入严、置信度宽，才不会重演「边建不出来还查不到原因」。
     """
     if any(marker in canonical for marker in _DESCRIPTIVE_MARKERS):
         return ALIAS_UNCERTAIN
-    if canonical[:1] in _LEADING_CHARS:
+    blocked, _hit = _leading_blocks(canonical)
+    if blocked:
         return ALIAS_UNCERTAIN
     if _is_descriptive_ren(canonical):
         return ALIAS_UNCERTAIN
@@ -467,8 +682,30 @@ def extract_alias_claims(text: str) -> list[AliasClaim]:
 
     只认显式等价词，不做推断 —— 推断是 LLM 层的事（P2）。
     规则层只负责把话说死了的那些抓出来，并且**如实标注置信度**。
+
+    被拒的**不返回**（用 `extract_alias_claims_verbose` 连拒绝理由一起要）。
+    """
+    return extract_alias_claims_verbose(text)[0]
+
+
+def extract_alias_claims_verbose(
+    text: str,
+) -> tuple[list[AliasClaim], list[AliasReject]]:
+    """抽别名声明，**同时**返回被拒的和拒绝理由。
+
+    ## 为什么要有 verbose 版
+
+    左值被拒时原来直接 `continue` —— **连 claim 都不生成**。于是
+    `种师道也叫老种` 这种句子在卡上、表上、图上全都看不见，
+    LLM 复核层也拿不到它。现在被拒的进 `alias_rejects`，
+    由 `remember` 落到 `alias_reject` 表。
+
+    Returns:
+        `(claims, rejects)`。`rejects` 里 `side` 恒为 ``"alias"`` ——
+        右值的拒绝发生在建边阶段（`graph_outbox`），那边自己记。
     """
     claims: list[AliasClaim] = []
+    rejects: list[AliasReject] = []
     seen: set[tuple[str, str]] = set()
 
     for match in _ALIAS_PATTERN.finditer(text):
@@ -486,9 +723,28 @@ def extract_alias_claims(text: str) -> list[AliasClaim]:
         # 会匹配成 `三哥主打的 -> 有声有色有味`，右边过了判据，于是
         # `(:Alias {name:"三哥主打的"})` 进了图。
         # 左侧紧挨等价词，正则 `{2,12}` 会一路吞到谓语为止，比右侧更容易脏。
-        if not _is_clean_name(alias):
+        verdict = _judge_name(alias)
+        if not verdict.ok:
+            rejects.append(
+                AliasReject(
+                    alias=alias,
+                    canonical=canonical,
+                    side="alias",
+                    reason=verdict.reason,
+                    detail=verdict.detail,
+                )
+            )
             continue
         if len(alias) < 2 or len(alias) > 12:
+            rejects.append(
+                AliasReject(
+                    alias=alias,
+                    canonical=canonical,
+                    side="alias",
+                    reason="alias_length",
+                    detail=str(len(alias)),
+                )
+            )
             continue
         seen.add((alias, canonical))
         # **用原始串判置信度**：裁剪前缀会把描述性标记（`那个`）一起削掉，
@@ -501,7 +757,7 @@ def extract_alias_claims(text: str) -> list[AliasClaim]:
                 source="user_declared",
             )
         )
-    return claims
+    return claims, rejects
 
 #: jieba 是否可用。`None` = 还没探测过。
 _JIEBA_OK: bool | None = None
@@ -1063,6 +1319,10 @@ class LabelResult:
     actions: list[object] = field(default_factory=list)
     #: 这里的「A 也叫 B」声明。**不参与 event_id 哈希**。
     alias_claims: list[AliasClaim] = field(default_factory=list)
+    #: 被拒的别名声明（带理由）。**不参与 event_id 哈希**，只用于留痕。
+    alias_rejects: list[AliasReject] = field(default_factory=list)
+    #: 本段文本里声明的姓氏（`这人姓种` → `["种"]`）。由 `remember` 落库。
+    surnames: list[str] = field(default_factory=list)
     source: str = "rules"
 
 
@@ -1080,16 +1340,36 @@ def _match_types(summary: str, vocab: list[str]) -> list[str]:
 
 
 def label_by_rules(summary: str, *, vocab: list[str] | None = None) -> LabelResult:
-    """规则层打标：永远给出非空 types（否则事件卡无法落库）。"""
+    """规则层打标：永远给出非空 types（否则事件卡无法落库）。
+
+    ## 姓氏声明先于别名抽取
+
+    `这人姓种，种小明就是老种` 这一句里，别名抽取**必须**先知道
+    「种」是姓，否则 `种小明` 会被量词判据拒掉。所以顺序是：
+
+        parse_surname_declarations → register_surnames → extract_alias_claims
+
+    副作用（写 `_DECLARED_SURNAMES`）是有意的：`labeler` 是纯文本层，
+    没有 namespace 和落库能力。持久化由 `remember` 紧接着做
+    （`surname_decl` 表），下次启动再灌回来。
+
+    **不影响 `event_id`**：姓氏只影响别名判据，`event_id` 里的
+    `entity_names` 来自 jieba 抽取，不看这套判据。
+    """
     types = _match_types(summary, vocab or [])
+    surnames = parse_surname_declarations(summary)
+    if surnames:
+        register_surnames(surnames)
     entities = extract_entities(summary)
     actions = extract_actions(summary, entities=entities)
-    claims = extract_alias_claims(summary)
+    claims, rejects = extract_alias_claims_verbose(summary)
     return LabelResult(
         types=types,
         entities=entities,
         actions=list(actions),
         alias_claims=claims,
+        alias_rejects=rejects,
+        surnames=surnames,
         source="rules",
     )
 

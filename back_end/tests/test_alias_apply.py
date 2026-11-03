@@ -19,6 +19,7 @@ from memory.services.alias_apply import (
     resolve_event_aliases,
     resolve_namespace_aliases,
 )
+from memory.services.graph_outbox import AliasWriteResult
 
 GOOD_REPLY = '{"canonical": "豆包", "confidence": 0.9}'
 
@@ -97,7 +98,7 @@ def _patch(monkeypatch, *, candidates: list[str] | None = None) -> None:
         "list_known_names",
         lambda *a, **kw: candidates if candidates is not None else ["豆包", "张三"],
     )
-    monkeypatch.setattr(AA, "append_alias_edges", lambda *a, **kw: 1)
+    monkeypatch.setattr(AA, "append_alias_edges", lambda *a, **kw: AliasWriteResult(written=1))
 
 
 def _llm(monkeypatch, reply: str | Exception = GOOD_REPLY) -> FakeLLM:
@@ -306,7 +307,7 @@ def test_namespace_scan_fetches_candidates_once(monkeypatch) -> None:
         return ["豆包", "张三"]
 
     monkeypatch.setattr(AA, "list_known_names", _count)
-    monkeypatch.setattr(AA, "append_alias_edges", lambda *a, **kw: 1)
+    monkeypatch.setattr(AA, "append_alias_edges", lambda *a, **kw: AliasWriteResult(written=1))
     _llm(monkeypatch)
 
     cards = {f"evt_{i}": _card(f"evt_{i}", claims=[UNCERTAIN]) for i in range(3)}

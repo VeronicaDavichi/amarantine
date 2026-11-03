@@ -206,6 +206,74 @@ class LabelReviewResolveResponse(BaseModel):
     resolution: str
 
 
+# ---- 别名拒绝留痕（为什么那条边没建）----
+
+
+class AliasRejectEntry(BaseModel):
+    """一条被拒的别名声明。
+
+    `side` 说明是哪一头被拒：
+
+    - ``alias``（左值）：`三哥主打的` —— 连 claim 都不生成，最隐形
+    - ``canonical``（右值）：`那个ai中最弱智的` —— claim 在卡上，建边时跳过
+
+    `reason` 取自 `labeler.NAME_REJECT_REASONS`，`detail` 是具体证据
+    （命中的标记 / 开头的字）。
+    """
+
+    event_id: str
+    alias: str
+    canonical: str
+    side: str
+    reason: str
+    detail: str = ""
+    source_text: str | None = None
+    created_at: str
+
+
+class AliasRejectListResponse(BaseModel):
+    items: list[AliasRejectEntry]
+    total: int
+    #: 按 reason 分组的未处理数 —— 判断「判据是不是该改」看这个
+    by_reason: dict[str, int]
+
+
+class AliasRejectResolveRequest(BaseModel):
+    event_id: str
+    alias: str
+    canonical: str
+    side: str
+    #: `accepted`（判据错了，该建边）/ `rejected`（判据对，就该拒）
+    resolution: str = "accepted"
+    namespace: str | None = None
+
+
+class AliasRejectResolveResponse(BaseModel):
+    resolved: bool
+    resolution: str
+
+
+class SurnameDeclareRequest(BaseModel):
+    """声明姓氏（`这人姓种` 的程序化版本）。"""
+
+    chars: list[str]
+    evidence: str | None = None
+    namespace: str | None = None
+
+
+class SurnameEntry(BaseModel):
+    char: str
+    evidence: str | None = None
+    event_id: str | None = None
+    created_at: str
+
+
+class SurnameListResponse(BaseModel):
+    items: list[SurnameEntry]
+    #: 进程内当前生效的（含启动时从表里灌的）
+    active: list[str]
+
+
 # ---- NEED_REVIEW 裁决（D5：与上面的 LABEL_REVIEW 是另一条队列）----
 
 
@@ -513,6 +581,146 @@ def create_app(
             )
         return LabelReviewResolveResponse(
             event_id=event_id, resolved=True, resolution=body.resolution
+        )
+
+    # ------------------------------------------------------ 别名拒绝留痕
+    #
+    # 别名声明从原话到图上一条边有两道判据，两侧都可能被拒。原来两边
+    # 都不留痕迹 —— `印度人`、`科学家`、`种师道` 三次都是这么藏起来的。
+    # 这两个接口把「为什么那条边没建」变成可以查、可以裁决的事。
+
+    @app.get(
+        "/admin/alias-rejects",
+        response_model=AliasRejectListResponse,
+        dependencies=[Depends(require_token)],
+    )
+    def list_alias_rejects(
+        limit: int = Query(default=50, ge=1, le=500),
+        reason: str | None = Query(default=None),
+        namespace: str | None = Query(default=None),
+    ) -> AliasRejectListResponse:
+        """列出被拒的别名声明。
+
+        `by_reason` 是最有用的一栏：某个 reason 数量突然涨起来，
+        通常意味着判据把一整类名字误伤了（`科学家` 就是这么被发现的）。
+        """
+        from memory.services.alias_reject import queue_from_settings as reject_q
+
+        ns = _namespace(namespace)
+        queue = reject_q(cfg)
+        items = [
+            AliasRejectEntry(
+                event_id=it.event_id,
+                alias=it.alias,
+                canonical=it.canonical,
+                side=it.side,
+                reason=it.reason,
+                detail=it.detail,
+                source_text=it.source_text,
+                created_at=it.created_at,
+            )
+            for it in queue.list_pending(ns, limit=limit, reason=reason)
+        ]
+        return AliasRejectListResponse(
+            items=items,
+            total=queue.count_pending(ns, reason=reason),
+            by_reason=queue.stats(ns),
+        )
+
+    @app.post(
+        "/admin/alias-rejects/resolve",
+        response_model=AliasRejectResolveResponse,
+        dependencies=[Depends(require_token)],
+    )
+    def resolve_alias_reject(
+        body: AliasRejectResolveRequest,
+    ) -> AliasRejectResolveResponse:
+        """把一条被拒的声明标记为已裁决。
+
+        **只标记，不建边**。理由跟 label-review 一致：建边要重走写入链路
+        （`rebind` / 重新 remember），不是这里该做的事。这里记录
+        「人看过并判定了判据对不对」，`accepted` 意味着判据需要修。
+        """
+        from memory.services.alias_reject import queue_from_settings as reject_q
+
+        ns = _namespace(body.namespace)
+        ok = reject_q(cfg).resolve(
+            ns,
+            event_id=body.event_id,
+            alias=body.alias,
+            canonical=body.canonical,
+            side=body.side,
+            resolution=body.resolution,
+        )
+        if not ok:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="没有待处理的别名拒绝记录（可能已处理或从未入队）",
+            )
+        return AliasRejectResolveResponse(
+            resolved=True, resolution=body.resolution
+        )
+
+    @app.get(
+        "/admin/alias-surnames",
+        response_model=SurnameListResponse,
+        dependencies=[Depends(require_token)],
+    )
+    def list_alias_surnames(
+        namespace: str | None = Query(default=None),
+    ) -> SurnameListResponse:
+        """列出已声明的姓氏（`这人姓种`）。
+
+        `active` 是**进程内当前生效的**（含启动时从表里灌的）——
+        判据只认这个集合，所以它是「现在到底放过了什么」的真答案。
+        """
+        from memory.services.labeler import declared_surnames
+        from memory.services.surname_decl import registry_from_settings
+
+        ns = _namespace(namespace)
+        items = [
+            SurnameEntry(
+                char=d.char,
+                evidence=d.evidence,
+                event_id=d.event_id,
+                created_at=d.created_at,
+            )
+            for d in registry_from_settings(cfg).list_active(ns)
+        ]
+        return SurnameListResponse(
+            items=items, active=sorted(declared_surnames())
+        )
+
+    @app.post(
+        "/admin/alias-surnames",
+        response_model=SurnameListResponse,
+        dependencies=[Depends(require_token)],
+    )
+    def declare_alias_surname(
+        body: SurnameDeclareRequest,
+    ) -> SurnameListResponse:
+        """声明姓氏。立即在**本进程**生效，并落库供下次启动灌回。"""
+        from memory.services.labeler import declared_surnames, register_surnames
+        from memory.services.surname_decl import registry_from_settings
+
+        ns = _namespace(body.namespace)
+        registry = registry_from_settings(cfg)
+        fresh = registry.declare(
+            ns, list(body.chars), evidence=body.evidence, event_id=None
+        )
+        register_surnames(body.chars)
+        logger.info("通过管理接口声明姓氏 %s（新增 %d）", "".join(body.chars), fresh)
+        items = [
+            SurnameEntry(
+                char=d.char,
+                evidence=d.evidence,
+                event_id=d.event_id,
+                created_at=d.created_at,
+            )
+            for d in registry.list_active(ns)
+        ]
+        return SurnameListResponse(
+            items=items, active=sorted(declared_surnames())
         )
 
     # ------------------------------------------------------------ forget
@@ -831,6 +1039,13 @@ def main() -> int:
 
         warmed = warm_up_dictionary(settings.MEMORY_NAMESPACE, settings=settings)
         logger.info("分词词典预热完成，新增 %d 个词", warmed)
+
+        # 灌回已声明的姓氏（`这人姓种`）。jieba 未必认识生僻姓，
+        # 但用户说过 —— 判据要靠这个才放过 `种小明` 这类名字。
+        from memory.services.surname_decl import load_into_labeler
+
+        surnames = load_into_labeler(settings)
+        logger.info("姓氏声明加载完成，新增 %d 个", surnames)
 
         # 启动补跑：谁先起来谁补课（MCP 和 admin 各做一次，重复补是幂等的）
         # 结果由 `startup_recover` 自己记日志，这里不重复打。

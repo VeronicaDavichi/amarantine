@@ -56,12 +56,12 @@ ADR D2 的红线是「**图可丢弃重建**」：
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from memory.config import Settings
 from memory.core.entity_key import key_for
 from memory.models.event_card import ALIAS_CONFIDENCE, AliasClaim, EventCard
-from memory.services.labeler import _is_clean_name
+from memory.services.labeler import _judge_name as judge_name
 
 logger = logging.getLogger("memory.graph")
 
@@ -253,13 +253,103 @@ class OutboxResult:
     #: 本次新建的 event-event 边数（诊断用）
     related_links: int = 0
     #: 本次涉及的人 / 时间键 / 非人实体数（诊断用）
-    persons: int = 0
     entities: int = 0
+    persons: int = 0
     time_key: str | None = None
     #: 本次涉及的动作数（诊断用）
     actions: int = 0
     #: 本次建立的别名边数（只算右边像名字的声明）
     aliases: int = 0
+    #: **右值被判据拒掉、因此没建边的声明**。带理由，由 `remember`
+    #: 落进 `alias_reject` 表 —— 不留痕的话，「边为什么没建」只能靠猜，
+    #: 而 `印度人`/`科学家` 两个 bug 都是这么藏了两个会话的。
+    alias_skipped: tuple[dict[str, str], ...] = ()
+
+
+@dataclass(frozen=True)
+class AliasSkip:
+    """一条因为右值不合判据而没建边的声明。"""
+
+    alias: str
+    canonical: str
+    reason: str
+    detail: str = ""
+
+    def to_dict(self) -> dict[str, str]:
+        return {
+            "alias": self.alias,
+            "canonical": self.canonical,
+            "side": "canonical",
+            "reason": self.reason,
+            "detail": self.detail,
+        }
+
+
+@dataclass(frozen=True)
+class AliasWriteResult:
+    """`append_alias_edges` 的结果：建了几条 + 拒了哪些。
+
+    支持跟 `int` 比较（`result == 1`），这样老测试和老调用方的
+    数值判断习惯还能用 —— 但**不要**再用它做算术。
+    """
+
+    written: int = 0
+    skipped: list[AliasSkip] = field(default_factory=list)
+
+    def __eq__(self, other: object) -> bool:
+        if isinstance(other, int):
+            return self.written == other
+        if not isinstance(other, AliasWriteResult):
+            return NotImplemented
+        return self.written == other.written and self.skipped == other.skipped
+
+    def __hash__(self) -> int:
+        return hash((self.written, tuple(self.skipped)))
+
+    def __int__(self) -> int:
+        return self.written
+
+
+def _alias_item(claim: AliasClaim) -> dict[str, str]:
+    return {
+        "alias": claim.alias,
+        "canonical": claim.canonical,
+        "key": key_for(claim.canonical),
+        "label": claim.label,
+        "confidence": ALIAS_CONFIDENCE.get(claim.label, 0.4),
+        "source": claim.source,
+    }
+
+
+def _partition_alias_claims(
+    claims: list[AliasClaim],
+) -> tuple[list[dict[str, str]], list[AliasSkip]]:
+    """把别名声明分成「能建边」和「被拒」两堆，被拒的带理由。
+
+    两条建边路径（事件写入 / LLM 推断）共用这一个切分，
+    这样「为什么没建」的答案只写一遍。
+    """
+    items: list[dict[str, str]] = []
+    skipped: list[AliasSkip] = []
+    for c in claims:
+        if not c.alias:
+            skipped.append(
+                AliasSkip(c.alias, c.canonical, "empty_alias")
+            )
+            continue
+        verdict = judge_name(c.canonical)
+        if not verdict.ok:
+            skipped.append(
+                AliasSkip(
+                    alias=c.alias,
+                    canonical=c.canonical,
+                    reason=verdict.reason,
+                    detail=verdict.detail,
+                )
+            )
+            continue
+        items.append(_alias_item(c))
+    return items, skipped
 
 
 def _split_entities(
@@ -381,18 +471,13 @@ def write_event_node(
             # 描述性的（`糖包就是那个AI里最弱智的`）不建边 ——
             # 把描述塞进 (:Alias) 节点，以后查「糖包」会拉出一个叫
             # 「那个AI里最弱智的」的人。这类 claim 留在事件卡上给 LLM 层解析。
-            alias_items = [
-                {
-                    "alias": c.alias,
-                    "canonical": c.canonical,
-                    "key": key_for(c.canonical),
-                    "label": c.label,
-                    "confidence": ALIAS_CONFIDENCE.get(c.label, 0.4),
-                    "source": c.source,
-                }
-                for c in card.alias_claims
-                if _is_clean_name(c.canonical)
-            ]
+            #
+            # **被拒的不丢**：`alias_skipped` 带理由带出去，由 `remember`
+            # 落进 `alias_reject` 表。判据可能错（`印度人`/`科学家` 都是），
+            # 错了要能看见、能修。
+            alias_items, alias_skipped = _partition_alias_claims(
+                list(card.alias_claims)
+            )
             if alias_items:
                 session.run(
                     APPEND_ALIAS_CYPHER, **params, aliases=alias_items
@@ -409,6 +494,7 @@ def write_event_node(
             time_key=params["time_key"],
             actions=len(action_items),
             aliases=len(alias_items),
+            alias_skipped=tuple(s.to_dict() for s in alias_skipped),
         )
     except Exception as exc:  # noqa: BLE001 - 图失败绝不阻断主链路
         message = f"图写入失败（已忽略，等待重建对账）: {exc}"
@@ -475,43 +561,26 @@ def append_alias_edges(
     settings: Settings,
     created_at: str,
     driver: object | None = None,
-) -> int:
-    """把别名边追加到图上，返回建了几条。
+) -> AliasWriteResult:
+    """把别名边追加到图上，返回建了几条 + 拒了哪些。
 
     走的是同一个 `APPEND_ALIAS_CYPHER` —— 推断出来的边和用户声明的边
     在图上结构完全一致，区别只在 `source` / `label` 两个属性。
     这样召回侧不需要区分「这条边谁建的」，标记由属性自己带出。
+
+    ## 从 `int` 改成结果对象的原因
+
+    **右值是描述性短语时不建边，但 claim 留在卡上。** 这个过滤是
+    「预期内的丢弃」，不是兜底：`糖包就是那个ai中最弱智的` 会留下
+    `canonical="AI里最弱智的"`，等 LLM 层去解析，规则层不猜。
+
+    但原来这个过滤只返回一个数字，**拒了哪些一句话都没有**。判据要是
+    把真名字误判成描述（`印度人` 就是），边一条建不出来且毫无痕迹。
+    现在把 `skipped` 一起返回，调用方落进 `alias_reject` 表。
     """
-    items = [
-        {
-            "alias": c.alias,
-            "canonical": c.canonical,
-            # **必须带 key**：`APPEND_ALIAS_CYPHER` 是
-            # `MERGE (p {namespace: $namespace, key: item.key})`，
-            # 少了这个字段就是 `{key: null}` —— Neo4j 会直接抛
-            # `Cannot merge the following node because of null property value`，
-            # 而异常见下面吞掉只留一行 warning。别名边会**一条都写不进去**
-            # 却看不出来，直到 `list_known_names` 少一半名字才发现。
-            "key": key_for(c.canonical),
-            "confidence": ALIAS_CONFIDENCE.get(c.label, 0.4),
-            "label": c.label,
-            "source": c.source,
-        }
-        for c in claims
-        # **右值是描述性短语时不建边，但 claim 留在卡上。**
-        #
-        # 这个过滤是「预期内的丢弃」，不是兜底：`糖包就是那个ai中最弱智的`
-        # 会留下 `canonical="AI里最弱智的"`，等 LLM 层去解析出到底是谁，
-        # 规则层不猜。数据没丢 —— `card.alias_claims` 里还在。
-        #
-        # 代价是这个过滤**不说一句话**：判据要是把真名字误判成描述
-        # （曾经 `印度人` 就因为 `_DESCRIPTIVE_MARKERS` 里有「人」被丢掉），
-        # 边会一条建不出来而毫无痕迹。所以名字判据必须是对的 ——
-        # 见 `labeler._looks_like_name`。
-        if _is_clean_name(c.canonical) and c.alias
-    ]
+    items, skipped = _partition_alias_claims(list(claims))
     if not items:
-        return 0
+        return AliasWriteResult(written=0, skipped=skipped)
 
     owns_driver = driver is None
     drv = driver
@@ -531,10 +600,10 @@ def append_alias_edges(
                 created_at=created_at,
                 aliases=items,
             )
-        return len(items)
+        return AliasWriteResult(written=len(items), skipped=skipped)
     except Exception as exc:  # noqa: BLE001 - 图失败只告警
         logger.warning("追加别名边失败（已忽略）: %s", exc)
-        return 0
+        return AliasWriteResult(written=0, skipped=skipped)
     finally:
         if owns_driver and drv is not None:
             try:

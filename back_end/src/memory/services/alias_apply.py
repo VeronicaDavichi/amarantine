@@ -24,6 +24,7 @@ from typing import Any
 
 from memory.config import Settings
 from memory.models.event_card import AliasClaim
+from memory.services.alias_reject import record_safe
 from memory.services.alias_resolver import resolve_claims
 from memory.services.graph_outbox import append_alias_edges, list_known_names
 from memory.services.weaviate_store import WeaviateStore
@@ -166,7 +167,7 @@ def resolve_event_aliases(
 
         # 先写图再写卡：图失败只告警，卡上的留痕还要继续
         now = datetime.now(timezone.utc).isoformat()
-        report.written_to_graph = append_alias_edges(
+        write = append_alias_edges(
             event_id,
             namespace,
             resolved,
@@ -174,6 +175,21 @@ def resolve_event_aliases(
             created_at=now,
             driver=driver,
         )
+        report.written_to_graph = write.written
+        # **LLM 决议过、但判据仍然不认的，也要留痕。**
+        #
+        # 这是原来说不通的一环：LLM 只处理 `uncertain` claim（所以它能看见
+        # 右值），可它决议完之后，写图的 `_partition_alias_claims` 会**再**
+        # 用同一套判据拒一次 —— 于是「LLM 说该建，代码说不建」这件事
+        # 完全不留痕迹。现在它进 `alias_reject`，带 reason。
+        if write.skipped:
+            record_safe(
+                settings,
+                namespace=namespace,
+                event_id=event_id,
+                rejects=[s.to_dict() for s in write.skipped],
+                source_text=f"llm_inferred:{event_id}",
+            )
 
         report.written_to_card = active_store.append_alias_claims(
             namespace,

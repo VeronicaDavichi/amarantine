@@ -243,6 +243,17 @@ def remember_event(
         summary=summary,
     )
 
+    # 6.5) 姓氏声明落库（`这人姓种`）。
+    #      内存里已经在 `label_by_rules` 里生效了，这里补持久化。
+    #      放在幂等短路**之前**：重报同一条时也要保证声明在库里。
+    _record_surname_declarations(
+        namespace,
+        event_id,
+        summary,
+        surnames=getattr(labels, "surnames", ()),
+        settings=settings,
+    )
+
     card = EventCard(
         namespace=namespace,
         event_id=event_id,
@@ -255,8 +266,7 @@ def remember_event(
         summary=summary,
         retention="normal",
         ingested_at=moment,
-        importance=importance,
-        emotion_intensity=decision.emotion_intensity if emotion_intensity else None,
+        importance=importance,        emotion_intensity=decision.emotion_intensity if emotion_intensity else None,
         pinned=decision.pinned,
         pinned_source=decision.pinned_source,
         user_directive=decision.user_directive,
@@ -306,7 +316,7 @@ def remember_event(
             # **幂等分支也要记账**：重报同一条时图写失败，照样要能补。
             # 漏了这一段的话，「第一次图挂了，再提一次」永远修不好 ——
             # 只会一遍遍返回 created=False 而图始终是空的。
-            graph_ok, graph_pending = _write_graph_with_intent(
+            graph_ok, graph_pending, outbox = _write_graph_with_intent(
                 namespace,
                 card,
                 weaviate_id=existing.get("id"),  # type: ignore[arg-type]
@@ -315,6 +325,14 @@ def remember_event(
                 intent_store=intent_store,
                 graph_writer=graph_writer,
                 now=moment,
+            )
+            _record_alias_rejects(
+                namespace,
+                event_id,
+                summary,
+                alias_rejects=getattr(labels, "alias_rejects", ()),
+                outbox=outbox,
+                settings=settings,
             )
             return RememberResult(
                 event_id=event_id,
@@ -345,7 +363,7 @@ def remember_event(
         #
         # happy path 一秒没变慢：图写入仍然同步、仍然在返回前完成，
         # 只是前后各多一条 SQLite 写入（INSERT + DELETE）。
-        graph_ok, graph_pending = _write_graph_with_intent(
+        graph_ok, graph_pending, outbox = _write_graph_with_intent(
             namespace,
             card,
             weaviate_id=weaviate_id,
@@ -354,6 +372,14 @@ def remember_event(
             intent_store=intent_store,
             graph_writer=graph_writer,
             now=moment,
+        )
+        _record_alias_rejects(
+            namespace,
+            event_id,
+            summary,
+            alias_rejects=getattr(labels, "alias_rejects", ()),
+            outbox=outbox,
+            settings=settings,
         )
 
         return RememberResult(
@@ -484,8 +510,8 @@ def _write_graph_with_intent(
     intent_store: object | None,
     graph_writer: object | None,
     now: datetime | None = None,
-) -> tuple[bool, bool]:
-    """写图并记账。返回 `(graph_ok, graph_pending)`。
+) -> tuple[bool, bool, object]:
+    """写图并记账。返回 `(graph_ok, graph_pending, outbox)`。
 
     两条写入路径（新建 / 幂等重报）都走这里 —— 记账逻辑只有一份，
     不会出现「主路径有兜底、幂等路径没有」这种不对称。
@@ -493,6 +519,9 @@ def _write_graph_with_intent(
     `graph_pending` 的含义是**有欠账、且已经记在盘上等人补**
     （`graph_ok=False` 且入队成功），不是「这次入过队」。
     写成功时它是 False —— 成功的写入没有欠账。
+
+    `outbox` 原样带出去，调用方要用它的 `alias_skipped`
+    （哪些别名边被判据拒了）落 `alias_reject` 表。
 
     写图抛异常时**先把账记成失败再往上抛**：行为跟以前一致
     （D2：图挂了不该影响主链路，异常由 `write_event_node` 内部消化成
@@ -538,7 +567,103 @@ def _write_graph_with_intent(
             intent_store=intent_store,
             now=now,
         )
-    return graph_ok, (pending and not graph_ok)
+    return graph_ok, (pending and not graph_ok), outbox
+
+
+def _record_surname_declarations(
+    namespace: str,
+    event_id: str,
+    summary: str,
+    *,
+    surnames: object,
+    settings: Settings,
+) -> int:
+    """把「这人姓种」这类声明落库。返回新登记了几个。
+
+    内存里已经生效了（`label_by_rules` 先登记再抽别名，同一句里的别名
+    才能立刻受益）。这里补的是**持久化**：重启后靠它灌回来。
+
+    失败只告警 —— 姓氏是判据的辅助信息，不能因为它拖垮记忆写入。
+    """
+    chars = [c for c in (surnames or ()) if isinstance(c, str)]  # type: ignore[union-attr]
+    if not chars:
+        return 0
+    from memory.services.surname_decl import registry_from_settings
+
+    try:
+        registry = registry_from_settings(settings)
+        fresh = registry.declare(
+            namespace,
+            chars,
+            evidence=summary[:200],
+            event_id=event_id,
+        )
+    except Exception as exc:  # noqa: BLE001 - 旁路，绝不影响写入
+        logger.warning("姓氏声明落库失败（已忽略）: %s", exc)
+        return 0
+    if fresh:
+        logger.info(
+            "登记姓氏 %s | namespace=%s | event_id=%s",
+            "".join(chars),
+            namespace,
+            event_id,
+        )
+    return fresh
+
+
+def _record_alias_rejects(
+    namespace: str,
+    event_id: str,
+    summary: str,
+    *,
+    alias_rejects: object,
+    outbox: object,
+    settings: Settings,
+) -> int:
+    """把「别名声明被拒」的痕迹落到 `alias_reject` 表。返回记了几条。
+
+    ## 为什么两头都要记
+
+    别名声明从原话到图上一条边，有两道判据，**两侧都可能被拒**：
+
+    - **左值**（`三哥主打的`）在 `extract_alias_claims` 就被拒，
+      claim 压根不生成 —— LLM 复核层连看的资格都没有。这是最隐形的一种。
+    - **右值**（`那个ai中最弱智的`）claim 生成了、留在卡上，
+      但建边时被 `_partition_alias_claims` 跳过。
+
+    原来两边都不留痕迹，于是「为什么这条边没建」只能靠猜。
+    `印度人`、`科学家`、`种师道` 三次都是这么藏起来的。
+
+    留痕是旁路：它自己挂了绝不能让记忆写不进去（见 `record_safe`）。
+    """
+    from memory.services.alias_reject import record_safe
+
+    rejects: list[dict[str, str]] = []
+    for item in alias_rejects or ():  # type: ignore[union-attr]
+        dump = getattr(item, "to_dict", None)
+        if callable(dump):
+            rejects.append(dump())
+    for item in getattr(outbox, "alias_skipped", ()) or ():
+        if isinstance(item, dict):
+            rejects.append(item)
+    if not rejects:
+        return 0
+
+    recorded = record_safe(
+        settings,
+        namespace=namespace,
+        event_id=event_id,
+        rejects=rejects,
+        source_text=summary[:200],
+    )
+    if recorded:
+        logger.info(
+            "别名声明被拒 %d 条（已留痕） | event_id=%s | %s",
+            recorded,
+            event_id,
+            summary[:24],
+        )
+    return recorded
 
 
 def warm_up_dictionary(namespace: str, *, settings: Settings) -> int:

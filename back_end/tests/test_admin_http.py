@@ -522,3 +522,159 @@ def test_resolve_opposite_action_allowed(resolve_client: TestClient) -> None:
     )
     assert r.status_code == 200
     assert r.json()["unchanged"] is False
+
+
+# ---------------- 别名拒绝留痕 + 姓氏声明（002）----------------
+#
+# 这两组接口是「为什么那条别名边没建」的查询入口。判据永远会有盲区，
+# 所以重点不是断言判得对，而是断言**被拒的东西查得到、裁决得了**。
+
+
+@pytest.fixture()
+def alias_client(tmp_path, monkeypatch) -> TestClient:
+    """留痕表用独立 SQLite，不碰真实数据。"""
+    settings = Settings()
+    settings.MEMORY_NAMESPACE = "work"
+    settings.ADMIN_TOKEN = TOKEN
+    settings.DATABASE_URL = f"sqlite:///{(tmp_path / 'alias.sqlite3').as_posix()}"
+    app = create_app(settings)
+    app.state.alias_db_url = settings.DATABASE_URL
+    return TestClient(app)
+
+
+def _seed_reject(
+    client: TestClient,
+    *,
+    event_id: str = "evt_" + "b" * 16,
+    alias: str = "三哥主打的",
+    canonical: str = "有声有色有味",
+    side: str = "alias",
+    reason: str = "ending",
+    detail: str = "的",
+) -> None:
+    from memory.services.alias_reject import AliasRejectQueue
+
+    queue = AliasRejectQueue(
+        client.app.state.alias_db_url.split("///", 1)[-1]
+    )
+    queue.record_many(
+        "work",
+        event_id,
+        [
+            {
+                "alias": alias,
+                "canonical": canonical,
+                "side": side,
+                "reason": reason,
+                "detail": detail,
+            }
+        ],
+        source_text="原话",
+    )
+
+
+def test_alias_rejects_requires_token(alias_client: TestClient) -> None:
+    assert alias_client.get("/admin/alias-rejects").status_code == 401
+
+
+def test_alias_rejects_empty(alias_client: TestClient) -> None:
+    r = alias_client.get("/admin/alias-rejects", headers=AUTH)
+    assert r.status_code == 200
+    assert r.json() == {"items": [], "total": 0, "by_reason": {}}
+
+
+def test_alias_rejects_lists_and_groups(alias_client: TestClient) -> None:
+    _seed_reject(alias_client)
+    _seed_reject(
+        alias_client,
+        event_id="evt_" + "c" * 16,
+        alias="糖包",
+        canonical="这种人",
+        side="canonical",
+        reason="marker",
+        detail="这种",
+    )
+
+    body = alias_client.get("/admin/alias-rejects", headers=AUTH).json()
+    assert body["total"] == 2
+    # `by_reason` 是最有用的一栏：某类突然涨起来通常意味着判据误伤了一整类
+    assert body["by_reason"] == {"ending": 1, "marker": 1}
+    assert {i["side"] for i in body["items"]} == {"alias", "canonical"}
+
+
+def test_alias_rejects_filter_by_reason(alias_client: TestClient) -> None:
+    _seed_reject(alias_client)
+    _seed_reject(
+        alias_client,
+        event_id="evt_" + "c" * 16,
+        alias="糖包",
+        canonical="这种人",
+        side="canonical",
+        reason="marker",
+        detail="这种",
+    )
+    body = alias_client.get(
+        "/admin/alias-rejects", params={"reason": "marker"}, headers=AUTH
+    ).json()
+    assert body["total"] == 1
+    assert body["items"][0]["alias"] == "糖包"
+    # 过滤只影响 items/total，不影响全局分布
+    assert body["by_reason"] == {"ending": 1, "marker": 1}
+
+
+def test_alias_rejects_resolve(alias_client: TestClient) -> None:
+    eid = "evt_" + "b" * 16
+    _seed_reject(alias_client, event_id=eid)
+
+    r = alias_client.post(
+        "/admin/alias-rejects/resolve",
+        json={
+            "event_id": eid,
+            "alias": "三哥主打的",
+            "canonical": "有声有色有味",
+            "side": "alias",
+            "resolution": "accepted",
+        },
+        headers=AUTH,
+    )
+    assert r.status_code == 200
+    assert r.json() == {"resolved": True, "resolution": "accepted"}
+    assert alias_client.get("/admin/alias-rejects", headers=AUTH).json()["total"] == 0
+
+
+def test_alias_rejects_resolve_missing_is_404(alias_client: TestClient) -> None:
+    r = alias_client.post(
+        "/admin/alias-rejects/resolve",
+        json={
+            "event_id": "evt_nope",
+            "alias": "a",
+            "canonical": "b",
+            "side": "alias",
+        },
+        headers=AUTH,
+    )
+    assert r.status_code == 404
+
+
+def test_alias_surnames_requires_token(alias_client: TestClient) -> None:
+    assert alias_client.get("/admin/alias-surnames").status_code == 401
+
+
+def test_alias_surnames_declare_then_list(alias_client: TestClient) -> None:
+    from memory.services.labeler import declared_surnames
+
+    r = alias_client.post(
+        "/admin/alias-surnames",
+        json={"chars": ["种"], "evidence": "这人姓种"},
+        headers=AUTH,
+    )
+    assert r.status_code == 200
+    assert [i["char"] for i in r.json()["items"]] == ["种"]
+    # 立即在**本进程**生效 —— 判据只认这个集合
+    assert "种" in declared_surnames()
+    assert "种" in r.json()["active"]
+
+    body = alias_client.get("/admin/alias-surnames", headers=AUTH).json()
+    assert [i["char"] for i in body["items"]] == ["种"]
+    assert body["items"][0]["evidence"] == "这人姓种"
+

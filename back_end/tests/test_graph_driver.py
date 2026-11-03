@@ -119,7 +119,7 @@ def test_append_alias_edges_builds_its_own_driver(
         created_at="2026-11-02T00:00:00+00:00",
     )
     assert fake_neo4j.uri == "bolt://fake:7687"
-    assert count >= 0
+    assert count.written >= 0
 
 
 def test_append_alias_edges_empty_is_noop(fake_neo4j: FakeDriver) -> None:
@@ -131,7 +131,7 @@ def test_append_alias_edges_empty_is_noop(fake_neo4j: FakeDriver) -> None:
         settings=_Settings(),  # type: ignore[arg-type]
         created_at="2026-11-02T00:00:00+00:00",
     )
-    assert count == 0
+    assert count.written == 0
     assert fake_neo4j.uri is None, "空输入不该建 driver"
 
 
@@ -172,11 +172,20 @@ def test_write_event_node_alias_items_carry_key() -> None:
     """`write_event_node` 那条路径本来就有 key —— 锁住别退化。
 
     不真跑 cypher（它需要完整的 _S 假对象），只检查源码里构造
-    `alias_items` 时带了 `key`。真库行为由 `verify_alias_guard.py` 验过。
+    alias item 时带了 `key`。真库行为由 `verify_alias_guard.py` 验过。
+
+    构造点从 `write_event_node` 挪到了 `_alias_item`（两条建边路径共用
+    一份切分），所以断言跟着挪 —— 但要求没变。
     """
     import inspect
 
-    src = inspect.getsource(GO.write_event_node)
-    assert '"key": key_for(c.canonical)' in src, (
-        "alias_items 必须带 key，否则同时是 {key: null} → MERGE 抛异常"
+    src = inspect.getsource(GO._alias_item)
+    assert '"key": key_for(claim.canonical)' in src, (
+        "alias item 必须带 key，否则同时是 {key: null} → MERGE 抛异常"
     )
+    # 两条路径都得走这个构造器，不能各写一份（否则拒绝理由会丢）
+    for fn in (GO.write_event_node, GO.append_alias_edges):
+        body = inspect.getsource(fn)
+        assert "_partition_alias_claims" in body, (
+            f"{fn.__name__} 必须走 _partition_alias_claims"
+        )

@@ -41,6 +41,23 @@ def _clean_jieba_dictionary():
 
 
 @pytest.fixture(autouse=True)
+def _clean_declared_surnames():
+    """每个测试结束后清掉登记过的姓氏。
+
+    `label_by_rules` 会解析 `姓X` 并写进进程级 `_DECLARED_SURNAMES`
+    （为了让同一句里的别名立刻受益）。不清理的话，
+    前一个测试声明的姓会让后一个测试的判据悄悄变宽。
+    """
+    yield
+    try:
+        from memory.services.labeler import reset_surnames
+
+        reset_surnames()
+    except Exception:  # noqa: BLE001 - 清理失败不能影响测试结论
+        pass
+
+
+@pytest.fixture(autouse=True)
 def _isolate_intent_log(tmp_path, monkeypatch):
     """把意图日志钉到临时库，别写进开发库。"""
     from memory.services import remember as rmod
