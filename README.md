@@ -24,6 +24,8 @@
 | [P0 任务清单](docs/P0-task-plan.md) | 40 任务 / 7 阶段 / 里程碑 |
 | [技术选型](stack-decision.md) | 后端 7 维 + 前端 4 维 + 工程约束 |
 | [工具使用指南](docs/memory-tool-guide.md) | 给 LLM 的调用说明（MCP instructions 单一源头） |
+| [验收审计](docs/acceptance-audit.md) | ADR 34 条验收标准逐条核对（已全绿） |
+| [设计审计](docs/design-audit.md) | 配置项 × 消费点扫描、七起「假实现」记录、剩余待办 |
 
 ## 结构
 
