@@ -21,7 +21,7 @@ ADR D3 的三条硬约束，这里逐条落地：
 from __future__ import annotations
 
 import logging
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
+from concurrent.futures import ThreadPoolExecutor, wait
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timezone
 from typing import Any
@@ -195,21 +195,30 @@ def recall(
 
         channel_results: dict[str, Any] = {}
         errors: dict[str, str] = {}
-        with ThreadPoolExecutor(max_workers=3) as pool:
+        partial = False
+        # 三个通道**并行**跑，所以「等最多 budget」应该用并行原语表达。
+        # 旧写法是「顺序 future.result(全预算)」，最坏 3 × budget（实测 3791ms / budget 1500ms），
+        # 而且 only 第一个撞线的通道会被标 partial（后面的「借」到时间就不标了）。
+        #
+        # **不能用 `with ThreadPoolExecutor(...)`**：它的 __exit__ 是 shutdown(wait=True)，
+        # 会把没跑完的线程等到结束 —— 那样 wait 只等 1.5s 也白搭，总时长仍是最慢通道的时间。
+        pool = ThreadPoolExecutor(max_workers=3)
+        try:
             futures = {
                 "vector": pool.submit(run_vector),
                 "bm25": pool.submit(run_bm25),
                 "graph": pool.submit(run_graph),
             }
-            remaining = budget / 1000.0
-            partial = False
+            done, not_done = wait(futures.values(), timeout=budget / 1000.0)
+
             for name, future in futures.items():
-                try:
-                    channel_results[name] = future.result(timeout=max(0.01, remaining))
-                except FutureTimeout:
+                if future in not_done:
                     partial = True
                     errors[name] = "budget exhausted"
                     future.cancel()
+                    continue
+                try:
+                    channel_results[name] = future.result()
                 except WeaviateStoreError as exc:
                     # Weaviate 是事实源：挂了必须 503，不能当空结果
                     if name in ("vector", "bm25"):
@@ -218,6 +227,10 @@ def recall(
                 except Exception as exc:  # noqa: BLE001
                     errors[name] = f"{type(exc).__name__}: {exc}"
                     logger.warning("通道 %s 失败: %s", name, exc)
+        finally:
+            # 不等未完成的通道：它们各自的 HTTP 超时兜底
+            # （向量通道 800ms 由 spec 017 接管；BM25 仍是 client 默认 20s，见 spec 019 非目标）
+            pool.shutdown(wait=False, cancel_futures=True)
 
         # 4) 图通道失败只降级
         degraded = False
@@ -301,14 +314,24 @@ def recall(
             "bm25_candidates": len(bm25_hits),
         }
         if not channels:
+            # 三个通道一个都没在预算内返回 = 「没等到」，不是「没候选」。
+            #
+            # 为什么 degraded=True 而不只是 partial：partial 只说「有通道没回来」，
+            # 但这次是**全部**没回来，结果完全不可信。也不能抛 503 ——
+            # 超时不等于服务挂（真挂已经在上面的 WeaviateStoreError 里 503 了）。
+            all_timeout = partial and not channel_results
             return _with_trace(
                 RecallResult(
                     materials=[],
-                    degraded=degraded,
+                    degraded=True if all_timeout else degraded,
                     partial=partial,
                     trace={
                         "empty_reason": (
-                            "below_threshold" if gate_filtered else "no_candidate"
+                            "budget_exhausted"
+                            if all_timeout
+                            else "below_threshold"
+                            if gate_filtered
+                            else "no_candidate"
                         ),
                         "channels": {},
                         "errors": errors,
