@@ -123,7 +123,10 @@ class Settings(BaseSettings):
     RERANK_MODEL: str = "BAAI/bge-reranker-v2-m3"
     RERANK_BASE_URL: str = "http://127.0.0.1:8083"
     RERANK_CANDIDATES: int = 50
-    RERANK_TIMEOUT_MS: int = 300
+    #: CPU 上 bge-reranker-v2-m3 实测热身后 0.22-0.26s、冷启动更久。
+    #: 原来 300ms 卡在边界上，真服务一开就几乎必然 ReadTimeout（等于白开）。
+    #: 800ms 留足余量，且仍在 RECALL_BUDGET_MS=1500 之内。
+    RERANK_TIMEOUT_MS: int = 800
 
     #: `anthropic`（Messages API）或 `openai`（chat/completions）。
     #: 本机接的是 hongwang 网关，走 Anthropic 协议。

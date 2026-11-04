@@ -196,3 +196,49 @@ def test_rerank_reorders_candidates() -> None:
     )
     ids = [m["event_id"] for m in result.materials]
     assert ids[0] == "evt_b", f"rerank 没生效，顺序是 {ids}"
+
+
+def test_real_low_scores_do_not_empty_materials() -> None:
+    """回归：**真实 TEI 分只有 0.057 量级**，不归一化会被 min_score 砍光。
+
+    这是打开真 rerank 服务后实测发现的 bug：
+    `RECALL_COUNT_MIN_SCORE=0.5`，而 rerank 分最高 0.057 ——
+    直接替换 `Candidate.score` 会让 `decide_k` 第 2 步「绝对过滤」
+    把全部候选丢弃，召回变成空材料集。
+
+    下面这几个数是 2026-11-04 实测的真实响应。
+    """
+    client = _FakeClient(
+        data=[
+            {"index": 0, "score": 0.048399653},   # 项目A延期到七月
+            {"index": 1, "score": 0.000024836},   # 今天天气不错
+        ]
+    )
+    result = _run(
+        query="项目A的进度",
+        settings=_settings(),
+        store=FakeStore(vector_hits=_hits(), bm25_hits=_hits()),
+        rerank_client=client,
+    )
+    assert result.materials, "低分 rerank 把材料砍光了 —— 归一化失效"
+    assert result.trace["rerank_skipped"] is False
+    # 归一化后最高分必须是 1.0
+    assert result.materials[0]["score"] == 1.0
+
+
+def test_normalization_keeps_relative_order() -> None:
+    """归一化只是缩放，不能改变相对顺序。"""
+    client = _FakeClient(
+        data=[
+            {"index": 0, "score": 0.001},
+            {"index": 1, "score": 0.057},
+        ]
+    )
+    result = _run(
+        query="项目A的进度",
+        settings=_settings(),
+        store=FakeStore(vector_hits=_hits(), bm25_hits=_hits()),
+        rerank_client=client,
+    )
+    ids = [m["event_id"] for m in result.materials]
+    assert ids[0] == "evt_b", f"顺序被归一化搞乱了：{ids}"

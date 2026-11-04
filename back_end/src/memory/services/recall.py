@@ -335,12 +335,25 @@ def recall(
             # 而 `Candidate` 是 frozen —— 所以只能 replace 出一个新候选。
             #
             # 代价：阈值（min_score / drop_ratio / gap_ratio）之后是在
-            # **rerank 分的尺度**上判断，不再是 RRF 分。这是 rerank 生效的
-            # 必然结果 —— 两套分数不能混用于同一个排序，只能整套换掉。
+            # **rerank 分的尺度**上判断，不再是 RRF 分。两套分数不能混用于
+            # 同一个排序，只能整套换掉。
+            #
+            # **必须归一化到「最高分 = 1.0」**：TEI 的 rerank 分是 sigmoid 后
+            # 的概率，实测同一批候选只有 0.057 / 0.048 / 0.00002 这个量级，
+            # 而 `RECALL_COUNT_MIN_SCORE` 是 0.5 —— 直接替换会让 `decide_k`
+            # 第 2 步「绝对过滤」把材料全砍光，召回变空。
+            #
+            # 归一化不是凑数：rerank 分是 **per-query 的相对信号**，
+            # 不同 query 的 logit 分布没有可比性，绝对值本就不该直接比阈值。
+            # 归一化后 min_score=0.5 的语义变成「保留达到最高分 50% 的候选」，
+            # 这正是「相对相关度」的本意。
+            peak = max(rerank_result.scores.values())
+            norm = {
+                eid: (score / peak if peak > 0 else 0.0)
+                for eid, score in rerank_result.scores.items()
+            }
             scored = [
-                replace(c, score=rerank_result.scores[c.event_id])
-                if c.event_id in rerank_result.scores
-                else c
+                replace(c, score=norm[c.event_id]) if c.event_id in norm else c
                 for c in scored
             ]
 

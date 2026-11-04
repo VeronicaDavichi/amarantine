@@ -164,3 +164,65 @@ A27 的 ADR 原文核心断言是「**kill 掉服务**，召回仍 200」——
 - 关闭：`RERANK_ENABLED=false` 与「服务挂」的 materials 顺序完全一致
 - 请求形状：URL 以 `/rerank` 结尾，body 是 `query` + `texts` + `model`
 - **缺口**：真 TEI reranker 服务未起（需第二个容器），e2e 未验
+
+## 真服务补充验证（2026-11-04）
+
+主人下好模型并起了 `amarantine-reranker`（8083）后，补做了原计划里
+「真服务 e2e 未验」那部分。**发现了两个只有真服务才能暴露的问题。**
+
+### 问题 1：`RERANK_TIMEOUT_MS=300` 卡在边界上，等于白开
+
+真服务第一次召回直接 `reason=ReadTimeout` —— 降级路径是对的（仍 200、材料非空），
+但主人开了开关却完全没享受到精排。
+
+实测（CPU，bge-reranker-v2-m3）：
+
+- 热身后 **0.22–0.26s**
+- 冷启动更久（首次加载）
+
+300ms 正好卡在边界上。改成 **800ms**（仍在 `RECALL_BUDGET_MS=1500` 之内）。
+改完实测 `rerank_ms=368 / 305`，稳定生效。
+
+**教训**：超时值不能按「理想情况」定，要按**实测分位数 + 冷启动**定。
+这类 bug 单测永远测不出来 —— fake client 是瞬时返回的。
+
+### 问题 2：rerank 分尺度不同，会**把材料全砍光**
+
+`RECALL_COUNT_MIN_SCORE=0.5`，而实测 rerank 分只有：
+
+```
+项目A又延期到八月  0.057268355
+项目A延期到七月    0.048399653
+今天天气不错       0.000024836
+```
+
+直接 `replace(c, score=rerank_score)` → `decide_k` 第 2 步「绝对过滤」
+（`c.score >= 0.5`）把**全部候选**丢弃 → 召回变空。
+
+修法：**归一化到最高分 = 1.0**。这不是凑数 ——
+rerank 分是 per-query 的相对信号，不同 query 的 logit 分布没有可比性，
+绝对值本就不该直接比阈值。归一化后 `min_score=0.5` 的语义变成
+「保留达到最高分 50% 的候选」，正是「相对相关度」的本意。
+
+已加两条回归测试，用的是**实测真实分数**（`0.048399653` 等），不是编的数。
+
+### 真 e2e 结果
+
+正常（服务在）：
+
+```
+http=200  materials=2  rerank_skipped=False  rerank_ms=368
+evt_1f70f26887be3b00  1.0     （归一化后最高）
+evt_0e0baab0b22e999e  0.8894
+```
+
+降级（`docker stop amarantine-reranker`）：
+
+```
+http=200  materials=2  rerank_skipped=True  rerank_ms=0  reason=ConnectError
+top_k_decision 还在: True
+evt_1f70f26887be3b00  0.8839   （退回 RRF 分）
+evt_0e0baab0b22e999e  0.841
+```
+
+ADR A27 的五条断言全部成立，且这次是**真服务**，不再是 fake。
