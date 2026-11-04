@@ -121,9 +121,26 @@ def recall(
 
     # 1) 时间意图（规则层；解析不出就给全库）
     date_range: DateRange = resolve_from_query(query, today=base_day)
+    # ADR C.B9：`confidence < TIME_CONF_MIN` → **不设 date filter**（退回全库），
+    # 标 `time_unresolved=true`。
+    #
+    # 为什么「低置信宁可不设」而不是「按低置信设」：时间过滤器是硬 AND，
+    # 窗口设窄了，窗口外的正确材料就永远回不来（后面所有通道都在窗口内）。
+    # 全库搜至少还能靠语义命中。
+    #
+    # `date_range.end is None` 不算 unresolved —— 那是「单日/持续中」的正常形态，
+    # 不是解析失败。
+    #
+    # `TIME_CONF_MIN <= 0` = 关闭这道闸门（沿用 A10/A25 的「0 = 关信号」约定），
+    # 否则 0 会被误读成「全部不通过」。
     date_from = None
-    if date_range.confidence > 0 and date_range.end is not None:
-        date_from = f"{date_range.start.isoformat()}T00:00:00Z"
+    time_unresolved = False
+    time_threshold = settings.TIME_CONF_MIN
+    if date_range.end is not None:
+        if time_threshold <= 0 or date_range.confidence >= time_threshold:
+            date_from = f"{date_range.start.isoformat()}T00:00:00Z"
+        else:
+            time_unresolved = True
 
     owns_store = store is None
     active_store = store or WeaviateStore(settings)
@@ -281,6 +298,10 @@ def recall(
                         "errors": errors,
                         "date_range": _range_dict(date_range),
                         "gate": gate_trace,
+                        # 可解释性：排查「为什么召回不到」时要能区分
+                        # 「没解析出时间」和「解析出来了但我不信」
+                        "time_unresolved": time_unresolved,
+                        "time_confidence": date_range.confidence,
                     },
                 ),
                 trace_store=trace_store, namespace=namespace, query=query,
@@ -306,6 +327,8 @@ def recall(
                     partial=partial,
                     trace={
                         "empty_reason": "no_candidate",
+                    "time_unresolved": time_unresolved,
+                    "time_confidence": date_range.confidence,
                         "channels": {k: len(v) for k, v in channels.items()},
                         "errors": errors,
                         "note": "图通道命中的 id 没有元数据（P0 限制）",
@@ -349,6 +372,8 @@ def recall(
                     partial=partial,
                     trace={
                         "empty_reason": "below_threshold",
+                    "time_unresolved": time_unresolved,
+                    "time_confidence": date_range.confidence,
                         "top_score": round(top, 4),
                         "threshold": settings.RECALL_EMPTY_THRESHOLD,
                         "channels": {k: len(v) for k, v in channels.items()},
@@ -439,6 +464,8 @@ def recall(
                 partial=partial,
                 trace={
                     "empty_reason": None,
+                    "time_unresolved": time_unresolved,
+                    "time_confidence": date_range.confidence,
                     "top_k_decision": decision.to_trace(),
                     "channels": {k: len(v) for k, v in channels.items()},
                     "errors": errors,

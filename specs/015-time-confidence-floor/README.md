@@ -1,5 +1,5 @@
 ---
-status: planned
+status: complete
 created: 2026-11-04
 priority: high
 tags:
@@ -8,9 +8,14 @@ tags:
 - time
 - backend
 created_at: 2026-11-04T03:07:34.291269406Z
-updated_at: 2026-11-04T03:07:34.291269406Z
+updated_at: 2026-11-04T03:15:36.334070403Z
+completed_at: 2026-11-04T03:15:36.334070403Z
+transitions:
+- status: in-progress
+  at: 2026-11-04T03:07:52.034549338Z
+- status: complete
+  at: 2026-11-04T03:15:36.334070403Z
 ---
-
 # 015 时间置信度下限：`TIME_CONF_MIN` 真正生效
 
 ## Overview
@@ -87,19 +92,19 @@ trace 里加 `time_unresolved: bool` 与 `time_confidence: float`。
 
 ## Plan
 
-- [ ] T1 确认 `DateRange.confidence` 各分支的取值分布（读 time_resolver 测试）
-- [ ] T2 `recall.py`：用 `TIME_CONF_MIN` 替换 `> 0`，加 `time_unresolved`
-- [ ] T3 trace 里带 `time_unresolved` / `time_confidence`
-- [ ] T4 `TIME_CONF_MIN <= 0` 时退回老行为
-- [ ] T5 `.env.example` 补该项说明
+- [x] T1 确认 `DateRange.confidence` 各分支的取值分布（读 time_resolver 测试）
+- [x] T2 `recall.py`：用 `TIME_CONF_MIN` 替换 `> 0`，加 `time_unresolved`
+- [x] T3 trace 里带 `time_unresolved` / `time_confidence`
+- [x] T4 `TIME_CONF_MIN <= 0` 时退回老行为
+- [x] T5 `.env.example` 补该项说明
 
 ## Test
 
-- [ ] D1 高置信（0.9）→ 有 `date_from`，`time_unresolved=false`
-- [ ] D2 低置信（0.3）→ 无 `date_from`，`time_unresolved=true`，且**召回仍有材料**
-- [ ] D3 `end=None`（「最近」）→ `time_unresolved=false`，不设 `date_from`
-- [ ] D4 `TIME_CONF_MIN=0` → 退回老行为（0.3 也设 `date_from`）
-- [ ] D5 现有 979 条测试全绿
+- [x] D1 高置信（0.9）→ 有 `date_from`，`time_unresolved=false`
+- [x] D2 低置信（0.3）→ 无 `date_from`，`time_unresolved=true`，且**召回仍有材料**
+- [x] D3 `end=None`（「最近」）→ `time_unresolved=false`，不设 `date_from`
+- [x] D4 `TIME_CONF_MIN=0` → 退回老行为（0.3 也设 `date_from`）
+- [x] D5 现有 979 条测试全绿
 
 ## Notes
 
@@ -125,3 +130,80 @@ C.B9 的冲突合并（`R` ∩ `L`）假设有两条路径。现在只有规则�
 LLM 只在 `date_hint` 参数里被动接收。等真的加了 LLM 时间解析，
 再把「取交集 / 无交集降置信」补上 —— 那时候 `TIME_CONF_MIN` 会用在合并后的
 `confidence` 上，与本 spec 不冲突。
+
+## 实现记录
+
+### 核心发现：`DateRange.confidence` 其实是布尔的
+
+接上 `TIME_CONF_MIN` 之前先读了 `time_resolver`，发现它的置信度**只有两个值**：
+
+```python
+HIGH_CONFIDENCE = 1.0
+FALLBACK_CONFIDENCE = 0.0
+```
+
+所有「能解析」的表达都给 1.0，**包括「上个月」「去年底」这类窗口宽度靠猜的相对表达**。
+所以：
+
+- 旧代码 `confidence > 0` 与 `confidence >= 0.5` **完全等价**
+- C.B9 的「低置信不设过滤器」在当前实现下**永远不会触发**
+
+必须诚实说清楚：**本 spec 接上配置后，默认行为没有任何变化。** 它的价值是：
+
+1. 语义正确 —— 配置不再描述一个不存在的闸门
+2. 未来安全 —— 一旦 `time_resolver` 开始给模糊表达中间置信度，闸门自动生效
+3. `time_unresolved` / `time_confidence` 进 trace，可解释性是真提升
+
+`test_real_resolver_confidence_is_binary` 把现状钉住了：将来有人加中间置信度，
+这条测试会挂，提醒他回来看这里。
+
+### 真正该做的下一步（不在本 spec 范围）
+
+`time_resolver` 应该**给模糊表达低置信**：
+
+| 表达 | 现在 | 应该 |
+|---|---|---|
+| `2026-11-04` | 1.0 | 1.0（可复现） |
+| `昨天` / `本周` | 1.0 | 1.0（边界确定） |
+| `上个月` / `去年底` | 1.0 | **0.6 左右**（窗口靠 today 推算） |
+| `上个月底` | 1.0 | **0.6**（代码里给的是 `end-9天 ~ end`，9 天是拍的） |
+| `最近` / `前几天` | 0.0 | 0.0（解析不出） |
+
+判据应该是**可复现性**：与 `today` 无关的给高置信，依赖 `today` 且窗口宽度是猜的给低置信。
+这是产品判断，值得单独评审，所以没在本 spec 里顺手改。
+
+### 四个 trace 构造点，一开始只改了一个
+
+`recall.py` 有 4 处返回 `RecallResult`（正常、`no_candidate`、`below_threshold`、
+以及主路径）。第一版我只在 `gate_trace` 旁边加了一处，于是 6 个测试全挂 `KeyError`。
+
+教训：**改 trace 字段时要数一下构造点有几个**，不能看到一处就以为只有一处。
+
+### 白名单防腐测试抓住了自己
+
+`test_whitelist_entries_are_still_unused`（014 加的）在跑全量时挂了：
+
+```
+FAILED tests/test_config_usage.py::test_whitelist_entries_are_still_unused
+```
+
+因为 `TIME_CONF_MIN` 现在**有消费点了**，但它还在白名单里。
+
+这正是那个测试存在的意义 —— 白名单必须随接线进度收缩，否则会腐烂成
+「历史上曾经没用过的字段集合」。已从白名单移除，并把元测试改成反向断言。
+
+## 验收证据
+
+- `pytest tests/test_time_confidence.py -q` → **7 passed**
+- 全量：`pytest tests -q --tb=line` → **986 passed**（979 + 7）
+- `audit_config_usage.py`：零引用 **18**，`TIME_CONF_MIN` 已不在其中
+- `test_config_usage.py` → 9 passed（白名单已收缩）
+- `.env.example` 补了该项与「为什么 <=0 是关闭」的说明
+
+### 测试覆盖的边界
+
+- D1 0.9 ≥ 0.5 → 设过滤器
+- D2 0.3 < 0.5 → 不设，且**材料仍在**（这是取舍的全部意义）
+- D3 `end=None` → 不算 unresolved（单日/持续中的正常形态）
+- D4 阈值 0 → 关闭闸门，不是「全部不通过」
+- D5 阈值 > 1 → 连 1.0 都过不去（确认比较方向没写反）

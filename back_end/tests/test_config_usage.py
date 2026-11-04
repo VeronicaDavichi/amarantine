@@ -49,7 +49,6 @@ WHITELIST: dict[str, str] = {
     "LABEL_REVIEW_BATCH": "复核队列批量大小未接",
     "TOKENIZER": "分词器写死 cl100k_base，未接配置",
     "VECTOR_TIMEOUT_MS": "向量通道超时未接配置（图通道已接）",
-    "TIME_CONF_MIN": "时间解析置信度阈值只在注释里提过，未真正消费（014 审计发现）",
 }
 
 
@@ -133,8 +132,10 @@ def test_detector_actually_detects() -> None:
 def test_comments_do_not_count_as_consumers() -> None:
     """注释里提到 ≠ 用了。`TIME_CONF_MIN` 就是活例子。"""
     assert _strip_comments("x = 1  # SOME_FIELD\n") .strip() == "x = 1"
-    # 真实校验：白名单里的 TIME_CONF_MIN 只在注释里出现
-    assert "TIME_CONF_MIN" in WHITELIST
+    # `TIME_CONF_MIN` 曾经只在注释里出现，015 把它接上了 ——
+    # 现在它既不在白名单里，也必须真有消费点
+    assert "TIME_CONF_MIN" not in WHITELIST
+    assert _consumer_files("TIME_CONF_MIN")
 
 
 @pytest.mark.parametrize("field", ["AGENT_KEY_HEADER", "GRAPH_TIMEOUT_MS", "RERANK_CANDIDATES"])
