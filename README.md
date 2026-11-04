@@ -26,6 +26,7 @@
 | [工具使用指南](docs/memory-tool-guide.md) | 给 LLM 的调用说明（MCP instructions 单一源头） |
 | [验收审计](docs/acceptance-audit.md) | ADR 34 条验收标准逐条核对（已全绿） |
 | [设计审计](docs/design-audit.md) | 配置项 × 消费点扫描、七起「假实现」记录、剩余待办 |
+| [配置接线小结](docs/config-wiring-summary.md) | spec 014–018 的过程与教训（零引用 22 → 16） |
 
 ## 结构
 
