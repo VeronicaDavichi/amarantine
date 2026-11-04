@@ -37,6 +37,16 @@ DEFAULT_TYPE_RULES: dict[str, tuple[str, ...]] = {
 #: 兜底类型：任何规则都没命中时使用（保证 types 非空，否则 EventCard 校验失败）
 FALLBACK_TYPE = "general"
 
+#: 复姓（双字）。`_COMMON_SURNAMES` 的大字符串里也包含它们，
+#: 这里单独列出来是因为「姓 + 单字名」的结构判定要区分单姓和复姓：
+#: 「欧阳锋」是复姓+单字名，「李小狼」是单姓+双字名，两者长度相同但结构不同。
+COMPOUND_SURNAMES: tuple[str, ...] = (
+    "欧阳", "太史", "端木", "上官", "司马", "东方", "独孤", "南宫", "万俟",
+    "闻人", "夏侯", "诸葛", "尉迟", "公羊", "赫连", "澹台", "皇甫", "宗政",
+    "濮阳", "公冶", "太叔", "申屠", "公孙", "慕容", "仲孙", "钟离", "长孙",
+    "宇文", "司徒", "鲜于", "司空",
+)
+
 #: 常见中文姓氏（单姓 + 复姓）。用来做「主语」识别。
 #: 不求全 —— 漏抽一个人只是少一条边，抽错会把人名写进图里污染。
 _COMMON_SURNAMES = (
@@ -415,6 +425,26 @@ _MEASURE_SURNAMES = frozenset("种")
 
 #: 本次进程内已登记的姓氏（启动时从 `surname_decl` 表灌进来）
 _DECLARED_SURNAMES: set[str] = set()
+
+
+def split_name_surname(word: str) -> str | None:
+    """若 `word` 是「姓 + **单字**名」结构，返回姓；否则返回 None。
+
+    只看结构，不看语义：
+    - 「张三」→ "张"（单姓 + 单字名）
+    - 「欧阳锋」→ "欧阳"（复姓 + 单字名）
+    - 「李小狼」→ None（单姓 + **双**字名）
+    - 「豆包」→ None（`豆` 不是姓）
+
+    用途见 `alias_resolver.single_char_name_prefix_conflict`：中文里
+    「张三」和「张三丰」字面极像但**通常不是同一人**，这个结构判定是
+    唯一能把它和「豆包 / 豆包AI」（同人）分开的可靠信号。
+    """
+    if len(word) == 2 and word[0] in _COMMON_SURNAMES:
+        return word[0]
+    if len(word) == 3 and word[:2] in COMPOUND_SURNAMES:
+        return word[:2]
+    return None
 
 
 def declared_surnames() -> frozenset[str]:

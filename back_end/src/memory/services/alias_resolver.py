@@ -43,6 +43,7 @@ from memory.models.event_card import (
     ALIAS_UNCERTAIN,
     AliasClaim,
 )
+from memory.services.labeler import split_name_surname
 from memory.services.llm import LLMError, chat
 
 logger = logging.getLogger(__name__)
@@ -114,6 +115,29 @@ def _label_for(confidence: float) -> str | None:
     return None
 
 
+#: 「单字名前缀」规则命中的日志前缀，便于测试与排查时 grep
+PREFIX_CONFLICT_REASON = "单字名前缀冲突"
+
+
+def single_char_name_prefix_conflict(short: str, long: str) -> bool:
+    """`short` 是「姓+单字名」，且 `long` 只比它多一个字？
+
+    命中就意味着「很可能不是同一人」，调用方应判为新实体而不是合并。
+
+    为什么需要这条规则（实测数据）：编辑距离区分不了这两类 ——
+    「豆包/豆包AI」（同人）相似度 0.50，「张三/张三丰」（不同人）0.67，
+    该合并的反而更低，任何阈值都是反向的。
+    唯一的可靠差异是**中文人名的结构**：「张三」是姓+单字名，「豆包」不是人名。
+
+    只挡「长度差 1」：差 2 以上（`张三` vs `张三丰丰`）有昵称歧义，保守放行。
+    """
+    if len(long) != len(short) + 1:
+        return False
+    if not long.startswith(short):
+        return False
+    return split_name_surname(short) is not None
+
+
 def resolve_one(
     claim: AliasClaim,
     candidates: list[str],
@@ -135,6 +159,25 @@ def resolve_one(
     allowed = {c for c in candidates if c and c != claim.alias}
     if not allowed:
         return None
+
+    # 「单字名前缀」早退：**在调 LLM 之前**判掉，省一次调用。
+    #
+    # 「张三」和「张三丰」字面极像，但中文里通常是两个不同的人；
+    # 「豆包」和「豆包AI」也像，却是同一个东西。编辑距离在这两类上是**反向**的
+    # （0.67 vs 0.50），所以用「姓+单字名」的结构判定，而不是字符串距离。
+    #
+    # 双向检查：alias 可能是长的那个（「张三丰」是别名，「张三」是候选）。
+    for cand in sorted(allowed):
+        if single_char_name_prefix_conflict(
+            claim.alias, cand
+        ) or single_char_name_prefix_conflict(cand, claim.alias):
+            logger.info(
+                "%s，不合并 | %s vs %s | 判为新实体",
+                PREFIX_CONFLICT_REASON,
+                claim.alias,
+                cand,
+            )
+            return None
 
     prompt = _build_prompt(claim, sorted(allowed)[:MAX_CANDIDATES])
     try:
