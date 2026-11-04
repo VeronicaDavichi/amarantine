@@ -76,7 +76,7 @@ def test_a2_query_date_range_is_applied_to_search() -> None:
     seen: dict[str, object] = {}
 
     class RecordingStore(FakeStore):
-        def search_near_vector(self, vector, namespace, *, limit=50, date_from=None):
+        def search_near_vector(self, vector, namespace, *, limit=50, date_from=None, timeout_s=None):
             seen["date_from"] = date_from
             return [_hit("evt_in", days_ago=20)]
 

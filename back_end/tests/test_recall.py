@@ -37,8 +37,11 @@ class FakeStore:
         self.bm25_hits = bm25_hits or []
         self.fail_vector = fail_vector
         self.fail_bm25 = fail_bm25
+        #: 记录 recall 传下来的通道超时，供 017 的接线测试断言
+        self.vector_timeouts: list[float | None] = []
 
-    def search_near_vector(self, vector, namespace, *, limit=50, date_from=None):
+    def search_near_vector(self, vector, namespace, *, limit=50, date_from=None, timeout_s=None):
+        self.vector_timeouts.append(timeout_s)
         if self.fail_vector:
             raise WeaviateStoreError("weaviate down")
         return self.vector_hits

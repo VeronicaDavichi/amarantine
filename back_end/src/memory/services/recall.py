@@ -162,9 +162,25 @@ def recall(
         entities = [e.name for e in _query_ents if e.kind != "person"]
         graph_fn = graph_searcher or search_by_entities
 
+        # `VECTOR_TIMEOUT_MS` 是 ADR 给向量通道定的超时（默认 800ms，
+        # 与 COLD_QUERY_P95_MS 对齐）。不接的话实际超时是 client 的 20 秒 ——
+        # 「召回预算 1500ms」就成了纸面数字。
+        #
+        # `<= 0` 表示不限（沿用项目「0 = 关信号」的约定），传 None 走 client 默认；
+        # 传 0 的话 httpx 会当成「立即超时」，语义完全相反。
+        _vec_timeout = (
+            settings.VECTOR_TIMEOUT_MS / 1000.0
+            if settings.VECTOR_TIMEOUT_MS > 0
+            else None
+        )
+
         def run_vector():
             return active_store.search_near_vector(
-                query_vec, namespace, limit=candidates_limit, date_from=date_from
+                query_vec,
+                namespace,
+                limit=candidates_limit,
+                date_from=date_from,
+                timeout_s=_vec_timeout,
             )
 
         def run_bm25():

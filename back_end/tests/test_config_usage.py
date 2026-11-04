@@ -48,7 +48,6 @@ WHITELIST: dict[str, str] = {
     "LABEL_LLM_TEMP": "LLM 打标温度写死",
     "LABEL_REVIEW_BATCH": "复核队列批量大小未接",
     "TOKENIZER": "分词器写死 cl100k_base，未接配置",
-    "VECTOR_TIMEOUT_MS": "向量通道超时未接配置（图通道已接）",
 }
 
 

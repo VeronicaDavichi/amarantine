@@ -743,17 +743,32 @@ class WeaviateStore:
 
     # ---------- 检索（M3 召回用） ----------
 
-    def _graphql(self, query: str, variables: dict[str, Any] | None = None) -> dict[str, Any]:
+    def _graphql(
+        self,
+        query: str,
+        variables: dict[str, Any] | None = None,
+        *,
+        timeout_s: float | None = None,
+    ) -> dict[str, Any]:
         """执行 GraphQL；失败转 WeaviateStoreError（调用方据此降级）。
 
         `where` 这类结构化过滤**必须走变量**：GraphQL 不认 JSON 对象字面量，
         内联会直接语法错误。
+
+        `timeout_s` 按请求覆盖 client 的超时。`None` = **不覆盖**（沿用 client 默认）。
+        **不要**把 client 全局超时改成通道超时：同一个 client 还被
+        `list_all`（可能几千条）和写入路径共用。
+
+        注意 httpx 的坑：`post(..., timeout=None)` **不是**「沿用 client」，
+        而是「禁用超时」—— 比不传更糟。所以 None 时必须**不传这个 kwarg**。
         """
+        kwargs: dict[str, Any] = {
+            "json": {"query": query, "variables": variables or {}},
+        }
+        if timeout_s is not None:
+            kwargs["timeout"] = timeout_s
         try:
-            resp = self._http.post(
-                f"{self._base}/v1/graphql",
-                json={"query": query, "variables": variables or {}},
-            )
+            resp = self._http.post(f"{self._base}/v1/graphql", **kwargs)
         except httpx.HTTPError as exc:
             raise WeaviateStoreError(f"GraphQL 请求失败: {exc}") from exc
         if resp.status_code != 200:
@@ -933,8 +948,12 @@ class WeaviateStore:
         *,
         limit: int = 50,
         date_from: str | None = None,
+        timeout_s: float | None = None,
     ) -> list[dict[str, Any]]:
-        """向量召回。distance 转成 (0,1] 的相似度，越大越相关。"""
+        """向量召回。distance 转成 (0,1] 的相似度，越大越相关。
+
+        `timeout_s`：ADR 的 `VECTOR_TIMEOUT_MS` 从这里进去。`None` 表示用 client 默认。
+        """
         if len(vector) != self._settings.EMBEDDING_DIM:
             raise MixedModelError(
                 f"查询向量维度 {len(vector)} 与 EMBEDDING_DIM={self._settings.EMBEDDING_DIM} 不一致"
@@ -948,7 +967,7 @@ class WeaviateStore:
             + self._where_graphql(namespace, date_from=date_from)
             + f") {{{self._FIELDS}}} }} }}"
         )
-        data = self._graphql(query, {"vector": vector})
+        data = self._graphql(query, {"vector": vector}, timeout_s=timeout_s)
         out = []
         for obj in self._extract_hits(data):
             distance = (obj.get("_additional") or {}).get("distance") or 0.0
