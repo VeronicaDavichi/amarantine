@@ -39,6 +39,11 @@ from memory.services.chunk_store import ChunkStore
 from memory.services.rerank import rerank
 from memory.services.weaviate_store import WeaviateStore, WeaviateStoreError
 
+#: chunk collection 的检索条数。
+#: **与 `RERANK_CANDIDATES` 无关**：那个是「送进 rerank 的候选上限」（决定成本），
+#: 这个是「为聚合留多少余量」（决定召回广度）。两者碰巧都叫「候选数」，不要合并。
+CHUNK_SEARCH_LIMIT = 100
+
 logger = logging.getLogger("memory.recall")
 
 #: Weaviate 通道超时（ADR D3）；超时即整体 503
@@ -232,7 +237,9 @@ def recall(
                 qvec = encode(query, settings)
                 cstore = ChunkStore(settings)
                 try:
-                    chunk_hits = cstore.search_near_vector(qvec, namespace, limit=100)
+                    chunk_hits = cstore.search_near_vector(
+                qvec, namespace, limit=CHUNK_SEARCH_LIMIT
+            )
                 finally:
                     cstore.close()
                 chunk_trace["chunk_hits"] = len(chunk_hits)
@@ -358,11 +365,14 @@ def recall(
         #
         # **失败不抛**：rerank 是增强项，挂了就退回 RRF 顺序继续，整体仍是 200。
         # 这是 ADR A27 的核心断言（kill 服务后材料集非空 + trace 标 skipped）。
+        # `RERANK_CANDIDATES` 真的在这里生效：rerank 是 CPU 上的昂贵操作，
+        # 候选越多越慢（实测每批 ~0.3s）。截断后再送，不是只写个配置放着。
+        rerank_pool = scored[: settings.RERANK_CANDIDATES]
         rerank_result = rerank(
             query,
             [
                 (c.event_id, str(meta.get(c.event_id, {}).get("summary") or ""))
-                for c in scored
+                for c in rerank_pool
             ],
             settings=settings,
             client=rerank_client,

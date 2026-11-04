@@ -30,11 +30,11 @@ from fastapi import (
     FastAPI,
     HTTPException,
     Query,
+    Request,
     Response,
     status,
 )
 from fastapi.staticfiles import StaticFiles
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, ConfigDict, Field
 
 from memory.config import Settings, load_settings
@@ -100,7 +100,6 @@ _WEB_DIR = Path(__file__).parent / "web"
 #: 允许的 bucket 取值（A24：NEED_REVIEW 与 LABEL_REVIEW 是两条队列，禁止混用）
 ALLOWED_BUCKETS = (BUCKET_NEED_REVIEW, BUCKET_PROTECTED, BUCKET_SAFE_TO_DELETE)
 
-_bearer = HTTPBearer(auto_error=False)
 
 
 # ---------------------------------------------------------------- 报文模型
@@ -626,23 +625,45 @@ def create_app(
             )
         return ns
 
-    def require_token(
-        creds: HTTPAuthorizationCredentials | None = Depends(_bearer),
-    ) -> None:
+    def require_token(request: Request) -> None:
+        """按 `AGENT_KEY_HEADER` 取 token。
+
+        不用 FastAPI 的 `HTTPBearer`，因为它把 header 名写死成 `Authorization` ——
+        那样 `AGENT_KEY_HEADER` 就永远是装饰品。这里自己读，配置才真的生效。
+
+        两种取值语义：
+        - header 名是 `Authorization`（默认）→ 必须是 `Bearer <token>`
+        - 其它名字 → 整个 header 值就是 token（`X-Agent-Key: <token>`）
+        """
         expected = cfg.ADMIN_TOKEN
         if not expected:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="ADMIN_TOKEN 未配置，管理接口已禁用",
             )
-        if creds is None or creds.scheme.lower() != "bearer":
+
+        header_name = cfg.AGENT_KEY_HEADER
+        raw = request.headers.get(header_name)
+        if not raw:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="需要 Bearer token",
+                detail=f"缺少认证 header: {header_name}",
                 headers={"WWW-Authenticate": "Bearer"},
             )
+
+        if header_name.lower() == "authorization":
+            if not raw.lower().startswith("bearer "):
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="需要 Bearer token",
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+            token = raw.split(" ", 1)[1].strip()
+        else:
+            token = raw.strip()
+
         # 定长比较，避免时序侧信道
-        if not _constant_time_eq(creds.credentials, expected):
+        if not _constant_time_eq(token, expected):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN, detail="token 不正确"
             )

@@ -53,7 +53,12 @@ class Settings(BaseSettings):
         default=None,
         description="MCP 侧由 MCP host 通过环境变量注入；Admin 侧不使用",
     )
-    AGENT_KEY_HEADER: str = "X-Agent-Key"
+    #: 管理接口读 token 的 header 名。
+    #: **默认 `Authorization`**：实现一直是 Bearer，ADR v0.10 写的 `X-Agent-Key`
+    #: 从未实现过 —— 配置的默认值不该描述一个不存在的协议（2026-11-04 审计）。
+    #: 值等于 `Authorization`（不区分大小写）时按 `Bearer <token>` 解析；
+    #: 其它名字则整个 header 值就是 token。
+    AGENT_KEY_HEADER: str = "Authorization"
 
     # ---------- 召回：条数与阈值 ----------
     ARCHIVE_WINDOW_DAYS: int = 180

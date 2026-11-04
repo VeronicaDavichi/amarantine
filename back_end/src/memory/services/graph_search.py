@@ -48,7 +48,7 @@ from memory.services.graph_outbox import RESOLVE_ALIAS_CYPHER
 logger = logging.getLogger("memory.graph_search")
 
 #: 图通道超时（ADR D3）
-GRAPH_TIMEOUT_S = 0.2
+# 默认超时不再硬编码：`GRAPH_TIMEOUT_MS` 才是唯一真值来源（见函数体内）。
 
 #: 一次查询最多用几个实体名，避免 Cypher 参数爆炸
 MAX_ENTITY_NAMES = 8
@@ -258,7 +258,7 @@ def search_by_entities(
     person_names: list[str] | None = None,
     settings: Settings,
     limit: int = 50,
-    timeout_s: float = GRAPH_TIMEOUT_S,
+    timeout_s: float | None = None,
     driver: Any | None = None,
 ) -> GraphHits:
     """按实体名扩展候选 event_id。
@@ -291,6 +291,13 @@ def search_by_entities(
         return GraphHits(event_ids=[], ok=True)
 
     owns_driver = driver is None
+    # `GRAPH_TIMEOUT_MS` 是唯一真值来源；显式传参仍可覆盖（测试用）。
+    effective_timeout_s = (
+        timeout_s
+        if timeout_s is not None
+        else settings.GRAPH_TIMEOUT_MS / 1000.0
+    )
+
     drv = driver
     try:
         if drv is None:
@@ -299,7 +306,7 @@ def search_by_entities(
             drv = GraphDatabase.driver(
                 settings.NEO4J_URI,
                 auth=(settings.NEO4J_USER, settings.NEO4J_PASSWORD),
-                connection_timeout=timeout_s,
+                connection_timeout=effective_timeout_s,
             )
 
         # 有人名就用分流版（动作扩展只对实体生效）；
@@ -357,7 +364,7 @@ def search_by_entities(
                 "entity_names": entities,
                 "alias_hosts": alias_hosts,
                 "limit": int(limit),
-                "timeout": timeout_s,
+                "timeout": effective_timeout_s,
             }
             result = session.run(cypher, **params)
             event_ids = [row["event_id"] for row in result if row.get("event_id")]

@@ -23,6 +23,14 @@ from memory.services.graph_search import (
 )
 
 
+class _FakeCfg:
+    """`search_by_entities` 现在会读 `GRAPH_TIMEOUT_MS`，
+    所以不能再用裸 `object()` 当 settings —— 传 driver 时也照样要读超时。
+    """
+
+    GRAPH_TIMEOUT_MS = 200
+
+
 class FakeRow(dict):
     def get(self, key: str, default: Any = None) -> Any:
         return dict.get(self, key, default)
@@ -93,7 +101,7 @@ def _search(drv: FakeDriver, entities, persons=None, **kw) -> GraphHits:
         entities,
         "work",
         person_names=persons,
-        settings=object(),  # type: ignore[arg-type]
+        settings=_FakeCfg(),  # type: ignore[arg-type]
         driver=drv,
         **kw,
     )
@@ -176,7 +184,7 @@ def test_routed_no_action_leg_when_only_persons(driver: FakeDriver) -> None:
 def test_backward_compatible_without_person_names(driver: FakeDriver) -> None:
     """老调用方只传一个列表，仍要能跑（走同时覆盖人/实体的 Cypher）。"""
     result = search_by_entities(
-        ["项目A", "张三"], "work", settings=object(), driver=driver  # type: ignore[arg-type]
+        ["项目A", "张三"], "work", settings=_FakeCfg(), driver=driver  # type: ignore[arg-type]
     )
     assert result.ok is True
     assert result.event_ids == ["evt_a", "evt_b"]

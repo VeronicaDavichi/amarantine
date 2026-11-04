@@ -307,7 +307,7 @@ query 里的「上次」「最近」「去年这时候」不解析成**绝对区
 | `DATABASE_URL` | `sqlite:///./data/memory.db` | 关系库连接串；可切 `postgresql://...` |
 | `SQLITE_WAL` | `true` | WAL 模式，缓解多 agent 并发写 |
 | `DB_BUSY_TIMEOUT_MS` | `5000` | SQLite 锁等待上限 |
-| `AGENT_KEY_HEADER` | `X-Agent-Key` | 认证头名（4.0 通用约定） |
+| `AGENT_KEY_HEADER` | `Authorization` | 认证头名（4.0 通用约定）。值等于 `Authorization` 时按 `Bearer <token>` 解析；其它名字则整个 header 值就是 token。**v0.10 曾写 `X-Agent-Key`，但实现从未采用，2026-11-04 审计把默认值改回实现（spec 014）** |
 | `GUIDE_CHECK_CRON` | `0 9 * * 1` | 指南一致性校验的 cron 表达式（用户自行装 crontab，见 4.10） |
 | `LOG_FILE` | `logs/memory.log` | 日志文件路径；**日志不走 stdout/stderr**（全局约定） |
 | `LOG_LEVEL` | `INFO` | 日志级别 |
