@@ -30,7 +30,9 @@ from memory.core.guards import (
 from memory.core.time_resolver import resolve_date_hint
 from memory.models.event_card import EventCard
 from memory.services.directive_counter import DirectiveCounter
-from memory.services.embedding import EmbeddingError, embed_one
+from memory.core.chunker import split_text
+from memory.services.chunk_store import ChunkStore
+from memory.services.embedding import EmbeddingError, embed_one, embed_texts
 from memory.services.embedding_guard import EmbeddingIndexMeta
 from memory.services.vocab_version import current_version
 from memory.services.graph_outbox import write_event_node
@@ -380,6 +382,35 @@ def remember_event(
             anomaly=decision.anomaly,
             vocab_version=vocab_version,
         )
+
+        # 9.5) A16 chunk 层（默认关）
+        #
+        # **失败不影响主流程**：卡已经写成功了，chunk 只是让长摘要能被
+        # 分段检索到的增强项。这里吞异常是刻意的 —— 与 rerank 降级同理，
+        # 增强项不该成为可用性的单点。
+        if settings.CHUNK_ENABLED:
+            try:
+                chunks = split_text(
+                    summary,
+                    size=settings.CHUNK_SIZE,
+                    overlap=settings.CHUNK_OVERLAP,
+                )
+                # 只有真会被切开时才写 chunk —— 单块等于原卡向量，重复存没意义
+                if len(chunks) > 1:
+                    cstore = ChunkStore(settings)
+                    try:
+                        cvecs = embed_texts([c.text for c in chunks], settings)
+                        cstore.insert_chunks(
+                            namespace,
+                            card.event_id,
+                            chunks,
+                            cvecs,
+                            date_start=card.date_start,
+                        )
+                    finally:
+                        cstore.close()
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("chunk 写入失败（已忽略，卡已写成功）: %s", exc)
 
         # 10) 写入成功才记账（否则失败也会消耗配额）
         if decision.pinned:

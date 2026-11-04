@@ -96,6 +96,12 @@ def _graph_down(entities, namespace, *, person_names=None, settings):
 
 def _run(**overrides):
     settings = load_settings()
+    # **测试不该依赖 `.env`**：主人把 RERANK_ENABLED 打开之后，
+    # 这里会真的去调 8083，导致「不相关实体」被 rerank 低分砍掉，
+    # 让不测 rerank 的用例跟着环境漂移。
+    # 默认全关，需要的用例显式传自己的 settings（走 overrides）。
+    settings.RERANK_ENABLED = False
+    settings.CHUNK_ENABLED = False
     kwargs = dict(
         query="上个月项目A的进展",
         namespace="work",

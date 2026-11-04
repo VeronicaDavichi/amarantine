@@ -101,6 +101,16 @@ class Settings(BaseSettings):
     FORGET_MIN_RECALLS: int = 1
     PROTECT_IMPORTANCE_REVIEW: float = 0.7
     CONFIRMED_MIN: int = 2
+
+    # ---------- chunk 层（A16，默认关）----------
+    #: 关掉时写入/检索路径完全不变（连 chunk_store 都不会被 import）。
+    #: 打开后长 summary 按 CHUNK_SIZE 滑窗切块、各存一个向量，
+    #: 检索命中 chunk 再聚合回卡 —— 一条卡最多保留 CHUNK_KEEP_PER_EVENT 个块。
+    CHUNK_ENABLED: bool = False
+    #: 每块字符数。中文按字符切，256 字约 256 token，远小于 bge-m3 的 8192 上限。
+    CHUNK_SIZE: int = 256
+    #: 相邻块重叠字符数，防止关键信息正好被切断。
+    CHUNK_OVERLAP: int = 32
     CHUNK_KEEP_PER_EVENT: int = 2
 
     # ---------- consolidation（P2） ----------

@@ -34,6 +34,8 @@ from memory.core.time_resolver import DateRange, resolve_from_query
 from memory.services.embedding import EmbeddingError
 from memory.services.graph_search import search_by_entities
 from memory.services.labeler import extract_entities
+from memory.core.chunker import keep_top_n
+from memory.services.chunk_store import ChunkStore
 from memory.services.rerank import rerank
 from memory.services.weaviate_store import WeaviateStore, WeaviateStoreError
 
@@ -212,6 +214,42 @@ def recall(
         # 图通道是实体扩展，天然带有相关性假设，不额外设闸
         if graph_hits is not None and getattr(graph_hits, "event_ids", None):
             channels["graph"] = list(graph_hits.event_ids)
+
+        # 5.5) A16 chunk 通道（默认关）
+        #
+        # 长卡会被切成多块各存一个向量。这里查 chunk、每卡保留 N 个高分块，
+        # 再把它们的**父 event_id** 并进 vector 通道。
+        #
+        # 为什么并进 vector 通道而不是新开一个：chunk 命中本质上就是向量相似，
+        # 单开一路会引入新的 RRF 权重需要调参。并进 vector 只让「长卡更容易被
+        # 召回」，不改变已有排序语义。
+        #
+        # **失败降级**：chunk 层挂了不影响正常召回（它是召回率的增强，不是必需）。
+        chunk_trace: dict[str, Any] = {"chunk_enabled": False}
+        if settings.CHUNK_ENABLED:
+            chunk_trace = {"chunk_enabled": True, "chunk_hits": 0, "chunk_parents": 0}
+            try:
+                qvec = encode(query, settings)
+                cstore = ChunkStore(settings)
+                try:
+                    chunk_hits = cstore.search_near_vector(qvec, namespace, limit=100)
+                finally:
+                    cstore.close()
+                chunk_trace["chunk_hits"] = len(chunk_hits)
+                kept_chunks = keep_top_n(
+                    [(h["event_id"], h["score"]) for h in chunk_hits],
+                    n=settings.CHUNK_KEEP_PER_EVENT,
+                )
+                chunk_trace["chunk_parents"] = len(kept_chunks)
+                if kept_chunks:
+                    merged = list(channels.get("vector", []))
+                    for parent, _score in kept_chunks:
+                        if parent and parent not in merged:
+                            merged.append(parent)
+                    channels["vector"] = merged
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("chunk 召回失败（已降级）: %s", exc)
+                chunk_trace["chunk_error"] = type(exc).__name__
 
         # 通道被闸门清空 → 是「有候选但都不够像」，不是「完全没有」
         gate_filtered = bool(dropped_vector) and not channels
@@ -396,6 +434,7 @@ def recall(
                     "errors": errors,
                     "date_range": _range_dict(date_range),
                     "gate": gate_trace,
+                    **chunk_trace,
                     **rerank_result.to_trace(),
                 },
             ),
