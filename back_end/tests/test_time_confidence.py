@@ -114,15 +114,62 @@ def test_threshold_above_one_blocks_everything(monkeypatch) -> None:
 
 # ---------------- 真实 time_resolver 的现状（钉住，便于未来改分级）----------------
 
-def test_real_resolver_confidence_is_binary() -> None:
-    """当前 `time_resolver` 只会给 0.0 或 1.0。
+def test_real_resolver_confidence_is_tiered() -> None:
+    """018 之后是三档：1.0（精确/明确）/ 0.6（推算）/ 0.0（解析不出）。
 
-    这条测试**不是**在保护这个行为 —— 而是在记录它。
-    等有人给模糊表达加中间置信度时，这条会挂，提醒他回来看 015 的 Notes
-    和 `TIME_CONF_MIN` 的闸门是否要一起调整。
+    这条测试原本叫 `test_real_resolver_confidence_is_binary`，是 015 埋的钩子 ——
+    「等有人加中间置信度时它会挂」。018 一改它就挂了，如期提醒了契约变更。
+    现在它守着新的三档契约。
     """
-    from memory.core.time_resolver import resolve_from_query
+    from memory.core.time_resolver import (
+        APPROX_CONFIDENCE,
+        FALLBACK_CONFIDENCE,
+        HIGH_CONFIDENCE,
+        resolve_from_query,
+    )
 
-    samples = ["今天", "上个月", "去年底", "本周", "完全不是时间", ""]
-    seen = {resolve_from_query(s, today=date(2026, 11, 4)).confidence for s in samples}
-    assert seen <= {0.0, 1.0}, f"置信度出现中间值 {seen} —— 015 的 Notes 需要更新"
+    exact = ["2026-11-04", "2026年3月", "今天", "昨天", "本周", "上周", "上个月", "今年", "去年"]
+    approx = ["上个月底", "上月底", "去年底", "上年底", "年底"]
+    unresolved = ["完全不是时间", ""]
+
+    for word in exact:
+        got = resolve_from_query(word, today=date(2026, 11, 4)).confidence
+        assert got == HIGH_CONFIDENCE, f"{word!r} 应该是精确档，实际 {got}"
+    for word in approx:
+        got = resolve_from_query(word, today=date(2026, 11, 4)).confidence
+        assert got == APPROX_CONFIDENCE, f"{word!r} 应该是推算档，实际 {got}"
+    for word in unresolved:
+        got = resolve_from_query(word, today=date(2026, 11, 4)).confidence
+        assert got == FALLBACK_CONFIDENCE, f"{word!r} 应该是解析不出，实际 {got}"
+
+
+# ---------------- 018: 分级让配置第一次有真实区间 ----------------
+
+def test_approx_tier_passes_the_default_threshold(monkeypatch) -> None:
+    """`APPROX_CONFIDENCE(0.6) > TIME_CONF_MIN(0.5)` —— 默认行为不变。
+
+    这是刻意的：分级不该偷偷改变现有行为。用户升级后感受不到差异。
+    """
+    _patch_date_range(
+        monkeypatch, confidence=0.6, end=date(2026, 10, 31), start=date(2026, 10, 22)
+    )
+    result = _run(query="上个月底", settings=_settings(threshold=0.5), store=_store())
+    assert result.trace["time_unresolved"] is False, "推算档在默认阈值下应该过线"
+
+
+def test_raising_threshold_blocks_approx_tier(monkeypatch) -> None:
+    """把闸门调到 0.7 → 推算档被挡掉。**配置第一次真的有用。**"""
+    _patch_date_range(
+        monkeypatch, confidence=0.6, end=date(2026, 10, 31), start=date(2026, 10, 22)
+    )
+    result = _run(query="上个月底", settings=_settings(threshold=0.7), store=_store())
+    assert result.trace["time_unresolved"] is True
+
+
+def test_raising_threshold_does_not_block_exact_tier(monkeypatch) -> None:
+    """0.7 不该误伤精确档（1.0）—— 否则闸门变成了「全部不设过滤器」。"""
+    _patch_date_range(
+        monkeypatch, confidence=1.0, end=date(2026, 10, 31), start=date(2026, 10, 1)
+    )
+    result = _run(query="上个月", settings=_settings(threshold=0.7), store=_store())
+    assert result.trace["time_unresolved"] is False

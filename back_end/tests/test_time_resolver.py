@@ -79,6 +79,36 @@ def test_last_year_end_is_q4() -> None:
     """「去年底」按 Q4 处理，不缩到单月。"""
     r = resolve_date_hint("去年底", today=TODAY)
     assert (r.start, r.end) == (date(2025, 10, 1), date(2025, 12, 31))
+    # 宽度是设计选择（不缩到单月），但它是**推算**出来的 -> 0.6 档
+    from memory.core.time_resolver import APPROX_CONFIDENCE
+
+    assert r.confidence == APPROX_CONFIDENCE
+
+
+def test_year_end_means_this_year_not_last() -> None:
+    """`年底` 单独说指**今年**年底。
+
+    018 之前它和 `去年底` 共用一个分支（`y = today.year - 1`），
+    所以 2026 年说「年底」会返回 2025 年 Q4 —— 确凿的错误。
+    """
+    r = resolve_date_hint("年底", today=TODAY)
+    assert (r.start, r.end) == (date(2026, 10, 1), date(2026, 12, 31))
+
+
+def test_year_end_is_approx_tier() -> None:
+    """「底」类窗口宽度是拍的，属于推算档。"""
+    from memory.core.time_resolver import APPROX_CONFIDENCE
+
+    for word in ("年底", "去年底", "上个月底"):
+        assert resolve_date_hint(word, today=TODAY).confidence == APPROX_CONFIDENCE
+
+
+def test_exact_words_are_high_tier() -> None:
+    """精确/明确类不该被降级 —— 给「昨天」降置信是错的。"""
+    from memory.core.time_resolver import HIGH_CONFIDENCE
+
+    for word in ("2026-11-04", "今天", "昨天", "本周", "上周", "上个月", "去年"):
+        assert resolve_date_hint(word, today=TODAY).confidence == HIGH_CONFIDENCE
 
 
 def test_chinese_year_month() -> None:

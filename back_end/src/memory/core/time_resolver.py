@@ -19,7 +19,17 @@ from dataclasses import dataclass
 from datetime import date, timedelta
 
 #: 解析置信度低于该值时，调用方可考虑交给 LLM 复核（C.B9 / TIME_CONF_MIN）
+#: 精确或明确：窗口边界能由日历直接算出来，与「当前是几号」无关或关系确定。
+#: 例：`2026-11-04`、`2026年3月`、`今天`、`上周`、`上个月`、`去年`。
 HIGH_CONFIDENCE = 1.0
+
+#: 推算：窗口宽度是代码里的常数，不是从用户表达推导出来的。
+#: 例：`上个月底`（取最后 10 天）、`去年底`/`年底`（取 Q4）。
+#:
+#: 为什么是 0.6 而不是更低：`TIME_CONF_MIN` 默认 0.5，0.6 让它**刚好过线** ——
+#: 默认行为不变，但把闸门调到 0.7 就能把这一档单独挡掉。配置第一次有了真实区间。
+APPROX_CONFIDENCE = 0.6
+
 FALLBACK_CONFIDENCE = 0.0
 
 _ISO_DATE = re.compile(r"^(\d{4})-(\d{1,2})-(\d{1,2})$")
@@ -119,7 +129,8 @@ def resolve_date_hint(hint: str | None, *, today: date) -> DateRange:
     if text in ("上个月底", "上月底", "月末"):
         last_month = _shift_month(today, -1)
         end = _month_end(last_month)
-        return DateRange(end - timedelta(days=9), end, HIGH_CONFIDENCE, text)
+        # 「底」的宽度（10 天）是拍的，不是从表达推导出来的 -> 推算档
+        return DateRange(end - timedelta(days=9), end, APPROX_CONFIDENCE, text)
 
     # ---------- 年 ----------
     if text in ("今年", "本年"):
@@ -127,9 +138,16 @@ def resolve_date_hint(hint: str | None, *, today: date) -> DateRange:
     if text in ("去年", "上一年"):
         y = today.year - 1
         return DateRange(date(y, 1, 1), date(y, 12, 31), HIGH_CONFIDENCE, text)
-    if text in ("去年底", "上年底", "年底"):
+    if text in ("去年底", "上年底"):
         y = today.year - 1
-        return DateRange(date(y, 10, 1), date(y, 12, 31), HIGH_CONFIDENCE, text)
+        return DateRange(date(y, 10, 1), date(y, 12, 31), APPROX_CONFIDENCE, text)
+    # `年底` 单独说时指**今年**年底 —— 之前和「去年底」共用一个分支，
+    # 于是 2026 年说「年底」会返回 2025 年 Q4。窗口宽度沿用 Q4（与去年底一致），
+    # 不引入新的猜测。
+    if text == "年底":
+        return DateRange(
+            date(today.year, 10, 1), date(today.year, 12, 31), APPROX_CONFIDENCE, text
+        )
 
     # ---------- 兜底 ----------
     return DateRange(today, None, FALLBACK_CONFIDENCE)
