@@ -50,6 +50,11 @@ class ForgetCandidate:
     #: 被有效引用次数（A10 第 5 类硬信号）：`confirmed_by_use` 累计值。
     #: 默认 0 = 从未被引用，不触发保护。
     confirmed_by_use: int = 0
+    #: 事件级邻域（spec 022）：通过共享实体能到达的**其它 Event** 数量。
+    #:
+    #: `None` 有明确含义：**图不可用**，此时一律不判孤岛。
+    #: 不能当成 0 处理 —— 那等于「查不了」=「全部孤立」= 图抖动时全员加速淘汰。
+    neighbor_events: int | None = None
     #: 人工裁决（D5 resolve）。`None` = 还没人看过；`keep` / `delete` 都是终局。
     review_verdict: str | None = None
     #: 仅用于管理接口展示，不参与分桶判定
@@ -99,6 +104,9 @@ def classify(
     protect_importance: float,
     graph_hub_degree: int = 8,
     confirmed_min: int = 2,
+    island_max_neighbors: int = 0,
+    island_min_events: int = 50,
+    namespace_events: int = 0,
 ) -> ForgetVerdict:
     """把一条卡分进三桶之一。
 
@@ -121,6 +129,8 @@ def classify(
         raise ValueError(f"protect_importance 必须在 [0,1]：{protect_importance}")
     if graph_hub_degree < 0 or confirmed_min < 0:
         raise ValueError("graph_hub_degree / confirmed_min 不能为负")
+    if island_max_neighbors < 0 or island_min_events < 0:
+        raise ValueError("island_max_neighbors / island_min_events 不能为负")
 
     created = candidate.created_at or today
     age = _days_between(today, created)
@@ -175,14 +185,36 @@ def classify(
     if candidate.importance >= protect_importance:
         return verdict(BUCKET_NEED_REVIEW, "high_importance")
 
+    # ---- 5.5) 孤岛判定（spec 022）----
+    #
+    # 孤岛 = 在**事件图**里几乎走不到别的事件。
+    # 效果只是把「多久算久」的门槛减半，**不新增删除路径** ——
+    # 下面步骤 6 的四个条件一个都不少，孤岛只是让 idle 更快达标。
+    #
+    # 三重保护，缺一条都会在冷启动阶段误伤：
+    #   ① `island_max_neighbors=0` 默认关闭（与 graph_hub_degree 的 0=关 一致）
+    #   ② `namespace_events < island_min_events` 时不判 —— 数据少时的孤立
+    #      不是孤岛，是还没积累
+    #   ③ `neighbor_events is None` 时不判 —— 图不可用不能当成「没有邻居」
+    island = False
+    if (
+        island_max_neighbors > 0
+        and namespace_events >= island_min_events
+        and candidate.neighbor_events is not None
+        and candidate.neighbor_events <= island_max_neighbors
+    ):
+        island = True
+
+    effective_idle_days = idle_days // 2 if island else idle_days
+
     # ---- 6) 淘汰条件：四个必须**同时**满足 ----
     if (
-        idle >= idle_days
+        idle >= effective_idle_days
         and candidate.recall_count < min_recalls
         and age > grace_days
         and candidate.retention == "normal"
     ):
-        return verdict(BUCKET_SAFE_TO_DELETE, "idle_and_unrecalled")
+        return verdict(BUCKET_SAFE_TO_DELETE, "island_and_unrecalled" if island else "idle_and_unrecalled")
 
     # ---- 7) 其余：活跃但不够老 → 保护 ----
     return verdict(BUCKET_PROTECTED, "active")
@@ -198,6 +230,9 @@ def sweep(
     protect_importance: float,
     graph_hub_degree: int = 8,
     confirmed_min: int = 2,
+    island_max_neighbors: int = 0,
+    island_min_events: int = 50,
+    namespace_events: int = 0,
     dry_run: bool = True,
 ) -> SweepReport:
     """批量分类，产出分桶报告。
@@ -220,6 +255,9 @@ def sweep(
             protect_importance=protect_importance,
             graph_hub_degree=graph_hub_degree,
             confirmed_min=confirmed_min,
+            island_max_neighbors=island_max_neighbors,
+            island_min_events=island_min_events,
+            namespace_events=namespace_events,
         )
         for c in candidates
     ]

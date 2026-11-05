@@ -38,7 +38,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 
 from memory.config import Settings, load_settings
-from memory.services.graph_search import event_degrees
+from memory.services.graph_search import event_degrees, event_neighborhood
 from memory.services.vocab_version import VocabRegistry, effective_vocab
 from memory.core.forget_policy import (
     BUCKET_NEED_REVIEW,
@@ -700,6 +700,29 @@ def create_app(
 
         ns = _namespace(namespace)
         rows = _load_all(cfg, ns)
+
+        # **这个端点原来没查图**，于是 `graph_degree` 全是默认 0，
+        # `GRAPH_HUB_DEGREE` 的枢纽保护在这里从来没生效过 ——
+        # 和 `/admin/sweep` 的分桶结果因此不一致。现在两边统一。
+        degrees = event_degrees([c.event_id for c in rows], ns, settings=cfg)
+        if degrees is not None:
+            rows = [
+                replace(c, graph_degree=degrees.get(c.event_id, 0)) for c in rows
+            ]
+
+        neighborhood = event_neighborhood(
+            [c.event_id for c in rows], ns, settings=cfg
+        )
+        namespace_events = 0
+        if neighborhood is not None:
+            rows = [
+                replace(
+                    c, neighbor_events=neighborhood.neighbors.get(c.event_id, 0)
+                )
+                for c in rows
+            ]
+            namespace_events = neighborhood.total_events
+
         report = sweep(
             rows,
             today=date.today(),
@@ -707,6 +730,11 @@ def create_app(
             min_recalls=cfg.FORGET_MIN_RECALLS,
             grace_days=cfg.FORGET_GRACE_DAYS,
             protect_importance=cfg.PROTECT_IMPORTANCE_REVIEW,
+            graph_hub_degree=cfg.GRAPH_HUB_DEGREE,
+            confirmed_min=cfg.CONFIRMED_MIN,
+            island_max_neighbors=cfg.ISLAND_MAX_NEIGHBORS,
+            island_min_events=cfg.ISLAND_MIN_EVENTS,
+            namespace_events=namespace_events,
         )
         picked = report.by_bucket(bucket)
         summaries = {r.event_id: r.summary for r in rows}
@@ -1298,6 +1326,24 @@ def create_app(
                 replace(c, graph_degree=degrees.get(c.event_id, 0)) for c in rows
             ]
 
+        # 孤岛判定（spec 022）：事件级邻域 + namespace 事件总数。
+        # 图不可用时 neighborhood 返回 None —— 一律**不判孤岛**，
+        # 并标 graph_degraded。不能当成「没有邻居」：那等于图抖动时全员加速淘汰。
+        neighborhood = event_neighborhood(
+            [c.event_id for c in rows], ns, settings=cfg
+        )
+        namespace_events = 0
+        if neighborhood is None:
+            graph_degraded = True
+        else:
+            rows = [
+                replace(
+                    c, neighbor_events=neighborhood.neighbors.get(c.event_id, 0)
+                )
+                for c in rows
+            ]
+            namespace_events = neighborhood.total_events
+
         report = sweep(
             rows,
             today=date.today(),
@@ -1307,6 +1353,9 @@ def create_app(
             protect_importance=cfg.PROTECT_IMPORTANCE_REVIEW,
             graph_hub_degree=cfg.GRAPH_HUB_DEGREE,
             confirmed_min=cfg.CONFIRMED_MIN,
+            island_max_neighbors=cfg.ISLAND_MAX_NEIGHBORS,
+            island_min_events=cfg.ISLAND_MIN_EVENTS,
+            namespace_events=namespace_events,
         )
         summaries = {r.event_id: r.summary for r in rows}
         # 报告只抽样 SAFE_TO_DELETE，供人工判断误删率

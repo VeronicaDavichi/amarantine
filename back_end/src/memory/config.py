@@ -123,6 +123,15 @@ class Settings(BaseSettings):
     CONSOLIDATE_DUP_RATIO: float = 0.4
     CONSOLIDATE_LATENCY_MS: int = 300
     GRAPH_HUB_DEGREE: int = 8
+    #: 孤岛判定（spec 022）：事件级邻域 <= 此值视为孤立子图。
+    #:
+    #: **0 = 关闭（默认）**，与 `GRAPH_HUB_DEGREE` 的 `0=关` 惯例一致。
+    #: 关闭的理由不是「没做完」，是「冷启动阶段数据少，孤立是常态而非异常」——
+    #: 建议等 namespace 有 50+ 条真实记忆后再设为 2。
+    ISLAND_MAX_NEIGHBORS: int = 0
+    #: 孤岛判定的数据量门槛：namespace 事件数低于此值时不判孤岛。
+    #: 没有它，只有 3 条记忆时会把全部判成孤岛并一起加速淘汰。
+    ISLAND_MIN_EVENTS: int = 50
     CLUSTER_MIN_SIZE: int = 15
     CLUSTER_MERGE_SIM: float = 0.85
     COLD_QUERY_P95_MS: int = 800

@@ -393,6 +393,115 @@ def search_by_entities(
                 logger.warning("关闭 Neo4j driver 失败", exc_info=True)
 
 
+# ---------------------------------------------------------------- 孤岛判定（spec 022）
+
+#: 事件级邻域：通过共享 `MENTIONS`/`INVOLVES` 实体能到达的**其它 Event** 数量。
+#:
+#: **不能用「邻居平均度数」** —— 实测过的反例：
+#: 张三事件的邻居是 `[Time(3), Person(1), Entity(1), Entity(1), Action(1)]`，
+#: 平均 1.40；而它其实是最核心的记忆。原因是 Time/Entity/Action 天然只连
+#: 一个事件，它们的度数反映的是「实体被提到几次」，不是「事件孤不孤立」。
+#:
+#: 正确的问法是：从这个事件出发，能不能走到**别的事件**。
+_NEIGHBOR_CYPHER = """
+UNWIND $event_ids AS eid
+MATCH (e:Event {namespace: $namespace, event_id: eid})
+OPTIONAL MATCH (e)-[:MENTIONS|INVOLVES]->(shared)<-[:MENTIONS|INVOLVES]-(other:Event)
+WHERE other IS NULL OR other <> e
+RETURN eid AS event_id, count(DISTINCT other) AS neighbor_events
+"""
+
+#: namespace 里的事件总数（数据量门槛用）。
+_TOTAL_EVENTS_CYPHER = """
+MATCH (e:Event {namespace: $namespace})
+RETURN count(e) AS total
+"""
+
+
+@dataclass(frozen=True)
+class EventNeighborhood:
+    """一次查询拿到「每个事件的邻域」+「namespace 总量」。
+
+    合在一起返回是为了少一次往返 —— 数据量门槛和邻域数是同时需要的。
+    """
+
+    #: event_id -> 能到达的其它 Event 数
+    neighbors: dict[str, int]
+    #: namespace 里 Event 节点总数（判断数据够不够支撑孤岛判定）
+    total_events: int
+
+
+def event_neighborhood(
+    event_ids: list[str],
+    namespace: str,
+    *,
+    settings: Any,
+    driver: Any | None = None,
+    timeout_s: float = 3.0,
+) -> EventNeighborhood | None:
+    """批量查事件级邻域，供孤岛判定使用（spec 022）。
+
+    **返回值有两种含义，不要混淆**：
+
+    - `EventNeighborhood`：正常
+    - `None`：**图不可用**。调用方必须**不判孤岛**（`island=False`）并标注
+      `graph_degraded=true`。
+      不能把「查不了」当成「没有邻居」—— 那会在图抖动时把全库当成孤岛，
+      一次性加速淘汰所有记忆。与 `event_degrees` 的 `None` 语义一致。
+
+    Args:
+        event_ids: 要查的 event_id 列表。
+        namespace: 记忆域。
+        settings: 提供 Neo4j 连接参数。
+        driver: 可注入的 driver（测试用）。
+        timeout_s: 连接超时。
+
+    Returns:
+        `EventNeighborhood`，或 `None` 表示图不可用。
+    """
+    if not event_ids:
+        return EventNeighborhood(neighbors={}, total_events=0)
+
+    owns_driver = driver is None
+    drv = driver
+    try:
+        if drv is None:
+            from neo4j import GraphDatabase
+
+            drv = GraphDatabase.driver(
+                settings.NEO4J_URI,
+                auth=(settings.NEO4J_USER, settings.NEO4J_PASSWORD),
+                connection_timeout=timeout_s,
+            )
+        with drv.session() as session:
+            records = session.run(
+                _NEIGHBOR_CYPHER,
+                event_ids=list(event_ids),
+                namespace=namespace,
+            )
+            neighbors = {
+                r["event_id"]: int(r["neighbor_events"] or 0) for r in records
+            }
+            total = session.run(
+                _TOTAL_EVENTS_CYPHER, namespace=namespace
+            ).single()
+            total_events = int(total["total"]) if total else 0
+            return EventNeighborhood(
+                neighbors=neighbors, total_events=total_events
+            )
+    except Exception as exc:  # noqa: BLE001 - 图不可用必须让调用方知道，但不抛
+        logger.warning(
+            "查事件邻域失败（将降级为「不判孤岛」）: %s namespace=%s", exc, namespace
+        )
+        return None
+    finally:
+        if owns_driver and drv is not None:
+            try:
+                drv.close()
+            except Exception:  # noqa: BLE001
+                logger.warning("关闭 Neo4j driver 失败", exc_info=True)
+
+
 # ---------------------------------------------------------------- A10 第 4 类硬信号
 
 _DEGREE_CYPHER = """
