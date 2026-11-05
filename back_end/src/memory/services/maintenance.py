@@ -49,6 +49,33 @@ TICK_S = 30.0
 RECONCILE_EVERY_S = 86400.0
 #: 单次 tick 最多补几条（防止一条堆积把一次 tick 拖死）
 RETRY_BATCH = 50
+#: 遗忘扫描的兜底间隔（秒）。真正用的是 `FORGET_SWEEP_DAYS * 86400`，
+#: 这个只在配置异常（<=0）时兜底。
+SWEEP_EVERY_FALLBACK_S = 30 * 86400.0
+
+
+@dataclass
+class ForgetSweepSummary:
+    """一次遗忘扫描的**汇总**，不含全部 verdicts。
+
+    为什么不装 verdicts：一次扫描可能有几千张卡，装进 TickReport 会让
+    日志和内存都爆。需要明细时调 `POST /admin/forget/sweep`（实时算）。
+    """
+
+    total: int = 0
+    protected: int = 0
+    need_review: int = 0
+    safe_to_delete: int = 0
+    #: 图不可用 → 枢纽保护和孤岛判定都没生效
+    graph_degraded: bool = False
+    #: 抽样几条「最该删」的，供人工判断误删率（A12 闸门）
+    sample_ids: list[str] = field(default_factory=list)
+
+    @property
+    def did_anything(self) -> bool:
+        # 扫描总是有产出（哪怕全是 PROTECTED），但只有「有候选可删」
+        # 才值得打日志 —— 每天一条「0 个可删」的 INFO 是噪音。
+        return self.safe_to_delete > 0 or self.need_review > 0
 
 
 @dataclass
@@ -57,12 +84,17 @@ class TickReport:
 
     retry: RetryReport = field(default_factory=RetryReport)
     reconcile: ReconcileReport | None = None
+    sweep: ForgetSweepSummary | None = None
 
     @property
     def did_anything(self) -> bool:
-        return self.retry.attempted > 0 or (
-            self.reconcile is not None
-            and (self.reconcile.checked > 0 or self.reconcile.queued > 0)
+        return (
+            self.retry.attempted > 0
+            or (
+                self.reconcile is not None
+                and (self.reconcile.checked > 0 or self.reconcile.queued > 0)
+            )
+            or (self.sweep is not None and self.sweep.did_anything)
         )
 
 
@@ -114,6 +146,8 @@ class MaintenanceWorker:
         reconcile_every_s: float = RECONCILE_EVERY_S,
         retry_batch: int = RETRY_BATCH,
         reconcile_on_start: bool = True,
+        sweep_every_s: float | None = None,
+        sweep_on_start: bool = True,
     ) -> None:
         self._namespace = namespace
         self._settings = settings
@@ -127,6 +161,24 @@ class MaintenanceWorker:
             None if reconcile_on_start else datetime.now(timezone.utc)
         )
         self._last_reconcile_at: datetime | None = None
+
+        # ---- 遗忘扫描（spec 023）：FORGET_SWEEP_DAYS 的真正消费点 ----
+        #
+        # 配置是「天」，这里换成秒。<=0 时用兜底间隔而不是禁用 ——
+        # 一个配错的遗忘周期不该让扫描永久不跑。
+        days = getattr(settings, "FORGET_SWEEP_DAYS", 30)
+        default_sweep_s = (
+            float(days) * 86400.0 if days and days > 0 else SWEEP_EVERY_FALLBACK_S
+        )
+        self._sweep_every_s = max(
+            1.0, float(sweep_every_s) if sweep_every_s is not None else default_sweep_s
+        )
+        # `sweep_on_start=False` 时把下次时间推到未来，第一次 tick 不扫。
+        # 测试里用它：否则每次 TestClient 都会拉全量 Weaviate。
+        self._next_sweep_at: datetime | None = (
+            None if sweep_on_start else datetime.now(timezone.utc) + timedelta(seconds=self._sweep_every_s)
+        )
+        self._last_sweep_at: datetime | None = None
 
     @property
     def store(self) -> PendingTaskStore:
@@ -168,7 +220,57 @@ class MaintenanceWorker:
                 seconds=self._reconcile_every_s
             )
 
+        if self._due_for_sweep(moment):
+            report.sweep = self._run_sweep()
+            self._last_sweep_at = moment
+            self._next_sweep_at = moment + timedelta(seconds=self._sweep_every_s)
+
         return report
+
+    def _due_for_sweep(self, moment: datetime) -> bool:
+        if self._next_sweep_at is None:
+            return True
+        return moment >= self._next_sweep_at
+
+    def _run_sweep(self) -> ForgetSweepSummary:
+        """跑一次遗忘扫描。**只出报告，不删任何东西**。
+
+        `sweep()` 内部强制 `dry_run=True`（A12：误删率闸门未过之前不允许
+        自动删除），这里不绕过它 —— 定时扫描的价值是「持续积累误删率数据」，
+        不是「自动清理」。真要自动删，得先过闸门。
+        """
+        from memory.services.forget_scan import scan
+
+        try:
+            result = scan(self._settings, self._namespace)
+        except Exception as exc:  # noqa: BLE001 - 一次扫描失败不能拖死循环
+            logger.warning("遗忘扫描失败（已忽略）: %s", exc)
+            return ForgetSweepSummary()
+
+        buckets = result.report.buckets
+        summary = ForgetSweepSummary(
+            total=result.total,
+            protected=buckets.get("PROTECTED", 0),
+            need_review=buckets.get("NEED_REVIEW", 0),
+            safe_to_delete=buckets.get("SAFE_TO_DELETE", 0),
+            graph_degraded=result.graph_degraded,
+            sample_ids=[
+                v.event_id
+                for v in result.report.by_bucket("SAFE_TO_DELETE")[:5]
+            ],
+        )
+        if summary.did_anything:
+            logger.info(
+                "遗忘扫描 namespace=%s 共%d 保护%d/复核%d/可删%d 图降级=%s 样例=%s",
+                self._namespace,
+                summary.total,
+                summary.protected,
+                summary.need_review,
+                summary.safe_to_delete,
+                summary.graph_degraded,
+                summary.sample_ids,
+            )
+        return summary
 
     async def run_forever(self) -> None:
         """无限循环。任何异常都吞掉重来 —— 这个循环死了就没人补课了。"""
@@ -183,11 +285,16 @@ class MaintenanceWorker:
                 report = await asyncio.to_thread(self.tick)
                 if report.did_anything:
                     logger.info(
-                        "维护 tick：补跑 尝试%d/补上%d 对账 检查%d/入队%d",
+                        "维护 tick：补跑 尝试%d/补上%d 对账 检查%d/入队%d 遗忘扫描 %s",
                         report.retry.attempted,
                         report.retry.recovered,
                         report.reconcile.checked if report.reconcile else 0,
                         report.reconcile.queued if report.reconcile else 0,
+                        (
+                            f"共{report.sweep.total}/可删{report.sweep.safe_to_delete}"
+                            if report.sweep is not None
+                            else "无"
+                        ),
                     )
             except asyncio.CancelledError:
                 logger.info("维护循环收到取消，退出")

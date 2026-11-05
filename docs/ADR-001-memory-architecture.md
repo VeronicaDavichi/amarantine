@@ -269,7 +269,7 @@ query 里的「上次」「最近」「去年这时候」不解析成**绝对区
 | `LABEL_DUAL_RUN` | `true` | 打标是否双跑校验（防漂移） |
 | `LABEL_LLM_TEMP` | `0.2` | 打标 LLM 温度，低温度降漂移 |
 | `LABEL_REVIEW_BATCH` | `50` | 周度标签复核批量 |
-| `FORGET_SWEEP_DAYS` | `30` | 遗忘扫描周期 |
+| `FORGET_SWEEP_DAYS` | `30` | 遗忘扫描周期（天）。**已接线**：`MaintenanceWorker` 按此周期调 `forget_scan.scan()`，见 spec 023 |
 | `FORGET_IDLE_DAYS` | `180` | 低召回判定空闲期 |
 | `FORGET_GRACE_DAYS` | `90` | 新条目保护期（防新条目饥饿） |
 | `FORGET_MIN_RECALLS` | `1` | 低于此值视为低召回 |
@@ -311,6 +311,31 @@ query 里的「上次」「最近」「去年这时候」不解析成**绝对区
 | `GUIDE_CHECK_CRON` | `0 9 * * 1` | 指南一致性校验的 cron 表达式（用户自行装 crontab，见 4.10） |
 | `LOG_FILE` | `logs/memory.log` | 日志文件路径；**日志不走 stdout/stderr**（全局约定） |
 | `LOG_LEVEL` | `INFO` | 日志级别 |
+
+#### 配置值的「关闭」惯例不统一（已知陷阱）
+
+同一个 `0`，在不同配置上含义相反。这不是设计，是历史遗留，但必须知道：
+
+| 配置 | `0` 的含义 | 依据 |
+|---|---|---|
+| `GRAPH_HUB_DEGREE` | **关闭**这条硬信号 | `graph_hub_degree > 0` 才判定 |
+| `ISLAND_MAX_NEIGHBORS` | **关闭**孤岛判定 | `island_max_neighbors > 0` 才判定 |
+| `FORGET_IDLE_DAYS` | **立即淘汰**（不是关闭） | `idle >= 0` 恒成立 |
+| `FORGET_GRACE_DAYS` | 无宽限（新条目也进桶） | `age > grace_days` |
+| `FORGET_MIN_RECALLS` | 召回 0 次也算「够召回」→ 不淘汰 | `recall_count < 0` 恒假 |
+| `CONFIRMED_MIN` | 关闭这条硬信号 | `confirmed_by_use >= 0` 恒真 → 全保护？ |
+
+**`FORGET_IDLE_DAYS=0` 特别说明**：它不是「关闭淘汰」的开关。
+`idle >= 0` 永远成立，所以效果是**立即淘汰所有满足其它三条件的卡**。
+想关闭淘汰请把值调到一个很大的数（如 `99999`），不要设 0。
+
+**`FORGET_MIN_RECALLS=0` 也要小心**：`recall_count < 0` 永远不成立，
+于是「低召回」这个条件永不满足 → **不会有任何卡进入淘汰桶**。
+它实际上是个「关闭淘汰」的开关，和 `FORGET_IDLE_DAYS=0` 的方向正好相反。
+
+这两个值的组合能产生四种完全不同的行为，而 ADR 之前一个都没写。
+spec 023 把现状钉进了测试（`test_forget_sweep_wiring.py::test_idle_days_zero_means_immediate_not_disabled`），
+将来要改语义得同时改这里。
 
 ### D7 遗忘策略：LRU 只作用于派生层
 

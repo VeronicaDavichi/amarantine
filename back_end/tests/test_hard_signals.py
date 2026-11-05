@@ -232,8 +232,11 @@ def test_sweep_marks_graph_degraded(monkeypatch, tmp_path) -> None:
     settings.ADMIN_TOKEN = "tok"
     settings.DATABASE_URL = f"sqlite:///{(tmp_path / 'sweep.db').as_posix()}"
 
+    import memory.services.forget_scan as fscan
+
     monkeypatch.setattr(mod, "_load_all", lambda cfg, ns: [])
-    monkeypatch.setattr(mod, "event_degrees", lambda *a, **k: None)
+    # 查图已从 admin_http 移到 forget_scan（spec 023），patch 目标跟着走
+    monkeypatch.setattr(fscan, "event_degrees", lambda *a, **k: None)
 
     client = TestClient(mod.create_app(settings))
     r = client.post(
@@ -256,8 +259,10 @@ def test_sweep_not_degraded_when_graph_ok(monkeypatch, tmp_path) -> None:
     settings.ADMIN_TOKEN = "tok"
     settings.DATABASE_URL = f"sqlite:///{(tmp_path / 'sweep2.db').as_posix()}"
 
+    import memory.services.forget_scan as fscan
+
     monkeypatch.setattr(mod, "_load_all", lambda cfg, ns: [])
-    monkeypatch.setattr(mod, "event_degrees", lambda *a, **k: {})
+    monkeypatch.setattr(fscan, "event_degrees", lambda *a, **k: {})
 
     client = TestClient(mod.create_app(settings))
     r = client.post(

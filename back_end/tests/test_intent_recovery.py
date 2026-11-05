@@ -296,7 +296,14 @@ def test_tick_retries(store: PendingTaskStore, monkeypatch) -> None:
     _write(store, graph_writer=_bad_graph)
     monkeypatch.setattr(go, "write_event_node", lambda card, **kw: OutboxResult(ok=True))
 
-    worker = MaintenanceWorker(NS, load_settings(), store=store, reconcile_every_s=1e9, reconcile_on_start=False)
+    worker = MaintenanceWorker(
+        NS,
+        load_settings(),
+        store=store,
+        reconcile_every_s=1e9,
+        reconcile_on_start=False,
+        sweep_on_start=False,
+    )
     report = worker.tick(now=NOW + timedelta(minutes=5))
     assert report.retry.recovered == 1
 
@@ -311,7 +318,14 @@ def test_tick_never_raises(store: PendingTaskStore, monkeypatch) -> None:
         raise RuntimeError("kaput")
 
     monkeypatch.setattr(go, "write_event_node", _explode)
-    worker = MaintenanceWorker(NS, load_settings(), store=store, reconcile_every_s=1e9, reconcile_on_start=False)
+    worker = MaintenanceWorker(
+        NS,
+        load_settings(),
+        store=store,
+        reconcile_every_s=1e9,
+        reconcile_on_start=False,
+        sweep_on_start=False,
+    )
     worker.tick(now=NOW)  # 不该抛
 
 
@@ -328,7 +342,9 @@ def test_reconcile_runs_on_first_tick_only_daily(store: PendingTaskStore, monkey
         return ReconcileReport()
 
     monkeypatch.setattr(m, "reconcile_graph", _fake_reconcile)
-    worker = MaintenanceWorker(NS, load_settings(), store=store, reconcile_every_s=86400)
+    worker = MaintenanceWorker(
+        NS, load_settings(), store=store, reconcile_every_s=86400, sweep_on_start=False
+    )
 
     worker.tick(now=NOW)
     assert len(calls) == 1, "第一次 tick 要对账（补跨库窗口最好的时机）"
