@@ -187,6 +187,9 @@ def make_llm_labeler(
                 settings,
                 system=_SYSTEM,
                 max_tokens=512,
+                # 低温度降漂移（ADR C.B10）：同一句话两次打标结果要一致，
+                # 否则 LABEL_DUAL_RUN 的一致性校验天然偏低，看起来像模型不稳。
+                temperature=settings.LABEL_LLM_TEMP,
                 client=client,
                 timeout_s=timeout_s,
             )

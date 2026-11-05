@@ -30,7 +30,7 @@ def _patch_chat(monkeypatch, *, reply: str | None = None, exc: Exception | None 
     """把模块里的 chat 换成假实现。"""
     calls: list[dict[str, Any]] = []
 
-    def fake(messages, settings, *, system=None, max_tokens=1024, client=None, timeout_s=None):
+    def fake(messages, settings, *, system=None, max_tokens=1024, client=None, timeout_s=None, **kw):
         calls.append({"messages": messages, "system": system, "max_tokens": max_tokens})
         if exc is not None:
             raise exc

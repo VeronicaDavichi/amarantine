@@ -854,7 +854,7 @@ def create_app(
         dependencies=[Depends(require_token)],
     )
     def list_label_review(
-        limit: int = Query(default=50, ge=1, le=500),
+        limit: int | None = Query(default=None, ge=1, le=500),
         namespace: str | None = Query(default=None),
     ) -> LabelReviewListResponse:
         """列出待复核的**打标分歧**（B5）。
@@ -864,9 +864,13 @@ def create_app(
 
         数据来自 `LABEL_REVIEW` 表（规则层与 LLM 层不一致时才入队），
         不需要实时扫 Weaviate，所以比 `/admin/review` 便宜。
+
+        `limit` 不给时用 `LABEL_REVIEW_BATCH`（周度复核批量）。
+        原来这里是硬编码 50，配置项形同虚设（spec 025）。
         """
         ns = _namespace(namespace)
         queue = queue_from_settings(cfg)
+        effective = limit if limit is not None else cfg.LABEL_REVIEW_BATCH
         items = [
             LabelReviewEntry(
                 event_id=it.event_id,
@@ -876,7 +880,7 @@ def create_app(
                 agreement=it.agreement,
                 created_at=it.created_at,
             )
-            for it in queue.list_pending(ns, limit=limit)
+            for it in queue.list_pending(ns, limit=effective)
         ]
         return LabelReviewListResponse(items=items, total=queue.count_pending(ns))
 

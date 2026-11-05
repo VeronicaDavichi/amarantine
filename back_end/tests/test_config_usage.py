@@ -42,9 +42,9 @@ WHITELIST: dict[str, str] = {
     # ---- 未接线的真参数（有价值，但本 spec 范围外）----
     "ENTITY_ALIAS_SIM": "实体消歧阈值写死，C.B3 未接配置",
     "GUIDE_CHECK_CRON": "文档一致性校验靠手动跑，没有定时器",
-    "LABEL_LLM_TEMP": "LLM 打标温度写死",
-    "LABEL_REVIEW_BATCH": "复核队列批量大小未接",
-    "TOKENIZER": "分词器写死 cl100k_base，未接配置",
+    "TOKENIZER": (
+        "有意不接（不是遗漏）：_estimate_tokens 用启发式估算，预算只用于截断防爆窗。换 tiktoken 会拖进依赖 + 需下载词表，离线部署会炸。详见 ADR D7 配置表"
+    ),
 }
 
 

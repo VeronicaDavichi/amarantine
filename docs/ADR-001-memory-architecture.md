@@ -292,7 +292,7 @@ query 里的「上次」「最近」「去年这时候」不解析成**绝对区
 | `RECENCY_HALF_LIFE_DAYS` | `180` | 时效半衰期，见 C.B1 |
 | `W_TIME_BASE` | `0.7` | 时效影响力下限（时效最多影响 30%），见 C.B1 |
 | `W_IMP_BASE` | `0.8` | importance 影响力下限（最多影响 20%），见 C.B1 |
-| `TOKENIZER` | `cl100k_base` | token 计数口径，见 C.B2 |
+| `TOKENIZER` | `cl100k_base` | token 计数口径，见 C.B2。**有意不接**：`recall._estimate_tokens()` 用启发式估算（中文 1 字 1 token、英文 4 字符 1 token），因为预算只用于**截断防爆窗**，不是精确计费；引入 tiktoken 会拖进额外依赖并需要下载词表（离线部署会炸）。将来若要做精确计费再启用本项 |
 | `ENTITY_ALIAS_SIM` | `0.92` | 实体消歧向量阈值，见 C.B3 |
 | `TIME_CONF_MIN` | `0.5` | 时间解析信心下限，见 C.B9 |
 | `LABEL_DUAL_RUN_JACCARD` | `0.8` | 双跑一致阈值，见 C.B10 |

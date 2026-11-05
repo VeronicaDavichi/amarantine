@@ -76,6 +76,7 @@ def chat(
     *,
     system: str | None = None,
     max_tokens: int = 1024,
+    temperature: float | None = None,
     client: httpx.Client | None = None,
     timeout_s: float | None = None,
 ) -> str:
@@ -86,6 +87,8 @@ def chat(
         settings: 提供 provider / base_url / model / api_key。
         system: 系统提示（Anthropic 是顶层参数，OpenAI 是首条消息）。
         max_tokens: 输出上限；带 thinking 的模型要给足，否则可能空返回。
+        temperature: 采样温度。`None` 时**不传这个字段**（用服务端默认），
+            保持其他调用方行为不变。打标要传低温度降漂移（`LABEL_LLM_TEMP`）。
         client: 可注入的 httpx.Client（测试用）。
         timeout_s: 超时秒数，缺省取 `LLM_TIMEOUT_MS`。
 
@@ -109,6 +112,8 @@ def chat(
             }
             if system:
                 payload["system"] = system
+            if temperature is not None:
+                payload["temperature"] = temperature
             url = f"{base}/v1/messages"
         else:
             payload = {
@@ -117,6 +122,8 @@ def chat(
                 "messages": ([{"role": "system", "content": system}] if system else [])
                 + messages,
             }
+            if temperature is not None:
+                payload["temperature"] = temperature
             url = f"{base}/v1/chat/completions"
 
         try:
