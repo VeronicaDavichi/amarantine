@@ -238,3 +238,56 @@ def test_negative_island_params_rejected() -> None:
         run(make(), island_max_neighbors=-1)
     with pytest.raises(ValueError):
         run(make(), island_min_events=-1)
+
+
+# ---------------- 边界：idle_days // 2 不能把门槛归零 ----------------
+#
+# 这组是修完 bug 后补的。原来 `idle_days // 2` 在 idle_days=1 时得 0，
+# 门槛归零后 `idle >= 0` 永远成立 —— 连**刚刚被召回过的**孤岛卡都会
+# 被判 SAFE_TO_DELETE。实测复现过，不是理论风险。
+
+def test_tiny_idle_days_does_not_zero_out_the_threshold() -> None:
+    """`idle_days=1` + 孤岛 → 刚召回过的卡**不能**被淘汰。"""
+    card = make(
+        neighbor_events=0,
+        last_recalled_at=TODAY,           # idle = 0
+        created_at=TODAY - timedelta(days=300),
+    )
+    got = run(card, island_max_neighbors=2, idle_days=1)
+    assert got.bucket != BUCKET_SAFE_TO_DELETE, (
+        "门槛被 1//2=0 归零了，刚召回过的卡也会被判淘汰"
+    )
+
+
+def test_tiny_idle_days_with_one_day_idle_is_still_eligible() -> None:
+    """`idle_days=1` 时，闲置 1 天的孤岛卡**应该**淘汰（门槛 floor 到 1）。"""
+    card = make(
+        neighbor_events=0,
+        last_recalled_at=TODAY - timedelta(days=1),
+        created_at=TODAY - timedelta(days=300),
+    )
+    got = run(card, island_max_neighbors=2, idle_days=1)
+    assert got.bucket == BUCKET_SAFE_TO_DELETE
+
+
+def test_idle_days_zero_keeps_existing_semantics() -> None:
+    """`idle_days=0` 是既有的「立即」语义，孤岛不改变它。
+
+    ADR 没定义 0 的含义，这里只保证「孤岛没有偷偷改它」——
+    真要重新定义 0，得单独议。
+    """
+    card = make(neighbor_events=0, last_recalled_at=TODAY, created_at=TODAY - timedelta(days=300))
+    got = run(card, island_max_neighbors=2, idle_days=0)
+    # idle=0 >= 0 成立 -> 淘汰（既有行为）
+    assert got.bucket == BUCKET_SAFE_TO_DELETE
+
+
+def test_two_days_halves_to_one() -> None:
+    """`idle_days=2` → 孤岛门槛 1，闲置 1 天即淘汰。"""
+    card = make(
+        neighbor_events=0,
+        last_recalled_at=TODAY - timedelta(days=1),
+        created_at=TODAY - timedelta(days=300),
+    )
+    got = run(card, island_max_neighbors=2, idle_days=2)
+    assert got.reason == "island_and_unrecalled"

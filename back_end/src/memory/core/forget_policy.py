@@ -205,7 +205,16 @@ def classify(
     ):
         island = True
 
-    effective_idle_days = idle_days // 2 if island else idle_days
+    # `max(1, ...)` 不是防御性编程，是修一个真实的边界 bug：
+    # `idle_days=1` 时 `1 // 2 == 0`，门槛归零后 `idle >= 0` 永远成立，
+    # 连**刚刚被召回过的**孤岛卡都会被判淘汰（实测复现过）。
+    #
+    # `idle_days == 0` 保持原样：那是既有的「立即」语义（虽然 ADR 没明说），
+    # 孤岛不该改变它 —— 要改得单独议，不能顺手改。
+    if island and idle_days > 0:
+        effective_idle_days = max(1, idle_days // 2)
+    else:
+        effective_idle_days = idle_days
 
     # ---- 6) 淘汰条件：四个必须**同时**满足 ----
     if (

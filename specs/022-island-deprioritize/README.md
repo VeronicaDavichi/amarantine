@@ -291,3 +291,64 @@ ISLAND_MIN_EVENTS=50      # 且 namespace 至少 50 条记忆
 
 `idle_days // 2` 这个系数是拍的（没有数据支撑）。设计成常数而非配置项，
 理由写在 spec 里：多一个配置项就多一个「配了但没人调」的字段。
+
+
+## 修复：`idle_days // 2` 在极小配置下会把门槛归零
+
+用户问「`idle_days // 2` 是什么意思」时顺手验了边界，发现一个真 bug。
+
+### 复现
+
+```
+idle_days=1  →  1 // 2 == 0  →  effective_idle_days = 0
+                              →  idle >= 0 永远成立
+```
+
+后果：**连刚刚被召回过的孤岛卡都会被判 SAFE_TO_DELETE**。
+
+```
+刚刚被召回过的孤岛卡（idle=0），idle_days=1
+  修之前 -> SAFE_TO_DELETE  island_and_unrecalled   ← 明显错误
+  修之后 -> PROTECTED       active
+```
+
+默认 `FORGET_IDLE_DAYS=180` 不会触发（180//2=90），但配置成 1 或 2 就会。
+而且它是**静默的**：报告里看起来一切正常，只是淘汰得比预期激进。
+
+### 修法
+
+```python
+if island and idle_days > 0:
+    effective_idle_days = max(1, idle_days // 2)
+else:
+    effective_idle_days = idle_days
+```
+
+两个细节：
+
+1. **`max(1, ...)`** —— 门槛至少 1 天。`idle_days=1` 时无法减半，
+   就保持 1（不加速），而不是归零（立即）。
+2. **`idle_days == 0` 保持原样** —— 它现在是既有的「立即」语义
+   （ADR 没定义 0 的含义，但既成事实）。孤岛不该顺手改它，
+   要重新定义得单独议。
+
+### 补的测试
+
+- `test_tiny_idle_days_does_not_zero_out_the_threshold` —— 刚召回过的卡不淘汰
+- `test_tiny_idle_days_with_one_day_idle_is_still_eligible` —— 闲置 1 天仍淘汰
+- `test_idle_days_zero_keeps_existing_semantics` —— 0 的语义没被偷偷改
+- `test_two_days_halves_to_one` —— 2 → 1 的减半正常
+
+### 一个没修的既有问题（记录，不顺手改）
+
+`idle_days == 0` 的语义**在 ADR 里没有定义**，实际行为是「立即淘汰所有满足
+条件的卡」。它可能被误当成「关闭淘汰」的哨兵值（毕竟 `GRAPH_HUB_DEGREE=0`
+就是关闭）。
+
+现在没改，理由是：改它要动既有行为，超出本 spec 范围。
+但值得单独议 —— 一个能静默触发全库淘汰的配置值，不该没有文档。
+
+### 修正后的计数
+
+- `test_island_policy.py`：20 → **24** 条
+- 全量：1056 → **1060 passed**
