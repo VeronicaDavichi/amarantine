@@ -35,6 +35,7 @@ from typing import Any
 
 from memory.config import Settings
 from memory.services.recall_count import db_path_from_settings
+from memory.services.sqlite_conn import open_db
 
 logger = logging.getLogger("memory.surname_decl")
 
@@ -89,7 +90,7 @@ class SurnameRegistry:
         self._ensure()
 
     def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self._path, timeout=10)
+        conn = open_db(self._path)  # spec 024：并发参数由 DB_BUSY_TIMEOUT_MS 决定
         conn.row_factory = sqlite3.Row
         return conn
 

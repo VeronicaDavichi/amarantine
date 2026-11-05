@@ -14,6 +14,8 @@ from pathlib import Path
 
 from memory.config import Settings
 
+from memory.services.sqlite_conn import open_db
+
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS directive_usage (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -44,8 +46,7 @@ class DirectiveCounter:
             conn.executescript(_SCHEMA)
 
     def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self._path, timeout=5.0)
-        conn.execute("PRAGMA journal_mode=WAL")
+        conn = open_db(self._path)  # spec 024：并发参数由 DB_BUSY_TIMEOUT_MS 决定
         return conn
 
     def count_pinned(self, namespace: str, *, now: datetime) -> int:

@@ -305,12 +305,44 @@ query 里的「上次」「最近」「去年这时候」不解析成**绝对区
 | `EMOTION_BOOST` | `0.15` | 情绪强度对 importance 的加成，见 C.B13 |
 | `EXPLICIT_IMPORTANT_FLOOR` | `0.85` | 显式「重要」的 importance 下限，见 C.B13 |
 | `DATABASE_URL` | `sqlite:///./data/memory.db` | 关系库连接串；可切 `postgresql://...` |
-| `SQLITE_WAL` | `true` | WAL 模式，缓解多 agent 并发写 |
-| `DB_BUSY_TIMEOUT_MS` | `5000` | SQLite 锁等待上限 |
+| `SQLITE_WAL` | `true` | WAL 模式，缓解多 agent 并发写。**已接线**（spec 024）：统一走 `sqlite_conn.open_db()`；库级持久属性，设 false 只对新建库生效 |
+| `DB_BUSY_TIMEOUT_MS` | `5000` | SQLite 锁等待上限。**已接线**（spec 024）：曾经是假实现——11 处各自硬编码 `timeout=5.0`/`10`，而 5000 恰好等于 Python 默认值，所以观察行为发现不了 |
 | `AGENT_KEY_HEADER` | `Authorization` | 认证头名（4.0 通用约定）。值等于 `Authorization` 时按 `Bearer <token>` 解析；其它名字则整个 header 值就是 token。**v0.10 曾写 `X-Agent-Key`，但实现从未采用，2026-11-04 审计把默认值改回实现（spec 014）** |
 | `GUIDE_CHECK_CRON` | `0 9 * * 1` | 指南一致性校验的 cron 表达式（用户自行装 crontab，见 4.10） |
 | `LOG_FILE` | `logs/memory.log` | 日志文件路径；**日志不走 stdout/stderr**（全局约定） |
 | `LOG_LEVEL` | `INFO` | 日志级别 |
+
+#### 假实现中最隐蔽的一类：默认值恰好等于硬编码值
+
+`DB_BUSY_TIMEOUT_MS` 曾经是假实现，但**任何观察行为的测试都发现不了**：
+
+```python
+sqlite3.connect(path, timeout=5.0)   # 硬编码
+```
+
+Python `sqlite3.connect()` 的 `timeout` 默认就是 `5.0` 秒，
+对应 `busy_timeout = 5000 ms` —— **恰好等于配置默认值**。
+
+于是：
+
+- 观察 `PRAGMA busy_timeout` → 5000，看起来完全正确
+- 改成 `DB_BUSY_TIMEOUT_MS=10000` 再看 → **纹丝不动**
+
+以往往检测「假实现」的手段在这一例上全部失效：
+
+| 手段 | 为什么失效 |
+|---|---|
+| 零引用扫描 | `timeout=5.0` 是消费点，扫不出来 |
+| 观察运行时行为 | 默认值恰好正确，看到的是对的 |
+| 读代码审查 | 能发现，但依赖有人正好看到那一行 |
+
+**唯一有效的检测形式是「改配置 → 行为必须变」。**
+
+所以从 spec 023 起，这类接线的验收标准固定成一条：
+**必须有测试证明改了配置行为跟着变**，而不是「默认值看起来对」。
+spec 024 用 meta-test 验证过这条测试本身有效（把实现改回硬编码 → 测试必须失败）。
+
+---
 
 #### 配置值的「关闭」惯例不统一（已知陷阱）
 

@@ -24,6 +24,7 @@ from typing import Any
 
 from memory.config import Settings
 from memory.services.raw_quote import db_path_from_settings
+from memory.services.sqlite_conn import open_db
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS embedding_index_meta (
@@ -78,8 +79,7 @@ class EmbeddingIndexMeta:
 
     def _connect(self) -> sqlite3.Connection:
         self._path.parent.mkdir(parents=True, exist_ok=True)
-        conn = sqlite3.connect(self._path, timeout=5.0)
-        conn.execute("PRAGMA journal_mode=WAL")
+        conn = open_db(self._path)  # spec 024：并发参数由 DB_BUSY_TIMEOUT_MS 决定
         conn.row_factory = sqlite3.Row
         return conn
 

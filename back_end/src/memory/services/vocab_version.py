@@ -18,6 +18,7 @@ from typing import Any
 
 from memory.config import Settings
 from memory.services.labeler import DEFAULT_TYPE_RULES, FALLBACK_TYPE
+from memory.services.sqlite_conn import open_db
 from memory.services.raw_quote import db_path_from_settings
 
 #: 历史卡没有版本号时的占位值。不是某个具体版本 —— 是「版本化之前」。
@@ -69,8 +70,7 @@ class VocabRegistry:
 
     def _connect(self) -> sqlite3.Connection:
         self._path.parent.mkdir(parents=True, exist_ok=True)
-        conn = sqlite3.connect(self._path, timeout=5.0)
-        conn.execute("PRAGMA journal_mode=WAL")
+        conn = open_db(self._path)  # spec 024：并发参数由 DB_BUSY_TIMEOUT_MS 决定
         conn.row_factory = sqlite3.Row
         return conn
 

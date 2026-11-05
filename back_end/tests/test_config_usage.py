@@ -40,8 +40,6 @@ WHITELIST: dict[str, str] = {
     "EMBEDDING_PROVIDER": "同上，当前硬编码 TEI 协议",
     "WEAVIATE_GRPC_PORT": "用 REST 而非 gRPC，保留了端口配置未接线",
     # ---- 未接线的真参数（有价值，但本 spec 范围外）----
-    "DB_BUSY_TIMEOUT_MS": "SQLite busy_timeout 写死，未接到配置",
-    "SQLITE_WAL": "WAL 恒定开启，未做成开关",
     "ENTITY_ALIAS_SIM": "实体消歧阈值写死，C.B3 未接配置",
     "GUIDE_CHECK_CRON": "文档一致性校验靠手动跑，没有定时器",
     "LABEL_LLM_TEMP": "LLM 打标温度写死",

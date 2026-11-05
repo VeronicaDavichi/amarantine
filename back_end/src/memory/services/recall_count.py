@@ -27,6 +27,8 @@ from pathlib import Path
 
 from memory.config import Settings
 
+from memory.services.sqlite_conn import open_db
+
 logger = logging.getLogger("memory.recall_count")
 
 #: 攒够多少条就落库
@@ -88,8 +90,7 @@ class RecallCounter:
 
     def _connect(self) -> sqlite3.Connection:
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
-        conn = sqlite3.connect(self._db_path, timeout=5.0)
-        conn.execute("PRAGMA journal_mode=WAL")
+        conn = open_db(self._db_path)  # spec 024：并发参数由 DB_BUSY_TIMEOUT_MS 决定
         return conn
 
     def _ensure_schema(self) -> None:
