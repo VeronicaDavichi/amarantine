@@ -34,3 +34,7 @@ logs/
 # OS
 .DS_Store
 Thumbs.db
+
+# 个人探针与待办（不入库）
+harness/q_*.py
+待办.md
