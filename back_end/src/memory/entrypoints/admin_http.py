@@ -476,6 +476,15 @@ class IngestRequest(BaseModel):
     dedupe_key: str
     turns: list[IngestTurn]
     namespace: str | None = None
+    #: 权威名册（spec 035）。数据源明确给出的人名列表，如 DingTalk 的
+    #: contacts / 群标题 / sender_name。
+    #:
+    #: **为什么必须随请求传**：`extract_entities` 跑在**服务进程**里，
+    #: 客户端脚本注册名册没用（那是另一个进程的模块级状态）。
+    #:
+    #: 有了名册，`孙柏林` 不会被 jieba 切成 `孙` + `柏林`（后者的
+    #: 「柏林」是德国首都，在词典里）。没有名册时行为与改动前一致。
+    roster: list[str] | None = None
 
 
 class IngestResponse(BaseModel):
@@ -1636,6 +1645,20 @@ def create_app(
         if not body.turns:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST, detail="turns 不能为空"
+            )
+
+        # 名册要在**切分之前**注册 —— `remember_event` 内部会调
+        # `extract_entities`，那时候名册必须已经在模块状态里。
+        if body.roster:
+            from memory.services import labeler as _labeler
+
+            added = _labeler.register_roster(body.roster)
+            logger.info(
+                "ingest 注册名册 %d 个（新增 %d，总计 %d）| job=%s",
+                len(body.roster),
+                added,
+                len(_labeler.roster_names()),
+                dedupe_key,
             )
 
         normalized = [normalize_turn(t.model_dump()) for t in body.turns]

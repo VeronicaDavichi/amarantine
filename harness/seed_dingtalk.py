@@ -67,6 +67,43 @@ def is_noise(text: str) -> bool:
     return len(stripped) < 3
 
 
+def collect_roster(data: dict) -> list[str]:
+    """从语料里抽权威名册（spec 035）。
+
+    三个来源，全部是**平台给的**，不需要用分词去猜：
+
+    1. 群标题里的成员名（`孙柏林,王勇,任泽昂,王婕` 逗号分隔）
+    2. 每条消息的 `sender`（发言人显示名）
+    3. 语料里显式给的 `_roster`（可选）
+
+    **为什么要传给服务端**：`extract_entities` 跑在服务进程里，
+    客户端注册名册没用（那是另一个进程的模块级状态）。
+    """
+    names: list[str] = []
+
+    title = str(data.get("title") or "")
+    for part in title.replace("，", ",").split(","):
+        w = part.strip()
+        # 群标题里可能有「工作通知:xxx」这种，只留像人名的
+        if 2 <= len(w) <= 4 and not any(c in w for c in ":：()（）[]【】"):
+            names.append(w)
+
+    for m in data.get("messages") or []:
+        sender = str(m.get("sender") or "").strip()
+        if 2 <= len(sender) <= 4:
+            names.append(sender)
+
+    for n in data.get("_roster") or []:
+        if isinstance(n, str) and n.strip():
+            names.append(n.strip())
+
+    # 去重保序
+    seen: dict[str, None] = {}
+    for n in names:
+        seen.setdefault(n, None)
+    return list(seen)
+
+
 def load_turns(path: pathlib.Path) -> tuple[str, str, list[dict]]:
     data = json.loads(path.read_text())
     cid = data["cid"]
@@ -108,6 +145,7 @@ def post_ingest(
     cid: str,
     turns: list[dict],
     suffix: str = "",
+    roster: list[str] | None = None,
 ) -> dict:
     ts_values = [t["ts"] for t in turns if t.get("ts")]
     window = f"{min(ts_values)[:10]}:{max(ts_values)[:10]}" if ts_values else "now"
@@ -129,6 +167,9 @@ def post_ingest(
         "dedupe_key": dedupe_key,
         "turns": turns,
         "namespace": namespace,
+        # 名册随请求走：服务端 `extract_entities` 才知道这些人名是完整的
+        # （否则「孙柏林」会被切成「柏林」）
+        "roster": roster or [],
     }
     r = httpx.post(
         f"{base_url}/admin/ingest",
@@ -178,12 +219,15 @@ def main() -> int:
         print(f"✗ 语料文件不存在: {path}")
         return 1
 
+    data = json.loads(path.read_text())
     cid, title, turns = load_turns(path)
+    roster = collect_roster(data)
     print("=" * 68)
     print(f"语料: {path.name}")
     print(f"  会话: {title} ({cid})")
     print(f"  保留 {len(turns)} / 原始若干 条消息")
     print(f"  namespace: {args.namespace}")
+    print(f"  名册 {len(roster)} 个: {roster[:8]}{'…' if len(roster) > 8 else ''}")
     print("=" * 68)
     for i, t in enumerate(turns[:3], 1):
         print(f"  [{i}] {t['ts']}  {t['text'][:56]}…")
@@ -196,7 +240,13 @@ def main() -> int:
 
     print("\n提交 /admin/ingest …")
     resp = post_ingest(
-        args.base_url, token, args.namespace, cid, turns, suffix=args.suffix
+        args.base_url,
+        token,
+        args.namespace,
+        cid,
+        turns,
+        suffix=args.suffix,
+        roster=roster,
     )
     status = resp["status"]
     body = resp["body"]

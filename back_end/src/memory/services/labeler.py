@@ -426,6 +426,70 @@ _MEASURE_SURNAMES = frozenset("种")
 #: 本次进程内已登记的姓氏（启动时从 `surname_decl` 表灌进来）
 _DECLARED_SURNAMES: set[str] = set()
 
+#: 权威名册（spec 035）：数据源明确给出的名字列表。
+#:
+#: 为什么需要它：`extract_entities("孙柏林")` 会被 jieba 切成
+#: `[('孙','zg'), ('柏林','nr')]` —— 「柏林」是德国首都，在词典里，
+#: 于是姓氏被丢掉，实体名变成「柏林」。同类还测出 7/14 坏：
+#:
+#:   孙柏林 -> 柏林      刘北京 -> 北京      陈上海 -> 上海
+#:   李长春 -> []        李向前 -> []        王光明 -> []      赵和平 -> []
+#:
+#: 「整个人消失」比「名字不对」更严重 —— 那个人在所有记忆里都不存在。
+#:
+#: 名册来自数据源本身（DingTalk 的 contacts / 群标题 / sender_name），
+#: 从这些出来的字符串**就是人名**，不需要用通用词典去猜。
+#:
+#: 和 `_DECLARED_SURNAMES` 同一个模式：模块级状态 + 注册函数 + 测试用重置。
+_ROSTER: set[str] = set()
+
+
+def roster_names() -> frozenset[str]:
+    """当前生效的权威名册（只读快照）。"""
+    return frozenset(_ROSTER)
+
+
+def register_roster(names: object) -> int:
+    """登记权威名册。返回新登记了几个（重复的不算）。
+
+    只收长度 >= 2 的字符串 —— 单字不可能是完整人名（且会误伤大量普通词）。
+    """
+    fresh = {
+        n.strip()
+        for n in names  # type: ignore[union-attr]
+        if isinstance(n, str) and len(n.strip()) >= 2
+    } - _ROSTER
+    _ROSTER.update(fresh)
+    return len(fresh)
+
+
+def reset_roster() -> None:
+    """清空名册（测试用）。"""
+    _ROSTER.clear()
+
+
+def _extract_with_roster(text: str) -> tuple[list["Entity"], str]:
+    """在文本里找名册中的名字，返回 (命中的实体, 挖掉后的剩余文本)。
+
+    **最长优先**：名册里同时有「柏林」和「孙柏林」时，文本「孙柏林」
+    必须只出一个「孙柏林」，不能出「柏林」。
+
+    **挖掉**：命中的片段要从文本里删除。不删的话 jieba 会在剩余文本里
+    再抽一次「柏林」，同一个人变成两条记录。
+    """
+    if not _ROSTER:
+        return [], text
+
+    # 长的排前面，保证最长优先
+    candidates = sorted(_ROSTER, key=len, reverse=True)
+    found: list[Entity] = []
+    remaining = text
+    for name in candidates:
+        if name in remaining:
+            found.append(Entity(name=name, kind="person"))
+            remaining = remaining.replace(name, "\x00")  # 占位，防止拼接出新词
+    return found, remaining.replace("\x00", " ")
+
 
 def split_name_surname(word: str) -> str | None:
     """若 `word` 是「姓 + **单字**名」结构，返回姓；否则返回 None。
@@ -1191,11 +1255,26 @@ def extract_entities(text: str) -> list[Entity]:
     别名声明是规则层唯一**能确定**「这是个名字」的地方 —— 不是靠位置猜，
     是用户自己把它跟另一个名字连了等号。
     """
+    # 第一段：权威名册（spec 035）
+    #
+    # 名册是**不完备的**（文本里可能有外部厂商、第三方），所以名册匹配
+    # 完之后剩余文本**继续走 jieba** —— 顺序是「名册 > jieba」，
+    # 不是「有名册就不用 jieba」。
+    roster_entities, rest = _extract_with_roster(text)
+
+    # 第二段：原有逻辑，跑在「挖掉名册命中」之后的剩余文本上。
+    # 没有名册时 rest == text，行为和改动前完全一致。
     if _jieba_ready():
-        entities = _extract_with_jieba(text)
+        entities = _extract_with_jieba(rest)
     else:
-        entities = _extract_with_rules(text)
-    return _merge_alias_names(text, entities)
+        entities = _extract_with_rules(rest)
+
+    # 名册命中的排前面：它们比 jieba 的猜测可信
+    seen = {e.name for e in roster_entities}
+    merged = list(roster_entities) + [e for e in entities if e.name not in seen]
+
+    # 别名声明仍在**原文**上做（挖掉后的文本会丢掉 `A 就是 B` 的结构）
+    return _merge_alias_names(text, merged)
 
 
 def _merge_alias_names(text: str, entities: list[Entity]) -> list[Entity]:
