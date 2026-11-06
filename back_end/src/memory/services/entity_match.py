@@ -186,15 +186,26 @@ def _parse_synonyms(raw: str) -> set[frozenset[str]]:
 def match_entities(a: str, b: str, *, settings: Settings) -> MatchResult:
     """判定两个实体名是否同一。三态：SAME / DIFFERENT / UNKNOWN。
 
-    **规则顺序不能换**（见各规则的 docstring）：
-    1. 单字名前缀冲突 -> DIFFERENT   （必须在 3 之前）
-    2. 称呼后缀剥离后相等 -> SAME
-    3. 字面包含 + 后缀白名单 -> SAME
-    4. 同义词表 -> SAME
-    5. 都不命中 -> UNKNOWN（交给 LLM）
+    **所有规则都跑一遍再裁决**，不是「首个命中就返回」。
 
-    `ENTITY_RULE_ENABLED=false` 时**只有规则 1 保留** —— 因为它是 spec 020
-    的独立功能，不属于这次新增；其余规则全部跳过，行为等价于改动前。
+    为什么改（spec 032）：旧实现是顺序决定结论，于是「上海/上海市」在
+    规则 1（姓名结构，DIFFERENT）和规则 3（后缀，SAME）之间来回震荡，
+    最终答案取决于哪条规则排在前面 —— 031 那个 bug 正是这么来的。
+    031 的修法是「让规则 1 弃权」，能治当前这一例，但每加一条规则就要
+    再加一个例外，越修越脆。
+
+    现在的结构：
+
+    1. 收集所有规则的结论（SAME 票 / DIFFERENT 票）
+    2. **同义词表命中 -> SAME**（用户明确声明，压过所有启发式猜测）
+    3. 只有一种结论 -> 用它
+    4. 两种结论都有 -> UNKNOWN / rule="conflict"（震荡，交给 LLM）
+    5. 没有任何结论 -> UNKNOWN
+
+    规则顺序**不再影响结论**（除了同义词的优先级，那是有意的）。
+
+    `ENTITY_RULE_ENABLED=false` 时只有规则 1 参与 —— 它是 spec 020 的
+    独立功能。同义词也属于规则层，一并关闭，行为退化为「全部交 LLM」。
     """
     a = (a or "").strip()
     b = (b or "").strip()
@@ -202,56 +213,95 @@ def match_entities(a: str, b: str, *, settings: Settings) -> MatchResult:
         return MatchResult(RULING_UNKNOWN, "", "空名或完全相等")
 
     honorifics = _split_csv(getattr(settings, "ENTITY_HONORIFICS", ""))
+    suffixes = _split_csv(getattr(settings, "ENTITY_SUFFIXES", ""))
+    rules_enabled = getattr(settings, "ENTITY_RULE_ENABLED", True)
 
-    # ---- 规则 1：单字名前缀冲突（双向）----
-    # 永远生效，不受 ENTITY_RULE_ENABLED 控制（spec 020 的既有功能）。
+    # ---- 收集票 ----
+    same_hits: list[tuple[str, str]] = []  # [(rule, reason)]
+    diff_hits: list[tuple[str, str]] = []
+
+    # 规则 1：单字名前缀冲突（双向）。永远生效，不受 ENTITY_RULE_ENABLED 控制。
     #
-    # 但要多出「称呼 / 后缀」两种例外，否则 `张三哥/张三` 和 `上海/上海市`
-    # 在这里就被判不同，后面的规则 2 / 3 永远没机会执行（都是实测发现的）。
-    #
-    # 后缀表即使规则层关闭也要读 —— 它属于规则 1 的例外判据，
-    # 不是规则 3 的配置。
-    _suffixes_for_rule1 = _split_csv(getattr(settings, "ENTITY_SUFFIXES", ""))
+    # 「弃权」例外（多出的字是称呼或后缀时不表态）仍然保留 —— 它和投票机制
+    # 不冲突：弃权是「这条规则知道自己在这种情形下不可靠」，投票是
+    # 「多条规则都表态时才需要裁决」。保留弃权能**减少不必要的 LLM 调用**：
+    # 「上海/上海市」明显是同一地，没必要为了裁决去问一次模型。
     if _prefix_conflict_excluding_affix(
-        a, b, honorifics, _suffixes_for_rule1
-    ) or _prefix_conflict_excluding_affix(b, a, honorifics, _suffixes_for_rule1):
-        return MatchResult(
-            RULING_DIFFERENT, "single_char_prefix", f"{a} / {b} {PREFIX_CONFLICT_REASON}"
+        a, b, honorifics, suffixes
+    ) or _prefix_conflict_excluding_affix(b, a, honorifics, suffixes):
+        diff_hits.append(
+            ("single_char_prefix", f"{a} / {b} {PREFIX_CONFLICT_REASON}")
         )
 
-    if not getattr(settings, "ENTITY_RULE_ENABLED", True):
-        return MatchResult(RULING_UNKNOWN, "", "规则层已关闭")
-
-    # ---- 规则 2：称呼后缀剥离 ----
-    if honorifics:
-        sa, ra = _strip_honorifics(a, honorifics)
-        sb, rb = _strip_honorifics(b, honorifics)
-        # 要求「至少一边真的剥掉了」：`张三` vs `张三` 相等不是这条规则的功劳，
-        # 记成这条会污染审计日志的原因字段（而且上面 a == b 已经早退了）。
-        if (ra or rb) and sa == sb:
-            return MatchResult(
-                RULING_SAME, "honorific", f"{a} / {b} 称呼剥离后都是「{sa}」"
-            )
-
-    # ---- 规则 3：字面包含 + 后缀白名单 ----
-    suffixes = _split_csv(getattr(settings, "ENTITY_SUFFIXES", ""))
-    if suffixes:
-        for hit in (
-            _suffix_expansion(a, b, suffixes),
-            _suffix_expansion(b, a, suffixes),
-        ):
-            if hit:
-                return MatchResult(
-                    RULING_SAME, "suffix", f"{a} / {b} 差一个后缀「{hit}」"
+    if rules_enabled:
+        # 规则 2：称呼后缀剥离
+        if honorifics:
+            sa, ra = _strip_honorifics(a, honorifics)
+            sb, rb = _strip_honorifics(b, honorifics)
+            # 要求「至少一边真的剥掉了」：`张三` vs `张三` 相等不是这条规则的功劳。
+            if (ra or rb) and sa == sb:
+                same_hits.append(
+                    ("honorific", f"{a} / {b} 称呼剥离后都是「{sa}」")
                 )
 
-    # ---- 规则 4：同义词表 ----
-    synonyms = _parse_synonyms(getattr(settings, "ENTITY_SYNONYMS", ""))
-    if synonyms and frozenset((a, b)) in synonyms:
-        return MatchResult(RULING_SAME, "synonym", f"{a} / {b} 在同义词表里")
+        # 规则 3：字面包含 + 后缀白名单
+        if suffixes:
+            for hit in (
+                _suffix_expansion(a, b, suffixes),
+                _suffix_expansion(b, a, suffixes),
+            ):
+                if hit:
+                    same_hits.append(
+                        ("suffix", f"{a} / {b} 差一个后缀「{hit}」")
+                    )
+                    break
 
-    # ---- 规则 5：判不了 ----
-    return MatchResult(RULING_UNKNOWN, "", "规则层无命中")
+        # 规则 4：同义词表
+        synonyms = _parse_synonyms(getattr(settings, "ENTITY_SYNONYMS", ""))
+        if synonyms and frozenset((a, b)) in synonyms:
+            same_hits.append(("synonym", f"{a} / {b} 在同义词表里"))
+
+    # ---- 裁决 1：用户声明优先 ----
+    # 同义词是**明确知识**，规则 1/2/3 都是**启发式猜测**。
+    # 明确知识被猜测覆盖是设计错误 —— 实测过：配了 `张三丰=张三` 之后，
+    # 规则 1 仍然抢先返回 DIFFERENT，同义词表根本没机会执行。
+    #
+    # 这里也不交给 LLM：LLM 看到「张三 / 张三丰」也大概率说不同，
+    # 用户的声明等于白配。用户说是同一个，就是同一个。
+    for rule, reason in same_hits:
+        if rule == "synonym":
+            return MatchResult(RULING_SAME, "synonym", reason)
+
+    # ---- 裁决 2：没有任何规则表态 ----
+    if not same_hits and not diff_hits:
+        return MatchResult(
+            RULING_UNKNOWN,
+            "",
+            "规则层无命中" if rules_enabled else "规则层已关闭",
+        )
+
+    # ---- 裁决 3：只有一种结论 ----
+    if same_hits and not diff_hits:
+        rule, reason = same_hits[0]
+        return MatchResult(RULING_SAME, rule, reason)
+    if diff_hits and not same_hits:
+        rule, reason = diff_hits[0]
+        return MatchResult(RULING_DIFFERENT, rule, reason)
+
+    # ---- 裁决 4：震荡 ----
+    # 两种结论都有，且没有同义词可以定音 —— 这是真正该交给 LLM 的情形。
+    #
+    # 为什么不定个默认值：两条启发式都只是「大概率」，没有哪个更可信的依据。
+    # 硬选一个就是「按规则顺序碰运气」，031 那个 bug 正是这么来的。
+    #
+    # `rule="conflict"` 让审计日志能区分「规则打架」和「规则不认识这俩」。
+    return MatchResult(
+        RULING_UNKNOWN,
+        "conflict",
+        f"{a} / {b} 规则矛盾 | "
+        f"同: {[r for r, _ in same_hits]} "
+        f"不同: {[r for r, _ in diff_hits]}",
+    )
 
 
 def best_candidate(
@@ -261,11 +311,25 @@ def best_candidate(
 
     返回 `(候选名, 判定结果)`。多个候选都判 SAME 时取**排序后第一个**，
     保证结果可复现（不依赖 dict/list 的偶然顺序）。
+
+    **震荡候选会被跳过**（spec 032）：规则互相矛盾的候选判 UNKNOWN，
+    不满足 `is_same`，于是继续试下一个。如果没有别的候选命中，
+    调用方拿到 None -> 走 LLM。
+
+    震荡日志在这里打，因为 `match_entities` 是纯判定函数，
+    它不知道自己是「在一次候选扫描中被调用」还是「单独被调用」。
     """
     for cand in sorted(set(candidates)):
         if not cand or cand == alias:
             continue
         result = match_entities(alias, cand, settings=settings)
+        if result.rule == "conflict":
+            # 震荡率是规则设计质量的指标：日志多说明规则职责重叠，
+            # 或者数据分布和假设不符。没有这个数字就不知道「交 LLM」
+            # 是偶尔兜底还是天天兜底。
+            logger.info(
+                "规则震荡，交给 LLM | %s / %s | %s", alias, cand, result.reason
+            )
         if result.is_same:
             return cand, result
     return None
