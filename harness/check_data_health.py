@@ -18,6 +18,7 @@ import httpx
 from neo4j import GraphDatabase
 
 from memory.config import load_settings
+from memory.services.labeler import extract_entities
 
 TEST_MARKERS = ("e2e-", "冒烟测试", "迁移验证", "验证标记")
 
@@ -61,8 +62,29 @@ def main() -> None:
         if any(len(str(e)) > 6 for e in (c.get("entity_names") or []))
     ]
     print(f"  实体名异常长（>6 字，疑似句子片段）: {len(suspicious)}")
-    empty_ents = sum(1 for c in cards if not (c.get("entity_names") or []))
-    print(f"  实体名为空: {empty_ents}")
+
+    # 「实体名为空」必须分成两种，混在一起就是假警报（spec 030）：
+    #   alone —— 这句话本来就抽不出实体（"周会上讨论了预算"，没有名字）
+    #   lost  —— 现在能抽出来，但卡里是空的（写入链路丢了，真出问题）
+    # 用同一条规则复算，因为写入和查询共用 extract_entities 才是设计意图。
+    alone, lost = [], []
+    for c in cards:
+        if c.get("entity_names"):
+            continue
+        summary = str(c.get("summary") or "")
+        try:
+            recomputed = extract_entities(summary) if summary else []
+        except Exception:  # noqa: BLE001 - 诊断脚本不该因为一句解析失败就崩
+            recomputed = []
+        (lost if recomputed else alone).append(c)
+
+    print(f"  实体名为空: {len(alone) + len(lost)}")
+    if alone:
+        print(f"    其中 {len(alone)} 张本来就无可提取实体（正常）")
+    if lost:
+        print(f"    ⚠️ 其中 {len(lost)} 张本该有实体但现在没有（写入链路丢了）")
+        for c in lost[:3]:
+            print(f"      {str(c.get('summary') or '')[:36]}")
 
     # 2) 图层
     drv = GraphDatabase.driver(s.NEO4J_URI, auth=(s.NEO4J_USER, s.NEO4J_PASSWORD))
@@ -102,10 +124,25 @@ def main() -> None:
             # 3) 判定
             print("\n=== 判定 ===")
             if len(rows) and max(degrees) < s.GRAPH_HUB_DEGREE:
+                # 「从未生效」这种措辞把两件事混在一起了（spec 030）：
+                #   逻辑可能错了，或者数据量根本不够。
+                # 前者是真 bug，后者是预期 —— 必须让人一眼分清。
+                gap = s.GRAPH_HUB_DEGREE - max(degrees)
                 print(
-                    f"  ⚠️ 没有任何节点达到 GRAPH_HUB_DEGREE={s.GRAPH_HUB_DEGREE} —— "
-                    "hub 保护从未生效"
+                    f"  hub 保护：最大度数 {max(degrees)}，阈值 "
+                    f"{s.GRAPH_HUB_DEGREE}，差 {gap}"
                 )
+                if gap <= 3:
+                    print("    → 快到了，数据再长一点就能触发")
+                else:
+                    print(
+                        "    → 当前规模下结构上不可达，属预期"
+                        "（典型事件 4-6 条边，阈值 8 是「内容特别丰富」）"
+                    )
+                    print(
+                        "    → 置信度：Cypher 和端到端链路已由 "
+                        "tests/test_hub_end_to_end.py 在真图上验证"
+                    )
             if has_entity_edge == 0:
                 print("  ⚠️ 一个实体边都没有 —— 图通道（实体扩展）对这批数据是失效的")
             if len(residue) > len(cards) * 0.5:
