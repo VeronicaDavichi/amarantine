@@ -21,6 +21,7 @@ ADR D3 的三条硬约束，这里逐条落地：
 from __future__ import annotations
 
 import logging
+import time
 from concurrent.futures import ThreadPoolExecutor, wait
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timezone
@@ -67,6 +68,12 @@ class RecallResult:
     #: 本次召回的引用凭据。`memory_feedback` 靠它校验「是不是真的返回过」。
     #: 空结果也给 —— 否则 LLM 无法上报「一条都没用」。
     trace_id: str | None = None
+    #: 本次召回总耗时（毫秒）。**单调时钟测量**，不受系统时钟调整影响。
+    #: 所有返回路径都有值，包括「空结果」和「partial」。
+    elapsed_ms: float = 0.0
+    #: 各通道耗时（毫秒），从扇出开始算到该通道返回。
+    #: 这些值是**并行**的，相加没有意义 —— 总耗时由最慢的通道决定。
+    channel_ms: dict[str, float] = field(default_factory=dict)
 
     def to_payload(self) -> dict[str, Any]:
         return {
@@ -75,6 +82,8 @@ class RecallResult:
             "partial": self.partial,
             "trace": self.trace,
             "trace_id": self.trace_id,
+            "elapsed_ms": round(self.elapsed_ms, 1),
+            "channel_ms": {k: round(v, 1) for k, v in self.channel_ms.items()},
         }
 
 
@@ -115,6 +124,11 @@ def recall(
     if not query or not query.strip():
         raise ValueError("query 不能为空")
 
+    # 单调时钟：测量时长必须用它，`time.time()` 会被系统时钟调整影响。
+    # 取在函数最开头 —— 抛 `RecallUnavailableError` 时也要能在 finally 里算到耗时。
+    t0 = time.monotonic()
+    channel_ms: dict[str, float] = {}
+
     moment = now or datetime.now(timezone.utc)
     base_day = today or moment.date()
     budget = budget_ms if budget_ms is not None else settings.RECALL_BUDGET_MS
@@ -146,6 +160,17 @@ def recall(
     active_store = store or WeaviateStore(settings)
     candidates_limit = settings.RECALL_CANDIDATES
 
+    def _finish(result: RecallResult) -> RecallResult:
+        """填耗时并落 trace —— 四个 return 路径全部经过这里。
+
+        集中在一处而不是逐个 return 填，是因为有 4 个返回点
+        （全超时 / 无候选 / 空结果 / 正常），漏一个那条路径的
+        `elapsed_ms` 就永远是 0，而 0 看起来像「很快」而不是「没测」。
+        """
+        result.elapsed_ms = (time.monotonic() - t0) * 1000
+        result.channel_ms = dict(channel_ms)
+        return _with_trace(result, trace_store=trace_store, namespace=namespace, query=query)
+
     try:
         # 2) query 向量（事实源挂 → 503，不是空结果）
         encode = embedder or _default_embedder
@@ -173,6 +198,21 @@ def recall(
             if settings.VECTOR_TIMEOUT_MS > 0
             else None
         )
+
+        # 每个通道在**自己的线程里**计时。
+        #
+        # 不能在 `for name, future in futures.items()` 里记 —— `wait()` 返回时
+        # 所有已完成的 future 都完成了，遍历又是顺序的，三个通道会拿到同一个值
+        # （实测三个都 P50=25.5 / P95=271.3）。那条埋点测的是「遍历顺序」。
+        def _timed(name, fn):
+            def wrapper():
+                started = time.monotonic()
+                try:
+                    return fn()
+                finally:
+                    channel_ms[name] = (time.monotonic() - started) * 1000
+
+            return wrapper
 
         def run_vector():
             return active_store.search_near_vector(
@@ -205,9 +245,9 @@ def recall(
         pool = ThreadPoolExecutor(max_workers=3)
         try:
             futures = {
-                "vector": pool.submit(run_vector),
-                "bm25": pool.submit(run_bm25),
-                "graph": pool.submit(run_graph),
+                "vector": pool.submit(_timed("vector", run_vector)),
+                "bm25": pool.submit(_timed("bm25", run_bm25)),
+                "graph": pool.submit(_timed("graph", run_graph)),
             }
             done, not_done = wait(futures.values(), timeout=budget / 1000.0)
 
@@ -320,7 +360,7 @@ def recall(
             # 但这次是**全部**没回来，结果完全不可信。也不能抛 503 ——
             # 超时不等于服务挂（真挂已经在上面的 WeaviateStoreError 里 503 了）。
             all_timeout = partial and not channel_results
-            return _with_trace(
+            return _finish(
                 RecallResult(
                     materials=[],
                     degraded=True if all_timeout else degraded,
@@ -343,7 +383,6 @@ def recall(
                         "time_confidence": date_range.confidence,
                     },
                 ),
-                trace_store=trace_store, namespace=namespace, query=query,
             )
 
         # 6) RRF 融合
@@ -359,7 +398,7 @@ def recall(
         # 7) 打分：RRF 归一 → 时效 × 重要性
         ranked = [(eid, s) for eid, s in ranked if eid in meta]
         if not ranked:
-            return _with_trace(
+            return _finish(
                 RecallResult(
                     materials=[],
                     degraded=degraded,
@@ -373,7 +412,6 @@ def recall(
                         "note": "图通道命中的 id 没有元数据（P0 限制）",
                     },
                 ),
-                trace_store=trace_store, namespace=namespace, query=query,
             )
 
         norm = normalize_relevance([s for _, s in ranked])
@@ -404,7 +442,7 @@ def recall(
         # 8) 空结果判定（ADR：最高分低于阈值也算空）
         top = scored[0].score if scored else 0.0
         if not scored or top < settings.RECALL_EMPTY_THRESHOLD:
-            return _with_trace(
+            return _finish(
                 RecallResult(
                     materials=[],
                     degraded=degraded,
@@ -419,7 +457,6 @@ def recall(
                         "errors": errors,
                     },
                 ),
-                trace_store=trace_store, namespace=namespace, query=query,
             )
 
         # 8.5) rerank 精排（A27）
@@ -496,7 +533,7 @@ def recall(
             except Exception as exc:  # noqa: BLE001 - 计数是派生数据，不影响召回
                 logger.warning("召回计数回写失败（已忽略）: %s", exc)
 
-        return _with_trace(
+        return _finish(
             RecallResult(
                 materials=materials,
                 degraded=degraded,
@@ -514,9 +551,21 @@ def recall(
                     **rerank_result.to_trace(),
                 },
             ),
-            trace_store=trace_store, namespace=namespace, query=query,
         )
     finally:
+        # 超目标告警放 finally 而不是 return 前：慢到超时抛异常的查询**也是慢查询**，
+        # 更需要被看见。这里独立再算一次总耗时（与 _finish 的差一个 trace 写入，可忽略）。
+        _total_ms = (time.monotonic() - t0) * 1000
+        _limit = settings.COLD_QUERY_P95_MS
+        # `<= 0` = 关闭告警（沿用项目「0 = 关信号」约定）。
+        # 不这么写的话 0 会变成「0ms 目标、每次查询都告警」，把日志淹掉。
+        if _limit > 0 and _total_ms > _limit:
+            logger.warning(
+                "冷查询耗时超目标 | %.0fms > %dms | 通道 %s",
+                _total_ms,
+                _limit,
+                {k: round(v) for k, v in channel_ms.items()} or "(无)",
+            )
         if owns_store:
             active_store.close()
 

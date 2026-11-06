@@ -34,7 +34,6 @@ WHITELIST: dict[str, str] = {
     "CONSOLIDATE_MIN_EVENTS": "P2 consolidation 触发条件，未实现",
     "CONSOLIDATE_DUP_RATIO": "P2 consolidation 冗余判据，未实现",
     "CONSOLIDATE_LATENCY_MS": "P2 consolidation 预算，未实现",
-    "COLD_QUERY_P95_MS": "P1 冷查询目标，物理冷热拆分未做（ADR §8 待定）",
     # ---- 外部服务适配（当前只支持本地无鉴权的 TEI）----
     "EMBEDDING_API_KEY": "换商用 embedding 服务时才需要，本地 TEI 无鉴权",
     "EMBEDDING_PROVIDER": "同上，当前硬编码 TEI 协议",
