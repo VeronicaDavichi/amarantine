@@ -40,7 +40,9 @@ WHITELIST: dict[str, str] = {
     "EMBEDDING_PROVIDER": "同上，当前硬编码 TEI 协议",
     "WEAVIATE_GRPC_PORT": "用 REST 而非 gRPC，保留了端口配置未接线",
     # ---- 未接线的真参数（有价值，但本 spec 范围外）----
-    "ENTITY_ALIAS_SIM": "实体消歧阈值写死，C.B3 未接配置",
+    "ENTITY_ALIAS_SIM": (
+        "实测该特征不可分，②级已改为确定性规则层（spec 026）。保留待换模型重评：应合并最低 0.4806 < 不该合并最高 0.8801，0.92 下 8 组应合并只过 2 组"
+    ),
     "GUIDE_CHECK_CRON": "文档一致性校验靠手动跑，没有定时器",
     "TOKENIZER": (
         "有意不接（不是遗漏）：_estimate_tokens 用启发式估算，预算只用于截断防爆窗。换 tiktoken 会拖进依赖 + 需下载词表，离线部署会炸。详见 ADR D7 配置表"

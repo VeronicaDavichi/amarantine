@@ -258,3 +258,38 @@ def test_idle_days_zero_means_immediate_not_disabled() -> None:
     assert got.bucket == BUCKET_SAFE_TO_DELETE, (
         "idle_days=0 若变成「关闭」，这条会失败 —— 语义变了必须改 ADR 和这里"
     )
+
+
+def test_sweep_schedule_does_not_depend_on_wall_clock(store, monkeypatch) -> None:
+    """**回归测试**：`sweep_on_start=False` 的调度不能用 `datetime.now()` 起算。
+
+    原实现里 `__init__` 写的是 `datetime.now(utc) + sweep_every_s`，
+    但 `tick(now=...)` 支持注入时间。两者混用 = 测试结果取决于**今天是几号**。
+
+    这个 bug 真的发生过：`test_sweep_on_start_false_skips_first_tick` 在写的时候
+    通过，过了几天自己挂了（注入的 NOW 落在 `_next_sweep_at` 之前）。
+
+    用 1970 年的时间点能把这类问题一次钉死 —— 任何依赖墙钟的实现都会立刻失败。
+    """
+    calls: list[ScanResult] = []
+    monkeypatch.setattr(fscan, "scan", _fake_scan_factory(calls))
+
+    s = Settings()
+    w = MaintenanceWorker(
+        NS,
+        s,
+        store=store,
+        reconcile_every_s=1e9,
+        reconcile_on_start=False,
+        sweep_every_s=86400.0,
+        sweep_on_start=False,
+    )
+
+    epoch = datetime(1970, 1, 2, tzinfo=timezone.utc)
+    w.tick(now=epoch)
+    assert calls == [], "第一次 tick 不该扫（sweep_on_start=False）"
+
+    w.tick(now=epoch + timedelta(days=1))
+    assert len(calls) == 1, (
+        "满周期没扫 —— 调度仍然依赖墙钟（__init__ 里用了 datetime.now）"
+    )

@@ -174,9 +174,34 @@ def test_resolve_one_bidirectional(monkeypatch) -> None:
 
 
 def test_resolve_one_still_calls_llm_when_no_conflict(monkeypatch) -> None:
-    """不冲突时照常走 LLM —— 这条防止「规则太宽把所有候选都挡掉」。"""
-    from memory.services import alias_resolver
+    """规则判不了时照常走 LLM —— 这条防止「规则太宽把所有候选都挡掉」。
+
+    注意这里**不能用 `豆包/豆包AI`**：spec 026 的规则层里
+    「后缀白名单」会直接判同人并跳过 LLM（那是好事，省一次调用）。
+    要测的是「规则层的 UNKNOWN 分支仍然交给 LLM」，
+    所以用一对规则明确判不了的名字（`糖包` 不是 `豆包` 的前缀，
+    也不在任何同义词表里）。
+    """
     from memory.config import load_settings
+    from memory.services import alias_resolver
+
+    fake = _FakeLLM()
+    monkeypatch.setattr(alias_resolver, "chat", fake)
+
+    fake = _FakeLLM(pick="豆包")  # 必须在候选里，否则被白名单丢弃
+    monkeypatch.setattr(alias_resolver, "chat", fake)
+
+    got = alias_resolver.resolve_one(
+        _claim("糖包"), ["豆包"], settings=load_settings()
+    )
+    assert fake.calls == 1, "规则判不了时应该交给 LLM"
+    assert got is not None
+
+
+def test_rule_layer_skips_llm_on_suffix_hit(monkeypatch) -> None:
+    """规则层命中时必须**不调 LLM**，且带上可审计的依据。"""
+    from memory.config import load_settings
+    from memory.services import alias_resolver
 
     fake = _FakeLLM()
     monkeypatch.setattr(alias_resolver, "chat", fake)
@@ -184,8 +209,28 @@ def test_resolve_one_still_calls_llm_when_no_conflict(monkeypatch) -> None:
     got = alias_resolver.resolve_one(
         _claim("豆包"), ["豆包AI"], settings=load_settings()
     )
-    assert fake.calls == 1, "不该挡住同人别名"
     assert got is not None
+    assert got.canonical == "豆包AI"
+    assert got.source == "rule", "规则推断的必须标 rule，不能伪装成 llm_inferred"
+    assert got.label == "probable", "规则把握不如用户明说，不能标 exact"
+    assert fake.calls == 0, "规则命中却还调了 LLM，等于没生效"
+
+
+def test_rule_layer_can_be_disabled(monkeypatch) -> None:
+    """`ENTITY_RULE_ENABLED=false` 时回退到「只有 LLM」的旧行为。"""
+    from memory.config import load_settings
+    from memory.services import alias_resolver
+
+    fake = _FakeLLM()
+    monkeypatch.setattr(alias_resolver, "chat", fake)
+
+    settings = load_settings()
+    settings.ENTITY_RULE_ENABLED = False
+    got = alias_resolver.resolve_one(_claim("豆包"), ["豆包AI"], settings=settings)
+
+    assert fake.calls == 1, "关了规则层就该走 LLM"
+    assert got is not None
+    assert got.source == "llm_inferred", "关掉规则层后来源必须是 LLM"
 
 
 def test_reason_constant_is_used_in_log(caplog, monkeypatch) -> None:

@@ -1,5 +1,5 @@
 ---
-status: planned
+status: archived
 created: 2026-11-04
 priority: medium
 tags:
@@ -7,10 +7,21 @@ tags:
 - disambiguation
 - backend
 created_at: 2026-11-04T03:07:34.419433728Z
-updated_at: 2026-11-04T03:07:34.419433728Z
+updated_at: 2026-11-06T01:25:26.181576864Z
+transitions:
+- status: archived
+  at: 2026-11-06T01:25:26.181576864Z
 ---
-
 # 016 C.B3 三级实体消歧（大工程，先记录不实现）
+
+> **状态：已归档（2026-11-06）。本文的 ② 级「向量近邻」方案已被实测否定，
+> 由 `specs/026-entity-rule-disambiguation/` 取代。**
+>
+> 保留原因：这里记录了**两次**特征工程失败的数据（编辑距离、embedding 余弦），
+> 是「为什么不能靠字面/向量判实体同一性」的重要实证，删掉会重犯第三次。
+>
+> 实测结论见 026 Overview：应合并最低 0.4806 < 不该合并最高 0.8801，
+> 区间完全重叠，`ENTITY_ALIAS_SIM=0.92` 下 8 组应合并只过 2 组。
 
 ## Overview
 

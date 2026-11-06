@@ -173,11 +173,19 @@ class MaintenanceWorker:
         self._sweep_every_s = max(
             1.0, float(sweep_every_s) if sweep_every_s is not None else default_sweep_s
         )
-        # `sweep_on_start=False` 时把下次时间推到未来，第一次 tick 不扫。
-        # 测试里用它：否则每次 TestClient 都会拉全量 Weaviate。
-        self._next_sweep_at: datetime | None = (
-            None if sweep_on_start else datetime.now(timezone.utc) + timedelta(seconds=self._sweep_every_s)
-        )
+        # 扫描调度的起点。
+        #
+        # `_next_sweep_at is None` 有两种含义，用 `_sweep_pending` 区分：
+        #   - sweep_on_start=True  -> None + pending=True  -> 下次 tick 就扫
+        #   - sweep_on_start=False -> None + pending=False -> 第一次 tick 时
+        #     用**传进来的 now** 初始化成 now + every
+        #
+        # 为什么不在 __init__ 里直接算 `datetime.now() + every`：
+        # `tick(now=...)` 支持注入时间（测试靠它控制时序），如果
+        # __init__ 用真实墙钟，测试就变成「依赖今天是几号」——
+        # 事实上有条测试在几天后自己失败了（spec 026 修复）。
+        self._next_sweep_at: datetime | None = None
+        self._sweep_pending: bool = bool(sweep_on_start)
         self._last_sweep_at: datetime | None = None
 
     @property
@@ -223,13 +231,19 @@ class MaintenanceWorker:
         if self._due_for_sweep(moment):
             report.sweep = self._run_sweep()
             self._last_sweep_at = moment
+            self._sweep_pending = False
             self._next_sweep_at = moment + timedelta(seconds=self._sweep_every_s)
 
         return report
 
     def _due_for_sweep(self, moment: datetime) -> bool:
-        if self._next_sweep_at is None:
+        if self._sweep_pending:
             return True
+        if self._next_sweep_at is None:
+            # sweep_on_start=False 的第一次 tick：用传入的 moment 起算，
+            # 而不是 __init__ 里的墙钟（那样测试无法控制时序）。
+            self._next_sweep_at = moment + timedelta(seconds=self._sweep_every_s)
+            return False
         return moment >= self._next_sweep_at
 
     def _run_sweep(self) -> ForgetSweepSummary:

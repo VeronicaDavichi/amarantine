@@ -43,7 +43,11 @@ from memory.models.event_card import (
     ALIAS_UNCERTAIN,
     AliasClaim,
 )
-from memory.services.labeler import split_name_surname
+from memory.services.entity_match import (
+    PREFIX_CONFLICT_REASON,
+    best_candidate,
+    single_char_name_prefix_conflict,
+)
 from memory.services.llm import LLMError, chat
 
 logger = logging.getLogger(__name__)
@@ -115,29 +119,6 @@ def _label_for(confidence: float) -> str | None:
     return None
 
 
-#: 「单字名前缀」规则命中的日志前缀，便于测试与排查时 grep
-PREFIX_CONFLICT_REASON = "单字名前缀冲突"
-
-
-def single_char_name_prefix_conflict(short: str, long: str) -> bool:
-    """`short` 是「姓+单字名」，且 `long` 只比它多一个字？
-
-    命中就意味着「很可能不是同一人」，调用方应判为新实体而不是合并。
-
-    为什么需要这条规则（实测数据）：编辑距离区分不了这两类 ——
-    「豆包/豆包AI」（同人）相似度 0.50，「张三/张三丰」（不同人）0.67，
-    该合并的反而更低，任何阈值都是反向的。
-    唯一的可靠差异是**中文人名的结构**：「张三」是姓+单字名，「豆包」不是人名。
-
-    只挡「长度差 1」：差 2 以上（`张三` vs `张三丰丰`）有昵称歧义，保守放行。
-    """
-    if len(long) != len(short) + 1:
-        return False
-    if not long.startswith(short):
-        return False
-    return split_name_surname(short) is not None
-
-
 def resolve_one(
     claim: AliasClaim,
     candidates: list[str],
@@ -178,6 +159,32 @@ def resolve_one(
                 cand,
             )
             return None
+
+    # ---- ADR C.B3 的 ② 级：确定性规则层（spec 026）----
+    #
+    # 原方案是「实体名 embedding 余弦 >= ENTITY_ALIAS_SIM(0.92)」，
+    # 实测证明该特征不可分（应合并最低 0.4806 < 不该合并最高 0.8801），
+    # 所以改成规则层：后缀白名单 / 称呼剥离 / 同义词表。
+    #
+    # 规则命中就**不再问 LLM** —— 省一次调用，而且判定依据可复查。
+    hit = best_candidate(claim.alias, allowed, settings=settings)
+    if hit is not None:
+        picked, result = hit
+        logger.info(
+            "规则层判定同一实体 | %s -> %s [%s] %s",
+            claim.alias,
+            picked,
+            result.rule,
+            result.reason,
+        )
+        return AliasClaim(
+            alias=claim.alias,
+            canonical=picked,
+            # 规则推断的把握不如用户明说，所以用 probable 而不是 exact
+            label=ALIAS_PROBABLE,
+            # `rule` 这个 source 值在 AliasClaim 里本来就有，正是为规则留的
+            source="rule",
+        )
 
     prompt = _build_prompt(claim, sorted(allowed)[:MAX_CANDIDATES])
     try:
