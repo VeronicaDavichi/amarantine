@@ -79,8 +79,14 @@ class Settings(BaseSettings):
     RECALL_VECTOR_MIN_SIM: float = 0.5
 
     # ---------- 召回：超时 ----------
+    #: 图通道超时。
     GRAPH_TIMEOUT_MS: int = 200
+    #: 向量通道超时。**不是** `COLD_QUERY_P95_MS` 的镜像 ——
+    #: 它对齐的是 ADR C.B12 里那个 800ms 的**优化目标**，不是 3s 的 SLA。
+    #: 超时值是「一次 HTTP 等多久算异常」，SLA 是「整次查询多久算不可接受」，
+    #: 两者不该相等：把这里也改成 3000 会让单通道卡 3 秒，整次查询直接贴 SLA。
     VECTOR_TIMEOUT_MS: int = 800
+    #: 整体预算：超了就降级返回 partial，是**运行时保护**不是性能目标。
     RECALL_BUDGET_MS: int = 1500
 
     # ---------- 时间与排序 ----------
@@ -163,7 +169,16 @@ class Settings(BaseSettings):
     ISLAND_MIN_EVENTS: int = 50
     CLUSTER_MIN_SIZE: int = 15
     CLUSTER_MERGE_SIM: float = 0.85
-    COLD_QUERY_P95_MS: int = 800
+    #: 冷查询**SLA 护栏**：单次召回超过它就打 WARNING。`<=0` 关闭告警。
+    #:
+    #: 2026-11-06 实测 P95 = 671 / 878 / 739ms（三轮，见 spec 028/029），
+    #: 离 3000 还有 4 倍余量 —— 所以它只在**严重性能退化**时才响。
+    #:
+    #: 原来的 800 是 ADR 当初定的**优化目标**，实测未达成（瓶颈已定位在
+    #: rerank 约 314ms/次 + 每次 recall 重建 3 个 httpx.Client 重载 CA 证书
+    #: 约 100ms）。800 保留在 ADR C.B12 作为优化方向，不再作为告警阈值 ——
+    #: 否则每次查询都告警，日志被淹，真正的退化反而看不见。
+    COLD_QUERY_P95_MS: int = 3000
 
     # ---------- 模型供给 ----------
     EMBEDDING_PROVIDER: str = "local"

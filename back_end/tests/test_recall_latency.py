@@ -161,6 +161,38 @@ def test_each_channel_is_faster_than_total() -> None:
     )
 
 
+# ============================================================ 默认值（spec 029）
+
+
+def test_default_target_is_3000() -> None:
+    """默认 SLA 护栏是 3000ms（spec 029 定的，用户 2026-11-06 接受）。
+
+    这条纯粹防手滑改回去 —— 单看它没有说服力（「默认值看着对」不算验证），
+    所以必须和下面那条 `test_default_target_leaves_headroom` 一起看：
+    那条证明这个默认值在**当前性能下真的不会误报**。
+    """
+    assert Settings().COLD_QUERY_P95_MS == 3000
+
+
+def test_default_target_leaves_headroom(caplog) -> None:
+    """默认配置 + 一次正常耗时的查询 → **不该告警**。
+
+    现有的告警测试全部显式覆写阈值（1 / 999999 / 0 / -1）去验证
+    「改配置 → 行为变」，但没有一条验证「**默认值本身**会不会天天报警」。
+
+    这个差别很实际：如果 3000 定得太低（比如 900，贴着实测 P95），
+    所有测试都会绿，而线上日志会被 WARNING 淹没 —— 真正的性能退化
+    反而看不见了。028 实测 P95 是 671-878ms，离 3000 有 4 倍余量，
+    所以正常查询必须一条告警都不产生。
+    """
+    caplog.set_level(logging.WARNING)
+    res = _run(Settings(), FakeStore(vector_ms=50))
+    assert not any("冷查询耗时超目标" in m for m in _warnings(caplog)), (
+        f"默认 3000ms 护栏下正常查询就告警了，日志会被淹: {_warnings(caplog)}"
+    )
+    assert res.elapsed_ms < Settings().COLD_QUERY_P95_MS
+
+
 # ============================================================ 告警：改阈值行为变
 
 
