@@ -153,3 +153,51 @@ def test_register_strips_whitespace() -> None:
     """前后空白要去掉（数据源可能带空格）。"""
     register_roster(["  孙柏林  "])
     assert "孙柏林" in roster_names()
+
+
+# ====================================== 名册准入：品牌 / 未知名不冒充「人」
+#
+# `周黑鸭` 和 `孙柏林` 是同一个问题的正反面：
+# 字符串本身不携带「是不是人」的信息，jieba 的 `nr` 只是猜。
+# 有权威名册时，`person` 只认名册。
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "周大福今天开业",      # jieba: 周大福/nr  —— 珠宝品牌
+        "王老吉的广告不错",    # jieba: 王老吉/nr  —— 饮料品牌
+        "我买了周黑鸭",        # jieba: 周/nr + 黑 + 鸭 —— 食品品牌
+    ],
+)
+def test_brand_names_not_person_when_roster_present(text: str) -> None:
+    """名册存在时，品牌名不得被当成 `Person`。"""
+    register_roster(["王勇", "刘佳媚"])
+    ents = [(e.name, e.kind) for e in extract_entities(text)]
+    assert all(k != "person" for _, k in ents), f"品牌被当成人：{ents}"
+
+
+def test_roster_member_still_person() -> None:
+    """名册里的人在同样条件下仍是 `person` —— 准入不能过紧。"""
+    register_roster(["王勇"])
+    assert [(e.name, e.kind) for e in extract_entities("王勇说这个方案可以")] == [
+        ("王勇", "person")
+    ]
+
+
+def test_unknown_name_demoted_to_topic() -> None:
+    """名册外的名字降级为 `topic`：信息保留，但不冒充人。"""
+    register_roster(["王勇"])
+    kinds = {e.name: e.kind for e in extract_entities("欧阳锋说了一句话")}
+    assert kinds.get("欧阳锋") == "topic"
+
+
+def test_brand_without_roster_keeps_old_behaviour() -> None:
+    """无名册时保持旧行为 —— 这是已知缺陷，不是回归。
+
+    单条 `memory_remember` 没有名册，此时只能靠 jieba 猜；
+    035 的范围边界就在这里，不假装修好了。
+    """
+    reset_roster()
+    kinds = [(e.name, e.kind) for e in extract_entities("周大福今天开业")]
+    assert ("周大福", "person") in kinds

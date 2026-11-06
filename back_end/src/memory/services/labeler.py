@@ -1269,6 +1269,21 @@ def extract_entities(text: str) -> list[Entity]:
     else:
         entities = _extract_with_rules(rest)
 
+    # 名册在时，`person` 只认名册：jieba 的 `nr` 是**猜测**。
+    #
+    # `周大福`/`王老吉` 被 jieba 标成 nr，但它们是品牌；`孙柏林` 反过来被切坏。
+    # 这两件事是同一个问题的正反面 —— **字符串本身不携带「是不是人」的信息**，
+    # 靠词形猜必然一头误判一头漏。名册是唯一权威来源（035）。
+    #
+    # 只降级 **jieba 抽出来的** person（名册命中已经是权威，不动）。
+    # 降级成 `topic` 而不是丢掉：信息保留（仍可被召回），只是不冒充 `Person`。
+    # 无名单时保持旧行为（单条写入场景没有名册）。
+    if roster_names():
+        entities = [
+            Entity(name=e.name, kind="topic") if e.kind == "person" else e
+            for e in entities
+        ]
+
     # 名册命中的排前面：它们比 jieba 的猜测可信
     seen = {e.name for e in roster_entities}
     merged = list(roster_entities) + [e for e in entities if e.name not in seen]
