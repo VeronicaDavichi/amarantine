@@ -45,6 +45,130 @@ def _weaviate_cards(settings, namespace: str) -> list[dict]:
     return live
 
 
+#: 上限保护：极端情况（大量相似名）可能爆，截断必须明说。
+MAX_CONFLICT_PAIRS = 20000
+#: 可扫描对少于此值时，震荡率没有统计意义 —— 必须警告，不能把 0 当好消息。
+MIN_MEANINGFUL_PAIRS = 50
+
+
+def _possibly_related(a: str, b: str) -> bool:
+    """筛选「值得扫」的名字对：只看**前缀关系**。
+
+    全量两两在 1000 个实体时是 50 万对，绝大多数彻底无关
+    （`张三` vs `项目A` 永远 UNKNOWN，扫它没意义）。
+
+    **为什么不用编辑距离**：第一版加了「距离 ≤ 2」，实测发现对中文两字名
+    几乎恒为真 —— `张三`/`李四` 距离就是 2，`北京`/`南京` 距离 1。
+    等于没筛，白白多扫一堆永远 UNKNOWN 的对。
+
+    前缀关系才是真正的战场：
+    - 规则 1（单字名前缀冲突）：需要一个是另一个的前缀
+    - 规则 2（称呼剥离）：`张三哥` = `张三` + 称呼，也是前缀
+    - 规则 3（后缀白名单）：`上海市` = `上海` + 后缀，还是前缀
+
+    规则 4（同义词表）不靠字面（`腾讯`/`Tencent`），扫不到 —— 但它
+    **优先级最高不会震荡**，漏掉没有影响。
+    """
+    if a == b:
+        return False
+    return a.startswith(b) or b.startswith(a)
+
+
+def _graph_names(settings, namespace: str) -> list[str]:
+    """图里的实体名（Entity + Person），去重排序。
+
+    **不用**卡片里的 `entity_names` —— 那是写入时的快照，
+    可能和当前图不一致（软删的卡、重建过的卡）。图才是「现在有哪些实体」。
+    """
+    drv = GraphDatabase.driver(
+        settings.NEO4J_URI, auth=(settings.NEO4J_USER, settings.NEO4J_PASSWORD)
+    )
+    names: set[str] = set()
+    try:
+        with drv.session() as sess:
+            for label in ("Entity", "Person"):
+                rows = sess.run(
+                    f"MATCH (n:`{label}`) WHERE n.namespace = $ns "
+                    f"RETURN n.name AS name",
+                    ns=namespace,
+                ).data()
+                for r in rows:
+                    if r["name"]:
+                        names.add(str(r["name"]).strip())
+    finally:
+        drv.close()
+    return sorted(n for n in names if n)
+
+
+def _scan_conflicts(settings, namespace: str) -> None:
+    """重放投票，找出规则自相矛盾的名字对。
+
+    必须走**同一个** `match_entities` —— 否则扫出来的震荡和线上行为不一致，
+    报告就失去意义。
+    """
+    from memory.services.entity_match import match_entities
+
+    names = _graph_names(settings, namespace)
+    print(f"\n震荡扫描（{len(names)} 个实体名）")
+
+    if len(names) < 2:
+        print("  名字少于 2 个，无从扫描")
+        return
+
+    # 先筛「可能相关」的对，再跑判定
+    pairs: list[tuple[str, str]] = []
+    truncated = False
+    for i in range(len(names)):
+        for j in range(i + 1, len(names)):
+            a, b = names[i], names[j]
+            if not _possibly_related(a, b):
+                continue
+            if len(pairs) >= MAX_CONFLICT_PAIRS:
+                truncated = True
+                break
+            pairs.append((a, b))
+        if truncated:
+            break
+
+    total_all = len(names) * (len(names) - 1) // 2
+    print(f"  可扫描 {len(pairs)} 对（全部两两组合 {total_all} 对）")
+    if truncated:
+        print(f"  ⚠️ 已截断到上限 {MAX_CONFLICT_PAIRS} 对，结果不完整")
+
+    if not pairs:
+        # 「0 对可扫」和「扫了 0 对震荡」是两回事，必须说清是哪个。
+        # 前者说明规则 1/2/3 都不会表态（它们全要求前缀关系），
+        # 也就没有「规则之间矛盾」的可能 —— 这不是数据好，是结构上没有风险点。
+        print("  没有前缀关系的名字对")
+        print("    → 规则 1/2/3 全要求「一个是另一个的前缀」，")
+        print("      所以这个 namespace 结构上不存在震荡风险（不是数据好，是没有风险点）")
+        return
+
+    conflicts: list[tuple[str, str, str]] = []
+    for a, b in pairs:
+        r = match_entities(a, b, settings=settings)
+        if r.rule == "conflict":
+            conflicts.append((a, b, r.reason))
+
+    rate = len(conflicts) / len(pairs) * 100
+    print(f"  震荡 {len(conflicts)} 对（{rate:.1f}%）")
+
+    if conflicts:
+        print("    明细（同 = 说相同的规则，不同 = 说不同的规则）：")
+        for a, b, reason in conflicts[:10]:
+            print(f"      {a} / {b}")
+            print(f"        {reason}")
+        if len(conflicts) > 10:
+            print(f"      ……还有 {len(conflicts) - 10} 对")
+    elif len(pairs) < MIN_MEANINGFUL_PAIRS:
+        # 0 震荡在小样本上**不说明规则好**，只说明数据少。
+        # 不加这句警告，将来有人看到「震荡 0」会以为规则层很健康。
+        print(
+            f"    ⚠️ 可扫描对 < {MIN_MEANINGFUL_PAIRS}，这个 0 没有统计意义"
+            f"（数据太少，不代表规则没问题）"
+        )
+
+
 def main() -> None:
     ns = sys.argv[1] if len(sys.argv) > 1 else "work"
     s = load_settings()
@@ -151,6 +275,9 @@ def main() -> None:
                 print("  → 在这批数据上做图算法（孤岛/聚类/降权）测出来的都是垃圾的形状")
     finally:
         drv.close()
+
+    # 4) 震荡扫描（独立开驱动，不依赖上面那个会话）
+    _scan_conflicts(s, ns)
 
 
 if __name__ == "__main__":
