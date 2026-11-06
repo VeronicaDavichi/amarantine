@@ -43,7 +43,11 @@ WHITELIST: dict[str, str] = {
     "ENTITY_ALIAS_SIM": (
         "实测该特征不可分，②级已改为确定性规则层（spec 026）。保留待换模型重评：应合并最低 0.4806 < 不该合并最高 0.8801，0.92 下 8 组应合并只过 2 组"
     ),
-    "GUIDE_CHECK_CRON": "文档一致性校验靠手动跑，没有定时器",
+    "GUIDE_CHECK_CRON": (
+        "有意不接（不是遗漏）：harness/check_guide.py 是 repo-root 脚本，"
+        "ADR 4.10 明确由用户在自己环境装 crontab。服务端进程读不到用户 crontab，"
+        "硬做需要引入调度器依赖，与「日志只写 LOG_FILE」的部署约定冲突"
+    ),
     "TOKENIZER": (
         "有意不接（不是遗漏）：_estimate_tokens 用启发式估算，预算只用于截断防爆窗。换 tiktoken 会拖进依赖 + 需下载词表，离线部署会炸。详见 ADR D7 配置表"
     ),
