@@ -70,6 +70,61 @@ bash harness/fetch-onnx-modelscope.sh
 ONNX 文件放到 `models/bge-m3/onnx/` 后，TEI 会自动优先尝试 ORT 后端
 （日志里原先的 `Could not start ORT backend` 错误消失，转而直接加载）。
 
+## 权重文件现状：embedding 只保留 ONNX（2026-11-06）
+
+本机的 `models/bge-m3/` 现在**只有 ONNX 权重**，`pytorch_model.bin` 和
+`model.safetensors` 都已删除，共省 4.4 GB。
+
+### 为什么能删
+
+TEI 的加载优先级是「有 `onnx/` 就走 ORT，否则走 Candle（safetensors）」。
+本机因为 AVX512 问题**必须**走 ORT，所以那两份 PyTorch 权重永远轮不到。
+
+**实测验证过，不是推测**：
+
+```
+1. 存基线向量（2 条 × 1024 维）
+2. 把 model.safetensors 改名藏起来
+3. 重启容器 -> 仍然 healthy
+4. 重新算向量 -> 与基线逐位相同
+5. 日志无任何 error / not found
+```
+
+结论：safetensors 在这台机器上确实没被加载过。
+
+### 换机器怎么办
+
+如果搬到**支持 AVX512 的机器**（Intel 10 代及以前的部分型号、AMD Zen4+），
+TEI 会优先走 Candle 后端，那时需要：
+
+```bash
+# 从 HuggingFace 重新拉 safetensors
+huggingface-cli download BAAI/bge-m3 --local-dir models/bge-m3 \
+    --include "*.safetensors" "*.json" "*.model" "1_Pooling/*"
+```
+
+或者继续用 ORT（只要有 `onnx/` 目录，TEI 就会走 ORT，与 CPU 无关）。
+
+**简单判据**：容器日志出现 `Intel MKL ERROR ... SGEMM` 或反复重启
+停在 `Warming up model` → 是 AVX512 问题 → 需要 `onnx/`。
+
+### reranker 是唯一副本，不能删
+
+`models/bge-reranker-v2-m3/` 只有 `model.safetensors`（2.2 GB），**没有 onnx**。
+它只有一个权重文件，删了服务直接挂 —— 和 embedding 的情况完全不同。
+
+（它能正常跑说明 reranker 的模型结构 / 算子路径没触发 AVX512 的问题。）
+
+### 总占用
+
+| 目录 | 大小 | 说明 |
+|---|---|---|
+| `bge-m3` | 2.2 G | 只有 `onnx/`（`model.onnx` 725 KB + `model.onnx_data` 2.2 G） |
+| `bge-reranker-v2-m3` | 2.2 G | 只有 `model.safetensors`（唯一副本） |
+| **合计** | **4.3 G** | 清理前 8.6 G |
+
+`models/` 在 `.gitignore` 里，这些是本地产物，不入库。
+
 ## ORT 后端的两个必调参数
 
 即便走 ORT，默认参数在本机也会把内存打爆——实测容器内存冲到 **12.34 GiB**，
