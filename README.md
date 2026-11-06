@@ -1,5 +1,11 @@
 # amarantine
 
+> [!WARNING]
+> **开发中 · 未完成（WIP）**
+>
+> 这个项目还在施工：接口、数据模型、spec 都可能变，**不保证对外稳定，不要用于生产**。
+> 当前状态：1223 个测试全绿、43 个 spec；但还有 **4 项有 spec 未开工 + 1 个已知缺陷**（见[已知限制](#已知限制)）。
+
 > 给大模型用的长期记忆：**MCP 工具（LLM 侧）+ 本地管理通道（人侧）**。
 > 事件卡片进向量库与图库双写，支持召回、遗忘、复核、反馈的完整闭环。
 
@@ -98,10 +104,21 @@ python3 ../harness/check_guide.py      # 文档与代码一致
 
 ### 已知限制
 
+**未实现（有 spec，未开工）**
+
+| 项 | spec | 影响 |
+|---|---|---|
+| 批次切分超上限会静默丢尾部事件 | [036](specs/036-split-truncation-data-loss/) | 灌数据可能漏事件 |
+| 英文缩写不进图（ESB / Kafka / PyCharm） | [037](specs/037-latin-acronym-entities/) | 系统名检索不到 |
+| 称呼不归一（`王老师` 与实名是两个节点） | [038](specs/038-appellation-normalization/) | 「谁负责 X」查不准 |
+| 身份判定只到昵称，未用 uid / 备注 | [043](specs/043-identity-source-priority/) | 同名多账号分不清 |
+
+**已知缺陷**
+
+- 事件卡的 `date_start` 取的是**写入日期**，不是事件发生日 —— 时间过滤会失真
 - 单机自托管，无多租户；隔离粒度是 `namespace`
 - 依赖外部 LLM 做对话切分与标签复核，不可用时降级但质量下降
 - 中文人名抽取依赖权威名册；无名册时退化到分词，会误判品牌名等
-- 事件卡的 `date_start` 目前取写入日期（待修，见 specs/040）
 
 ### License
 
@@ -110,6 +127,10 @@ python3 ../harness/check_guide.py      # 文档与代码一致
 ---
 
 ## English
+
+> [!WARNING]
+> **Work in progress** — APIs and data models are still changing. Tests are green
+> (1223 passing), but this is **not production-ready** and carries several known gaps.
 
 **amarantine** is a self-hosted long-term memory service for LLMs.
 
