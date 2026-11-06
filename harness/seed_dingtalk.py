@@ -72,7 +72,7 @@ def collect_roster(data: dict) -> list[str]:
 
     三个来源，全部是**平台给的**，不需要用分词去猜：
 
-    1. 群标题里的成员名（`孙柏林,王勇,任泽昂,王婕` 逗号分隔）
+    1. 群标题里的成员名（`陈柏林,王泳,任泽安,王洁` 逗号分隔）
     2. 每条消息的 `sender`（发言人显示名）
     3. 语料里显式给的 `_roster`（可选）
 
@@ -168,7 +168,7 @@ def post_ingest(
         "turns": turns,
         "namespace": namespace,
         # 名册随请求走：服务端 `extract_entities` 才知道这些人名是完整的
-        # （否则「孙柏林」会被切成「柏林」）
+        # （否则「陈柏林」会被切成「柏林」）
         "roster": roster or [],
     }
     r = httpx.post(

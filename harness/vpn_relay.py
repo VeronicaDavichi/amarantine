@@ -2,7 +2,7 @@
 
 ## 为什么需要它
 
-LLM 网关 `192.168.0.58:3000` 只挂在 Windows 的 aTrust VPN 虚拟网卡（`2.0.0.1`）上。
+LLM 网关 `198.51.100.58:3000` 只挂在 Windows 的 aTrust VPN 虚拟网卡（`2.0.0.1`）上。
 WSL2 默认是 NAT 网络，**不继承 Windows 的路由表**，所以 WSL 里 TCP 完全不通：
 
     TCP 不通     # bash /dev/tcp 探活失败
@@ -11,19 +11,19 @@ WSL2 默认是 NAT 网络，**不继承 Windows 的路由表**，所以 WSL 里 
 `netsh interface portproxy` 能做同样的事，但要管理员权限；`networkingMode=mirrored`
 要 `wsl --shutdown` 重来一遍（容器全停）。这个脚本两样都不用：
 
-    WSL  ──>  172.20.192.1:3001  ──>  192.168.0.58:3000
+    WSL  ──>  198.51.100.1:3001  ──>  198.51.100.58:3000
               (Windows WSL 网卡)        (VPN 后面)
 
 ## 用法
 
 Windows 侧：
 
-    python harness/vpn_relay.py                # 默认 0.0.0.0:3001 -> 192.168.0.58:3000
-    python harness/vpn_relay.py --listen 3001 --target 192.168.0.58:3000
+    python harness/vpn_relay.py                # 默认 0.0.0.0:3001 -> 198.51.100.58:3000
+    python harness/vpn_relay.py --listen 3001 --target 198.51.100.58:3000
 
 WSL 侧 `.env`：
 
-    LLM_BASE_URL=http://172.20.192.1:3001
+    LLM_BASE_URL=http://198.51.100.1:3001
 
 ## 已知限制
 
@@ -103,7 +103,7 @@ def main() -> int:
     p = argparse.ArgumentParser(description="Windows 侧 TCP 转发（给 WSL 用）")
     p.add_argument("--listen-host", default="0.0.0.0")
     p.add_argument("--listen", type=int, default=3001, help="监听端口")
-    p.add_argument("--target", default="192.168.0.58:3000", help="目标 host:port")
+    p.add_argument("--target", default="198.51.100.58:3000", help="目标 host:port")
     args = p.parse_args()
 
     host, _, port_s = args.target.rpartition(":")

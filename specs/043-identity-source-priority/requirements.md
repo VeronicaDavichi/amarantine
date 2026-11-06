@@ -21,7 +21,7 @@ phase: requirements
 
 ## 2. 缺陷现象
 
-- **短名字风险**：两字昵称占 150/469（32%），与常用词高度撞形（`王勇`/`刘阅`/`石敏`），
+- **短名字风险**：两字昵称占 150/469（32%），与常用词高度撞形（`王泳`/`刘岳`/`石敏`），
   一旦名册缺失就会退回 jieba 猜测；
 - **备注未用**：别名表里有 `王晓虹 - 加班问题人事` 这种「姓名 + 说明」的格式，
   说明部分当前被整条当成名字，既不是人名也不是实体；
@@ -33,7 +33,7 @@ phase: requirements
   `uid > 备注 > 昵称 > 通讯录真名 > jieba` 的优先级取值；高优先级命中即停止下探。
 - **REQ-2** **WHEN** 备注形如 `姓名 - 说明`（如 `王晓虹 - 加班问题人事`）
   **THEN** SHALL 拆成「姓名部分（入名册）」+「说明部分（入标签，不参与实体）」。
-- **REQ-3** **WHEN** 昵称为两字（如 `王勇` / `刘阅`）**THEN** SHALL 正常入名册并成为 `Person`，
+- **REQ-3** **WHEN** 昵称为两字（如 `王泳` / `刘岳`）**THEN** SHALL 正常入名册并成为 `Person`，
   **不得**因长度短而降级或丢弃。
 - **REQ-4** **WHEN** 写入一条来自某 uid 的消息 **THEN** SHALL 建立 `(:Account {uid})`，
   并把它与 `Person` 关联（`OPERATED_BY`），同名不同 uid **不得**合并。
@@ -47,7 +47,7 @@ phase: requirements
 - **WHEN** 名册存在 **THEN** SHALL CONTINUE TO 把 jieba 抽出的 person 降级为 `topic`（035 现状）
 - **WHEN** 名册为空 **THEN** SHALL CONTINUE TO 保持旧行为（单条写入场景）
 - **WHEN** 品牌名（`周大福`/`王老吉`）**THEN** SHALL CONTINUE TO 不成为 `Person`
-- **WHEN** 名册最长匹配 **THEN** SHALL CONTINUE TO `孙柏林` 优先于 `柏林`
+- **WHEN** 名册最长匹配 **THEN** SHALL CONTINUE TO `陈柏林` 优先于 `柏林`
 - **WHEN** 别名被拒 **THEN** SHALL CONTINUE TO 写 `alias_reject` 留痕
 
 ## 5. 非功能需求

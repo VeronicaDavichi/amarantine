@@ -1,6 +1,6 @@
 """LLM 调用（Anthropic Messages / OpenAI 双协议）。
 
-本机接入的是 hongwang 网关（`http://192.168.0.58:3000`），走 **Anthropic Messages**
+本机接入的是 hongwang 网关（`http://198.51.100.58:3000`），走 **Anthropic Messages**
 协议；`LLM_PROVIDER=openai` 时可切到 OpenAI 兼容端点。
 
 两个实现细节值得留意：

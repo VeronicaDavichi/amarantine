@@ -25,7 +25,7 @@ updated_at: 2026-11-06T08:37:27.610143281Z
 人 → 非 Event 的边：0
 ```
 
-问「王勇跟谁对接」「谁负责前端」，**没有边可走**，只能靠共现猜。
+问「王泳跟谁对接」「谁负责前端」，**没有边可走**，只能靠共现猜。
 而 `RELATED` 占了全部边的 92%（平均每事件 17 条），关系预算花在了事件纠缠上。
 
 **目标（粗）**：定义业务谓词表，让「人—关系—人/实体」这类边可被抽取、可被查询。
@@ -44,10 +44,10 @@ updated_at: 2026-11-06T08:37:27.610143281Z
 
 | 谓词 | 头 | 尾 | 例 |
 |---|---|---|---|
-| `OWNS` | Person | Entity/Project | 王勇 --负责--> 反洗钱前端 |
-| `MAINTAINS` | Person | Entity/Service | 成善明 --维护--> ESB |
+| `OWNS` | Person | Entity/Project | 王泳 --负责--> 反洗钱前端 |
+| `MAINTAINS` | Person | Entity/Service | 成善 --维护--> ESB |
 | `REPORTS_TO` | Person | Person | 待定（语料里目前没有直接证据） |
-| `COLLABORATES_WITH` | Person | Person | 刘佳媚 ↔ 刘阅（同场处理同一客户） |
+| `COLLABORATES_WITH` | Person | Person | 刘佳 ↔ 刘岳（同场处理同一客户） |
 | `DEPENDS_ON` | Entity | Entity | aml-scripts --依赖--> 中登接口 |
 
 约束：头尾类型固定；每条边带 `evidence_count` 与 `source_event_ids`（可回溯）。
@@ -79,10 +79,10 @@ updated_at: 2026-11-06T08:37:27.610143281Z
 
 ## Test
 
-- [ ] A1 「王勇负责前端」能被抽出并落成 `(王勇)-[:OWNS]->(前端)`（真库）
+- [ ] A1 「王泳负责前端」能被抽出并落成 `(王泳)-[:OWNS]->(前端)`（真库）
 - [ ] A2 同一关系在 2 个重叠窗口出现 → 只有 **1 条边**，`evidence_count=2`
 - [ ] A3 头尾类型不符（如 Entity→Person 的 `OWNS`）被拒，并留痕
-- [ ] A4 查询「王勇负责什么」2 跳内返回结果
+- [ ] A4 查询「王泳负责什么」2 跳内返回结果
 - [ ] A5 金标 20 条，precision ≥ 0.8
 - [ ] A6 全量 pytest 无回归
 

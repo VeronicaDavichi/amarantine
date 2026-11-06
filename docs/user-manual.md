@@ -1560,27 +1560,27 @@ curl -X DELETE http://127.0.0.1:8081/v1/schema/MemoryEvent
 
 ```powershell
 # Windows 侧直连（走 VPN）
-Invoke-WebRequest "http://192.168.0.58:3000/" -TimeoutSec 10 -UseBasicParsing
+Invoke-WebRequest "http://198.51.100.58:3000/" -TimeoutSec 10 -UseBasicParsing
 ```
 
 ```bash
 # WSL 侧直连
-curl -o /dev/null -w "%{http_code}\n" http://192.168.0.58:3000/
+curl -o /dev/null -w "%{http_code}\n" http://198.51.100.58:3000/
 ```
 
 **Windows 通、WSL 不通** → 是 NAT 不继承 VPN 路由，不是代码问题。
 网关挂在 aTrust 这类**用户态虚拟网卡**上，WSL2 默认 NAT 网络看不到那条路由：
 
 ```
-Windows: 192.168.31.129  ──(aTrustVPNIC 2.0.0.1)──> 192.168.0.58:3000   ✅
-WSL2:    172.20.192.x    ──────────────────────────> 192.168.0.58:3000   ❌
+Windows: 198.51.100.129  ──(aTrustVPNIC 2.0.0.1)──> 198.51.100.58:3000   ✅
+WSL2:    172.20.192.x    ──────────────────────────> 198.51.100.58:3000   ❌
 ```
 
 **解法**（不需要管理员、不需要重启）：
 
 ```powershell
 # Windows 侧起转发（3000 端口防火墙已放行，所以直接用它）
-python harness\vpn_relay.py --listen 3000 --target 192.168.0.58:3000
+python harness\vpn_relay.py --listen 3000 --target 198.51.100.58:3000
 ```
 
 `harness/dev-linux.sh` 会自动把 `LLM_BASE_URL` 填成

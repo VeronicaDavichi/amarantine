@@ -25,7 +25,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${REPO_ROOT}/back_end"
 
 # ---------- LLM 网关走 Windows 侧转发 ----------
-# 网关（如 192.168.0.58:3000）只在 Windows 的 aTrust VPN 后面，WSL 的 NAT 网络
+# 网关（如 198.51.100.58:3000）只在 Windows 的 aTrust VPN 后面，WSL 的 NAT 网络
 # 继承不到那条路由，直连必然超时。harness/vpn_relay.py 在 Windows 上把
 # 3000 端口转发过去，WSL 这里连默认网关即可。
 #

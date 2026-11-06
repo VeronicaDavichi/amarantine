@@ -18,22 +18,22 @@ try:
             ns=NS,
         ).data()
         for r in rr:
-            flag = "  <== 补上了" if r["name"] == "孙柏林" else ""
+            flag = "  <== 补上了" if r["name"] == "陈柏林" else ""
             print(f"  {r['name']:12} 度 {r['deg']}{flag}")
 
         print()
         print("=" * 70)
-        print("孙柏林的节点和边")
+        print("陈柏林的节点和边")
         print("=" * 70)
         node = x.run(
-            "MATCH (n:Person {name: '孙柏林', namespace: $ns}) "
+            "MATCH (n:Person {name: '陈柏林', namespace: $ns}) "
             "RETURN labels(n) AS lbs, size([(n)--() | 1]) AS deg",
             ns=NS,
         ).data()
         print(f"  节点: {node if node else '（还是没有）'}")
 
         edges = x.run(
-            "MATCH (n:Person {name: '孙柏林', namespace: $ns})-[r]-(m) "
+            "MATCH (n:Person {name: '陈柏林', namespace: $ns})-[r]-(m) "
             "RETURN type(r) AS rel, labels(m)[0] AS lb, "
             "coalesce(m.summary, m.name) AS txt LIMIT 12",
             ns=NS,
@@ -43,11 +43,11 @@ try:
 
         print()
         print("=" * 70)
-        print("孙柏林 和 王婕 有没有共同事件")
+        print("陈柏林 和 王洁 有没有共同事件")
         print("=" * 70)
         both = x.run(
-            "MATCH (a:Person {name: '孙柏林', namespace: $ns}) "
-            "MATCH (b:Person {name: '王婕', namespace: $ns}) "
+            "MATCH (a:Person {name: '陈柏林', namespace: $ns}) "
+            "MATCH (b:Person {name: '王洁', namespace: $ns}) "
             "MATCH (e:Event {namespace: $ns}) "
             "WHERE (e)-[]-(a) AND (e)-[]-(b) "
             "RETURN e.summary AS sm",
@@ -63,9 +63,9 @@ print()
 print("=" * 70)
 print("召回验证")
 print("=" * 70)
-for q in ("孙柏林问过什么", "分支机构怎么访问反洗钱系统", "孙柏林"):
+for q in ("陈柏林问过什么", "分支机构怎么访问反洗钱系统", "陈柏林"):
     r = recall(q, namespace=NS, settings=s)
     print(f"  Q: {q}  ->  {len(r.materials)} 条")
     for m in r.materials[:2]:
-        hit = " ★" if "孙柏林" in str(m.get("summary") or "") else ""
+        hit = " ★" if "陈柏林" in str(m.get("summary") or "") else ""
         print(f"      [{m.get('score', 0):.3f}] {str(m.get('summary'))[:56]}{hit}")
