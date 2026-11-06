@@ -60,13 +60,50 @@ def test_prefix_rule_survives_rule_disable() -> None:
 
 
 def test_prefix_rule_beats_suffix_whitelist() -> None:
-    """**顺序测试**：即使「丰」进了后缀白名单，张三/张三丰 仍是不同实体。
+    """**顺序测试**：默认配置下，`张三 / 张三丰` 仍是不同实体。
 
-    这是最容易写错的地方 —— 字面包含规则（规则 3）会把
-    「张三 + 丰」判成同一实体，所以规则 1 必须排在它前面。
+    ⚠️ **这个测试在 spec 031 被改过**，改的不是断言宽松，是场景。
+
+    **原来测的是**：人为把「丰」塞进 `ENTITY_SUFFIXES`，断言仍然 DIFFERENT。
+    当时的设计是「姓名结构 > 配置」—— 硬保护，防止用户误配。
+
+    **031 修了另一个 bug 之后这条不再成立**：`上海/上海市` 之前被判成
+    DIFFERENT，因为规则 1（单字名前缀冲突）抢在后缀规则之前，而 `上`
+    恰好在姓氏表里。修法是让规则 1「多出的字在已知后缀表里时弃权」。
+    于是人为配了「丰」之后，「张三丰」的「丰」也算已知后缀 → 合并。
+
+    **这个权衡是有意接受的**：
+
+    - `ENTITY_SUFFIXES` 的默认值只含「不可能是人名字」的字
+      （`市省县区镇部处科院局`）和多字词（`AI/助手/公司/集团/科技/股份/...`）
+    - 硬把「丰」这种**名字用字**配进去，等于告诉系统「丰是后缀」，系统照做
+    - 想同时「保护姓名结构」又允许配任意字，规则层做不到 —— 那是 LLM 的活，
+      三态设计里「不知道」就该交给下游
+
+    所以这条现在验证**默认配置**下的行为，另外加一条记录这个已知权衡。
+    """
+    got = _ruling("张三", "张三丰")  # 用默认 ENTITY_SUFFIXES
+    assert got == RULING_DIFFERENT, "默认配置下姓名结构判断被后缀规则抢先了"
+
+
+def test_known_tradeoff_configuring_name_char_as_suffix_merges() -> None:
+    """**已知权衡，不是 bug**：把名字用字配进后缀白名单会合并。
+
+    这条测试存在的意义是**把权衡钉在代码里**，而不是让它变成
+    某天有人发现时的「意外行为」。
+
+    spec 031 让规则 1 对「已知后缀」弃权，代价就是这个：
+    配置能覆盖姓名结构判断。换来的是 `上海/上海市` 这类地名不再被拆成
+    两个实体 —— 后者在实际数据里远比「用户乱配后缀」常见。
+
+    要彻底两者兼顾，需要「后缀字 vs 名字字」的语义区分，
+    那是 LLM 层的事，规则层做不到。
     """
     got = _ruling("张三", "张三丰", ENTITY_SUFFIXES="丰,AI,公司")
-    assert got == RULING_DIFFERENT, "规则顺序错了：后缀规则抢先了"
+    assert got == RULING_SAME, (
+        "如果这里变成 DIFFERENT，说明规则 1 又开始抢后缀规则了 —— "
+        "那 `上海/上海市` 的 bug 会回来"
+    )
 
 
 # ============================================================ 规则 2：称呼剥离
@@ -282,3 +319,92 @@ def test_single_char_prefix_still_importable_from_old_location() -> None:
     assert old_fn("张三", "张三丰") is True
     assert old_fn("豆包", "豆包AI") is False
     assert OLD_REASON == "单字名前缀冲突"
+
+# ============================================================ spec 031：地名后缀
+
+
+@pytest.mark.parametrize(
+    "short,long",
+    [
+        ("上海", "上海市"),
+        ("成都", "成都市"),
+        ("苏州", "苏州市"),
+        ("杭州", "杭州市"),
+        ("广州", "广州市"),
+        ("南京", "南京市"),
+        ("郑州", "郑州市"),
+    ],
+)
+def test_place_name_with_suffix_is_same(short, long) -> None:
+    """地名 + 后缀（市/省/区）必须是同一实体。
+
+    **这是 spec 031 修的真 bug**：`上海` 的结构是「姓 + 单字名」（`上` 在
+    姓氏表里），规则 1 抢先判了 DIFFERENT，规则 3（后缀白名单）永远轮不到。
+
+    `北京/北京市` 当年侥幸对了，是因为 `北` 不在姓氏表 —— 026 的 14 组对照
+    里没有一组是「姓氏字开头的地名」，这是它的盲区。
+    """
+    s = Settings()
+    r = match_entities(short, long, settings=s)
+    assert r.is_same, f"{short}/{long} 被判成 {r.ruling}（{r.reason}），应该是同一地"
+    assert r.rule == "suffix", f"应该走后缀规则，实际走了 {r.rule}"
+
+
+def test_surname_like_place_does_not_break_real_names() -> None:
+    """修地名不能把「张三 / 张三丰」也放过去。
+
+    「丰」不在 `ENTITY_SUFFIXES` 里，所以规则 1 仍然判真冲突。
+    这是规则 1 存在的**全部理由**，不能被这次修改废掉。
+    """
+    s = Settings()
+    for short, long in [("张三", "张三丰"), ("李四", "李四光")]:
+        r = match_entities(short, long, settings=s)
+        assert r.ruling == RULING_DIFFERENT, (
+            f"{short}/{long} 应该判 DIFFERENT，实际 {r.ruling}（{r.reason}）"
+        )
+        assert r.rule == "single_char_prefix"
+
+
+def test_group_suffix_stays_unknown_not_same() -> None:
+    """`项目A / 项目A组` 必须保持 UNKNOWN，**不能被地名修复顺手合并**。
+
+    026 特意把「组」排除在 `ENTITY_SUFFIXES` 之外，因为「项目A组」是
+    另一个组织，不是「项目A」的别名。
+
+    **注意期望是 UNKNOWN 不是 DIFFERENT**：`split_name_surname("项目A")`
+    返回 None（`项目` 不是姓名结构），规则 1 本来就命中不了，
+    结果交给 LLM。改前改后都是 UNKNOWN —— 这条测的是「没被改坏」。
+    """
+    s = Settings()
+    r = match_entities("项目A", "项目A组", settings=s)
+    assert not r.is_same, "「组」被当成后缀了 —— 026 的决策被破坏"
+    assert r.ruling == RULING_UNKNOWN, (
+        f"期望 UNKNOWN（交给 LLM），实际 {r.ruling}（{r.reason}）"
+    )
+
+
+def test_place_name_degrades_to_unknown_when_rules_off() -> None:
+    """规则层关闭时，地名退化为 UNKNOWN，**不能是 DIFFERENT**。
+
+    这是「弃权」设计的关键验证：规则 1 遇到已知后缀时不下结论，
+    后缀规则又因为 `ENTITY_RULE_ENABLED=false` 不执行 ——
+    于是整条链的答案是「不知道」，交给 LLM。
+
+    如果规则 1 当初写的是「判 SAME」而不是「弃权」，关闭规则层后
+    地名会被错误地合并；如果写「照旧判 DIFFERENT」，就是原来那个 bug。
+    """
+    s = Settings()
+    s.ENTITY_RULE_ENABLED = False
+    r = match_entities("上海", "上海市", settings=s)
+    assert r.ruling == RULING_UNKNOWN, (
+        f"规则层关闭时期望 UNKNOWN，实际 {r.ruling}（{r.reason}）"
+    )
+    assert not r.is_same
+
+
+def test_honorific_exception_still_works() -> None:
+    """称呼例外没被后缀例外破坏（回归）。"""
+    s = Settings()
+    r = match_entities("张三", "张三哥", settings=s)
+    assert r.is_same
+    assert r.rule == "honorific"

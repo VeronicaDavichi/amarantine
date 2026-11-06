@@ -87,21 +87,33 @@ def single_char_name_prefix_conflict(short: str, long: str) -> bool:
     return split_name_surname(short) is not None
 
 
-def _prefix_conflict_excluding_honorific(
-    short: str, long: str, honorifics: list[str]
+def _prefix_conflict_excluding_affix(
+    short: str, long: str, honorifics: list[str], suffixes: list[str]
 ) -> bool:
-    """单字前缀冲突，但**多出来的那个字若是称呼，就不算冲突**。
+    """单字前缀冲突，但**多出来的那个字若是词缀（称呼/后缀），就不算冲突**。
 
-    为什么需要这个例外：「张三哥 → 张三」里多出的「哥」是称呼，
-    不是名字的一部分，应该走「称呼剥离」判为同一人。
-    而「张三丰」里的「丰」是名字的一部分，才是真冲突。
+    「弃权」的语义是「这条规则不下结论」，不是「判同一」——
+    结论交给后面的规则。这样 `ENTITY_RULE_ENABLED=false` 时，
+    地名会退化成 UNKNOWN（交给 LLM），而不是错的 DIFFERENT。
 
-    不排除的话，规则 1 会先把 `张三哥/张三` 判成不同实体，
-    规则 2（称呼剥离）永远没机会执行 —— 这是实测时发现的顺序 bug。
+    两类例外，都是实测撞出来的顺序 bug：
+
+    1. **称呼**：「张三哥 → 张三」里多出的「哥」是称呼，不是名字的一部分，
+       该走「称呼剥离」判同一人。不排除的话规则 1 先判 DIFFERENT，
+       规则 2 永远没机会执行。
+    2. **后缀**：「上海 → 上海市」里多出的「市」在 `ENTITY_SUFFIXES` 里，
+       该走「后缀展开」判同一地。不排除的话同样是规则 1 抢先。
+
+    **「张三丰」里的「丰」不是词缀**，所以仍然判真冲突 —— 这正是规则 1
+    存在的理由，不能因为加例外把它废掉。
+
+    边界：「项目A / 项目A组」里的「组」**故意不在** `ENTITY_SUFFIXES`
+    （spec 026 的决策：两个部门不是同一个），所以走不到这个例外，
+    仍然判 DIFFERENT。
     """
     if len(long) == len(short) + 1 and long.startswith(short):
         extra = long[-1]
-        if extra in honorifics:
+        if extra in honorifics or extra in suffixes:
             return False
     return single_char_name_prefix_conflict(short, long)
 
@@ -194,11 +206,15 @@ def match_entities(a: str, b: str, *, settings: Settings) -> MatchResult:
     # ---- 规则 1：单字名前缀冲突（双向）----
     # 永远生效，不受 ENTITY_RULE_ENABLED 控制（spec 020 的既有功能）。
     #
-    # 但要排除「多出的字是称呼」的情形，否则 `张三哥/张三` 在这里就被判不同，
-    # 后面的称呼剥离永远没机会执行（实测发现）。
-    if _prefix_conflict_excluding_honorific(
-        a, b, honorifics
-    ) or _prefix_conflict_excluding_honorific(b, a, honorifics):
+    # 但要多出「称呼 / 后缀」两种例外，否则 `张三哥/张三` 和 `上海/上海市`
+    # 在这里就被判不同，后面的规则 2 / 3 永远没机会执行（都是实测发现的）。
+    #
+    # 后缀表即使规则层关闭也要读 —— 它属于规则 1 的例外判据，
+    # 不是规则 3 的配置。
+    _suffixes_for_rule1 = _split_csv(getattr(settings, "ENTITY_SUFFIXES", ""))
+    if _prefix_conflict_excluding_affix(
+        a, b, honorifics, _suffixes_for_rule1
+    ) or _prefix_conflict_excluding_affix(b, a, honorifics, _suffixes_for_rule1):
         return MatchResult(
             RULING_DIFFERENT, "single_char_prefix", f"{a} / {b} {PREFIX_CONFLICT_REASON}"
         )
