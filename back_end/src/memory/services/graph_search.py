@@ -504,10 +504,31 @@ def event_neighborhood(
 
 # ---------------------------------------------------------------- A10 第 4 类硬信号
 
+#: 查事件度数。**只数连到「非 Event」节点的边**。
+#:
+#: 为什么排除 `(e)--(:Event)`（spec 034 实测发现）：
+#:
+#: `graph_outbox` 会给「共享 Person / Entity」的两个 Event 连 `RELATED` 边，
+#: 上限 `MAX_RELATED_LINKS=20`。于是一个只提到 1 个人的事件，只要那个人
+#: 在 40 条记忆里都出现，它就能拿到 20 条 RELATED 边。
+#:
+#: 而 `GRAPH_HUB_DEGREE=8` 的意图是「**内容**特别丰富」（提到很多人/实体/动作），
+#: 典型事件是 4-6 条结构边（AT + ACTION + MENTIONS + INVOLVES）。
+#: 把 RELATED 算进去，结果是**几乎所有事件度数都 > 8** ->
+#: 全部判 `graph_hub` 保护 -> **遗忘机制完全失效**。
+#:
+#: 实测：DingTalk 40 条真实记忆，度数分布 16-25，边类型
+#: `{RELATED: 38, AT: 40, INVOLVES: 38, MENTIONS: 12, ACTION: 4}` ——
+#: 排除 RELATED 之后单事件结构边只有 3-4 条，符合「典型 4-6」的假设。
+#:
+#: 注意：030 的端到端测试用的是 `TESTLINK` 连 Time/Action/Entity/Person，
+#: 一条 Event-Event 边都没有，所以那批测试**测不出这个缺陷**。
+#: 真实数据才暴露出来 —— 这是合成图的盲区。
 _DEGREE_CYPHER = """
 UNWIND $event_ids AS eid
 MATCH (e:Event {namespace: $namespace, event_id: eid})
-RETURN eid AS event_id, size([(e)--() | 1]) AS degree
+RETURN eid AS event_id,
+       size([(e)--(n) WHERE NOT n:Event | 1]) AS degree
 """
 
 

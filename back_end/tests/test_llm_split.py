@@ -136,11 +136,30 @@ def test_echo_single_part_is_accepted(monkeypatch) -> None:
 # ---------------- 防滥用护栏 ----------------
 
 
-def test_too_many_events_falls_back(monkeypatch) -> None:
-    """LLM 把一句话拆成几十条 → 判为异常，整段当一条。"""
+def test_too_many_events_truncates_not_falls_back(monkeypatch) -> None:
+    """超过 `MAX_EVENTS` → **截断**，不是整段丢弃。
+
+    ⚠️ **这个测试在 spec 034 被改过**，改的是行为不是断言强度。
+
+    **原来断言**：「拆成几十条 → 判异常 → 整段当一条」。
+
+    **为什么改**：实测（DingTalk 32 轮日常对话）LLM 切出 **46 条**，
+    平均每轮 1.4 条 —— 完全合理。原逻辑 `_looks_like_echo` 看到
+    `len(parts) > MAX_EVENTS` 就返回 True，于是整段丢弃，产出 1 张
+    `summary` 是原文拼接的垃圾卡，**而且不报错**（设计上就是降级）。
+
+    更糟的是那行 `return parts[:MAX_EVENTS]` 明明写着截断，
+    因为前面的判断先返回，**永远执行不到** —— 两个逻辑互相打架。
+
+    **现在的行为**：`_looks_like_echo` 只管「质量」（原文照抄 / 单条过长），
+    「条数」由 `parts[:MAX_EVENTS]` 截断。一段长对话保留前 40 条摘要，
+    远好于整段丢弃。
+    """
     reply = json.dumps([f"事件{i}" for i in range(MAX_EVENTS + 5)])
     _patch(monkeypatch, reply=reply)
-    assert split_events(LONG, SETTINGS) == [LONG.strip()]
+    parts = split_events(LONG, SETTINGS)
+    assert parts != [LONG.strip()], "不该整段丢弃，应该截断"
+    assert len(parts) == MAX_EVENTS, f"应该截断到 {MAX_EVENTS}，实际 {len(parts)}"
 
 
 def test_overly_long_event_falls_back(monkeypatch) -> None:

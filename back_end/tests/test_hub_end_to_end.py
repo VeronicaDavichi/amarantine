@@ -326,3 +326,52 @@ def test_temp_namespace_cleanup_leaves_nothing(temp_ns) -> None:
     deleted = t.cleanup()
     assert deleted > 0
     assert t.count() == 0, f"清理后还有 {t.count()} 个节点"
+
+# ============================================================ spec 034：RELATED 边不计入度数
+
+
+def test_event_related_edges_do_not_count_as_degree(temp_ns) -> None:
+    """**Event-Event 的 `RELATED` 边不计入度数**。
+
+    这是真实数据（DingTalk 40 条）暴露的设计缺陷：
+
+    `graph_outbox` 给「共享 Person/Entity」的两个 Event 连 `RELATED` 边，
+    上限 `MAX_RELATED_LINKS=20`。于是一个只提到 1 个人的事件，只要那个人
+    在 40 条记忆里都出现，就能拿到 20 条 RELATED 边。
+
+    而 `GRAPH_HUB_DEGREE=8` 的意图是「**内容**特别丰富」（提到很多人/
+    实体/动作），典型事件 4-6 条结构边。把 RELATED 算进去的结果是
+    **40 个事件全部度数 16-25，全部判 graph_hub 保护，遗忘机制彻底失效**。
+
+    030 的端到端测试用 `TESTLINK` 连 Time/Action/Entity/Person，
+    **一条 Event-Event 边都没有**，所以那批测试测不出这个缺陷 ——
+    合成图的盲区只能靠真实数据补。
+
+    这条测试造「2 个结构邻居 + 8 个 Event 邻居」，断言度数 = 2。
+    """
+    s, t = temp_ns
+
+    # 一个 Event，连 2 个非 Event 邻居
+    t.make_hub_event("evt_with_related", 2)
+
+    # 再连 8 个**其他 Event**（模拟 RELATED 边）
+    with t.driver.session() as sess:
+        for i in range(8):
+            sess.run(
+                """
+                MATCH (e:Event {event_id: $eid, namespace: $ns})
+                MERGE (o:Event {event_id: $oid, namespace: $ns})
+                SET o.summary = '邻居事件'
+                MERGE (e)-[:RELATED]->(o)
+                """,
+                eid="evt_with_related",
+                ns=t.ns,
+                oid=f"{t.ns}_other{i}",
+            )
+
+    out = event_degrees(["evt_with_related"], t.ns, settings=s)
+    assert out is not None
+    assert out.get("evt_with_related") == 2, (
+        f"度数应为 2（只数非 Event 邻居），实际 {out.get('evt_with_related')} —— "
+        "RELATED 边被算进去了，真实数据上会让所有事件都被 hub 保护"
+    )

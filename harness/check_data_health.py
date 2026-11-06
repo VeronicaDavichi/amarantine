@@ -214,12 +214,23 @@ def main() -> None:
     drv = GraphDatabase.driver(s.NEO4J_URI, auth=(s.NEO4J_USER, s.NEO4J_PASSWORD))
     try:
         with drv.session() as session:
+            # 度数**只数非 Event 邻居**，和 `graph_search._DEGREE_CYPHER` 口径一致。
+            #
+            # 为什么不这样会对不上：`graph_outbox` 给「共享 Person/Entity」的
+            # 两个 Event 连 RELATED 边（上限 20）。把 Event-Event 边算进度数，
+            # 40 条真实记忆的度数全在 16-25，而 `GRAPH_HUB_DEGREE=8` ——
+            # 报告会说「hub 保护会生效」，实际是「所有事件都被保护、遗忘失效」。
+            #
+            # `rels` 仍收集**全部**边类型：它只用于诊断「这批数据有哪些边」，
+            # 不参与度数。
             rows = list(
                 session.run(
                     """
                     MATCH (e:Event {namespace: $ns})
                     OPTIONAL MATCH (e)-[r]-(n)
-                    RETURN e.event_id AS eid, count(r) AS degree, collect(DISTINCT type(r)) AS rels
+                    RETURN e.event_id AS eid,
+                           count(CASE WHEN n IS NULL OR NOT n:Event THEN 1 END) AS degree,
+                           collect(DISTINCT type(r)) AS rels
                     """,
                     ns=ns,
                 )
@@ -233,6 +244,8 @@ def main() -> None:
             print(f"\n图节点: {len(rows)} 个 Event")
             print(f"  度数分布: {dict(sorted(dist.items()))}")
             print(f"  平均度数: {sum(degrees) / len(degrees):.2f}  最大: {max(degrees)}")
+            print("  （度数只数非 Event 邻居：RELATED 是共享实体的派生边，")
+            print("    算进去会让所有事件都被 hub 保护）")
 
             all_rels: Counter = Counter()
             for r in rows:
