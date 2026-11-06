@@ -1,5 +1,5 @@
 ---
-status: in-progress
+status: complete
 created: 2026-11-06
 priority: high
 tags:
@@ -7,9 +7,12 @@ tags:
 - corpus
 - dingtalk
 created_at: 2026-11-06T06:00:17.576371074Z
-updated_at: 2026-11-06T06:00:17.576371074Z
+updated_at: 2026-11-06T06:23:01.700205341Z
+completed_at: 2026-11-06T06:23:01.700205341Z
+transitions:
+- status: complete
+  at: 2026-11-06T06:23:01.700205341Z
 ---
-
 # 034 从 DingTalk 导入真实工作记录
 
 ## Overview
