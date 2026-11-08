@@ -32,6 +32,7 @@ def run_mcp(
     lines: list[str],
     namespace: str | None = "agent-a",
     log_file: Path | None = None,
+    cwd: Path | None = None,
 ) -> tuple[str, str, int]:
     env = os.environ.copy()
     if namespace is None:
@@ -42,6 +43,8 @@ def run_mcp(
     if log_file is None:
         log_file = Path(tempfile.gettempdir()) / "amarantine-test.log"
     env["LOG_FILE"] = str(log_file)
+    # 改了 cwd 时子进程要还能 import memory.*（没装成包时靠 PYTHONPATH）
+    env.setdefault("PYTHONPATH", str(Path(__file__).resolve().parents[1] / "src"))
 
     proc = subprocess.run(
         [sys.executable, "-m", MODULE],
@@ -49,6 +52,7 @@ def run_mcp(
         capture_output=True,
         text=True,
         env=env,
+        cwd=str(cwd) if cwd is not None else None,
         timeout=60,
     )
     return proc.stdout, proc.stderr, proc.returncode
@@ -122,9 +126,16 @@ def test_namespace_argument_rejected(tmp_path: Path) -> None:
 
 
 def test_missing_namespace_exits_nonzero(tmp_path: Path) -> None:
-    """缺 namespace：退出码 1，stdout/stderr 全空，原因只写日志文件。"""
+    """缺 namespace：退出码 1，stdout/stderr 全空，原因只写日志文件。
+
+    **必须在空目录里跑**：开发机上 `back_end/.env` 里有 `MEMORY_NAMESPACE=qq`，
+    子进程会从 cwd 的 .env 读到它 —— 那样「缺 namespace」根本没缺，
+    这条测试就会静默变成「验证 .env 生效了」。
+    """
     log_file = tmp_path / "m.log"
-    out, err, code = run_mcp([INIT], namespace=None, log_file=log_file)
+    out, err, code = run_mcp(
+        [INIT], namespace=None, log_file=log_file, cwd=tmp_path
+    )
     assert code == 1
     assert out.strip() == ""
     assert err.strip() == "", "stderr 不应有任何输出"
