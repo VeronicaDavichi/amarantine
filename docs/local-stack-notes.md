@@ -255,3 +255,38 @@ Docker 端口映射到 WSL 的 `0.0.0.0`，所以 **WSL 内访问 `127.0.0.1:808
 不需要 `host.docker.internal`，也不需要 WSL 的宿主 IP。
 `.env` 里的地址可以照抄 Windows 的写法。
 
+
+## 2026-11-07 · 本地 GPU 推理替代 TEI 容器
+
+TEI 镜像（`text-embeddings-inference:cpu-1.8`，1GB+ 层）在本机**反复超时**：
+daocloud 卡在 r2 blob、1ms.run 卡在同一层，重试 8 轮都没拉全。而模型本来就要落盘，
+索性直接本地推理 —— 契约只有两个端点，自己实现比跟镜像源较劲可控。
+
+| 服务 | 实现 | 契约 | 实测 |
+|---|---|---|---|
+| embedding :8082 | `harness/embed_server.py`（bge-m3） | `POST /v1/embeddings`，`input`（**不是** `inputs`）→ `data[].embedding` | 加载 10s，1024 维，CLS+归一化 |
+| rerank :8083 | `harness/rerank_server.py`（bge-reranker-v2-m3） | `POST /rerank {query,texts}` → `[{index,score}]`（TEI 形状） | 50 条 ~41ms |
+
+环境：RTX 4060 Ti 16G / `torch 2.15.0+cu132` / fp16。
+打分区分度实测（同一 query）：相关 +5.44、弱相关 -6.89、无关 -11.05。
+
+**为什么不能用 bge-m3 当 reranker**：`rerank.py` 的注释写过，TEI 会返回 424
+`model is not a re-ranker model`；本地版同理 —— 两者是不同架构
+（embedding 是 bi-encoder，rerank 是 cross-encoder），权重不能混用。
+
+启动：`bash harness/up_local.sh`（容器 + embedding + rerank + admin）。
+
+### 网络：WSL 用 NAT，LLM 网关在 VPN 后面
+
+`.wslconfig` 用 `networkingMode=nat`（默认）。**模型推理完全不依赖网络**；
+只有「灌库时让 LLM 切分/打标」才需要 `192.168.0.58:3000` 那个网关，
+而 NAT 下 WSL 到宿主机的入站被 Windows 防火墙挡着（`172.22.192.1:3001` 超时）。
+
+要用 LLM 时，二选一：
+
+1. 管理员 PowerShell 放行 relay 端口，再在 Windows 跑
+   `py -3 harness\vpn_relay.py --listen 3001 --target 192.168.0.58:3000`，
+   `.env` 里 `LLM_BASE_URL=http://<WSL 网关 IP>:3001`
+2. 临时把 `.wslconfig` 改成 `networkingMode=mirrored` 并 `wsl --shutdown`：
+   mirrored 共享 localhost，relay 用 `127.0.0.1:3001` 即可（注意 mirrored
+   镜像不到 VPN 网卡，仍要靠 relay）

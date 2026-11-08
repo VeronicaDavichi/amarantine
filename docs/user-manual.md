@@ -256,6 +256,18 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 
 `status` 取值：`queued` → `running` → `done`；`rejected`（全批被拦）/ `failed`（连切分都做不了）。
 
+**批次大不会静默丢数据（spec 036）**：切分撞到单批上限时，服务会**按行二分重切**，
+而不是把尾部截掉。所以查进度的响应多了两个字段：
+
+| 字段 | 含义 |
+|---|---|
+| `split_rounds` | 用掉了几轮二分。`1` = 没二分；`>1` 说明这批对话大到需要分片 |
+| `dropped_events` | 到轮次上限（3 轮）仍超限、**真的丢掉**的条数。`0` = 一条没丢 |
+
+`dropped_events > 0` 会同时打一条 WARNING（带 job 号 / 保留条数 / 丢弃条数 / 轮次）。
+出现它只有两种原因：单行超长文本（没有行边界可切），或者一批里真塞了几百条对话 ——
+前者应该改导入方式，把超长文本拆成多轮再提交，而不是调大上限。
+
 #### 溯源：一条记忆出自哪句话
 
 ```bash
@@ -1631,6 +1643,29 @@ jieba 切成 `张三/nr 决定/v 项目/n A/x 延期/v 到/v 六月/t`，
 抓不到裸城市名），但**必须可用** —— 抽取失败会直接阻断写卡。
 降级路径有单测守着。
 
+#### 拉丁词形：jieba 之外的第二条通道
+
+jieba 把 `ESB` 标成 `eng`，而抽取器只认 `nr`/`ns`/`nt` —— 于是**英文缩写从来
+进不了图**。所以加了一条独立通道（纯正则，不看分词）：
+
+```
+ESB接口返回字段的数据字典   → ESB（kind=topic）
+用 PyCharm 调一下          → PyCharm
+Kafka 那边堆积了           → Kafka
+API 网关限制了模型大小      → （空，停用词拦住）
+```
+
+判据：长度 2–10、不在停用词表、不是纯小写、**不是 hex/UUID 片段**
+（`B8BB6E6F52`、`F439` 这类来自图片 id，必须挡掉），且满足「全大写 / 含 ≥2 个大写 /
+含数字 / 首字母大写的 CamelCase」之一。
+
+两条约束值得记住：
+
+- **名册里的人名不会被建成 topic**：`Veronica Davichi` 是发言人，抽取器不会
+  额外产出一个 `Veronica` 的实体节点 —— 人名归名册通道管。
+- **全小写的系统名收不到**：`dsh-music-insight` 会被拒。这是刻意的取舍 ——
+  放开纯小写会让 `and`/`for`/任意英文词涌入，噪声不可控。宁可漏。
+
 **首次调用有 1 秒延迟**：jieba 第一次 import 要加载词典。所以探测是
 **懒加载 + 结果缓存**，放在第一次抽取时发生，而不是模块导入时 ——
 否则每个冷启动的进程都要付这 1 秒。
@@ -1660,3 +1695,4 @@ jieba 切成 `张三/nr 决定/v 项目/n A/x 延期/v 到/v 六月/t`，
 | v0.17 | 2026-11-03 | 事件管理面补齐五个 ADR 接口：`PATCH /admin/event`（白名单 + 幂等 + `pinned_source`）、`DELETE /admin/event`（只软删，`hard=true` 拒绝）、`POST /admin/archive`（P0 不搬）、`POST /admin/recall` + `.../{trace_id}/feedback`（带 `trace_id` 才能关联）；`retention_expired` 成为独立审计原因 |
 | v0.18 | 2026-11-03 | 原文层落地：`POST /admin/ingest`（异步导入 + `dedupe_key` 幂等 + `do_not_store` 拦截）、`GET /admin/ingest/{job_id}`（`202` 的配套查询接口）、`GET /admin/raw/{quote_id}`（原文溯源，软删事件卡后仍可读）；`raw_quote_ids` 第一次真的被填上，召回材料也带出来了 |
 | v0.19 | 2026-11-03 | 浏览器管理台（`/ui`）：零构建单页，复核队列可裁决、事件列表可软删（**手输域名**二次确认）、误删率报告只读（`dry_run` 写死）、点 `raw_quote_ids` 看原文；新增 `GET /admin/events`（分页列表，只读）；`GET /raw` 补 `scanned` / `truncated` / `lookup_ok` 三个诚实字段 |
+| v0.20 | 2026-11-07 | 批量导入不再静默丢尾部（spec 036）：撞单批上限时按行二分重切（最多 3 轮），`ingest_job` 增 `dropped_events` / `split_rounds` 两列并在 `GET /admin/ingest/{job_id}` 返回；仍超限时打 WARNING 并计数，日志带 job 号 |
