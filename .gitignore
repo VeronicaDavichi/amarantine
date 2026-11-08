@@ -38,3 +38,7 @@ Thumbs.db
 # 个人探针与待办（不入库）
 harness/q_*.py
 待办.md
+
+# 导入语料（真实聊天记录，含人名/手机/地址）
+# 由 harness/export_qq.mjs 生成，只在本机用来灌库；**绝不入库**（spec 040 隐私闸门）
+harness/corpus/

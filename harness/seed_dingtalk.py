@@ -146,6 +146,9 @@ def post_ingest(
     turns: list[dict],
     suffix: str = "",
     roster: list[str] | None = None,
+    *,
+    source: str = "dingtalk",
+    key_prefix: str = "dt",
 ) -> dict:
     ts_values = [t["ts"] for t in turns if t.get("ts")]
     window = f"{min(ts_values)[:10]}:{max(ts_values)[:10]}" if ts_values else "now"
@@ -157,12 +160,12 @@ def post_ingest(
     # 这暴露了一个设计问题：**IngestJobStore 对 failed job 也做幂等**，
     # 于是失败了必须换 key 才能重跑。理想行为应该是「failed 允许覆盖」，
     # 但那要改 core 逻辑，超出本次范围 —— 先记在 spec 的 Notes 里。
-    dedupe_key = f"dt:{cid}:{window}"
+    dedupe_key = f"{key_prefix}:{cid}:{window}"
     if suffix:
         dedupe_key += f":{suffix}"
 
     body = {
-        "source": "dingtalk",
+        "source": source,
         "session_id": cid,
         "dedupe_key": dedupe_key,
         "turns": turns,
