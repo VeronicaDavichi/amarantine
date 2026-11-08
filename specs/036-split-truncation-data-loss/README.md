@@ -1,5 +1,5 @@
 ---
-status: planned
+status: in-progress
 created: 2026-11-06
 priority: high
 tags:
@@ -8,9 +8,8 @@ tags:
 - llm
 - data-loss
 created_at: 2026-11-06T07:25:53.877961401Z
-updated_at: 2026-11-06T07:25:53.877961401Z
+updated_at: 2026-11-07T11:25:03.854649700Z
 ---
-
 # 切分超限静默截断：批次尾部事件永久丢失
 
 > **Status**: planned · **Priority**: high · **Created**: 2026-11-06

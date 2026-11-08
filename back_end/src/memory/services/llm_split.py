@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import json
 import logging
+from dataclasses import dataclass
 from typing import Any
 
 from memory.config import Settings
@@ -53,6 +54,37 @@ MAX_EVENT_CHARS = 300
 #: 为什么不能凭「条数多」判异常：一段 30 轮的工作对话本来就该切出十几到几十条。
 #: 真正该判异常的是「一条特别长」（`MAX_EVENT_CHARS`）或「单条等于原文」（没拆）。
 MAX_EVENTS = 40
+
+#: 递归二分的最大轮次（spec 036）。
+#:
+#: 一段话切出超过 `MAX_EVENTS` 条时，二分后重新切，而不是截断。
+#: 3 轮 = 最多把一段分成 8 份：实测最坏一次切出 65 条（上限的 1.6 倍），
+#: 二分一次（2 × ~33 条）就够；留到 3 轮是给「单批 200+ 轮对话」的余量。
+#: 还超就截断，但**必须**记 `dropped` 并打 WARNING —— 不许静默。
+MAX_SPLIT_ROUNDS = 3
+
+
+@dataclass(frozen=True)
+class SplitResult:
+    """`split_all()` 的结果。
+
+    Attributes:
+        parts: 最终摘要列表，**已截断**到保护上限内。
+        rounds: 实际用掉的二分轮次；没二分过就是 1（= 「只切了一轮」）。
+        dropped: 到轮次上限仍超限而丢掉的条数。0 表示一条没丢。
+
+    Note:
+        spec 036 原本写的是 `(parts, rounds)` 二元组；实现时发现
+        「丢了几条」必须一路带到 job 里 —— 否则截断又变回**静默**。
+        所以加成了三个字段。
+    """
+
+    parts: list[str]
+    rounds: int
+    dropped: int = 0
+
+    def __bool__(self) -> bool:
+        return bool(self.parts)
 
 _SYSTEM = """你是事件切分器。把用户说的一段话拆成若干条独立事件。
 
@@ -87,14 +119,14 @@ def _looks_like_echo(parts: list[str], text: str) -> bool:
     return any(len(p) > MAX_EVENT_CHARS for p in parts)
 
 
-def split_events(
+def _split_once(
     text: str,
     settings: Settings,
     *,
     client: Any | None = None,
     timeout_s: float | None = None,
 ) -> list[str]:
-    """把一段话拆成多条事件摘要。
+    """切一次，**不截断**：LLM 返回多少条就给多少条。
 
     Args:
         text: 用户原话。
@@ -108,6 +140,9 @@ def split_events(
 
     Note:
         这是"尽力而为"的增强，不是写入路径的必需环节。任何问题都降级。
+
+        截断**不在这里做**：两个调用方对「超限」的处理不同
+        （`split_events` 截断、`split_all` 二分），在这里盖掉信息就没得选了。
     """
     stripped = (text or "").strip()
     if not stripped:
@@ -170,7 +205,112 @@ def split_events(
         return [stripped]
     if not parts:
         return [stripped]
-    return parts[:MAX_EVENTS]
+    return parts
+
+
+def split_events(
+    text: str,
+    settings: Settings,
+    *,
+    client: Any | None = None,
+    timeout_s: float | None = None,
+) -> list[str]:
+    """把一段话拆成多条事件摘要（**结果截断到 `MAX_EVENTS`**）。
+
+    单条写入路径用的老接口：一次对话最多产 `MAX_EVENTS` 张卡，超了就丢尾部。
+    批量导入请用 `split_all()` —— 它会二分，而不是丢。
+
+    Returns:
+        事件摘要列表，空输入返回 `[]`。
+    """
+    return _split_once(text, settings, client=client, timeout_s=timeout_s)[:MAX_EVENTS]
+
+
+def split_all(
+    text: str,
+    settings: Settings,
+    *,
+    client: Any | None = None,
+    timeout_s: float | None = None,
+    max_rounds: int = MAX_SPLIT_ROUNDS,
+) -> SplitResult:
+    """切完整段文本：超上限就**按行二分再来**，而不是截断（spec 036）。
+
+    为什么二分而不是「一次切更多条」：`MAX_EVENTS` 防的是 LLM 把一段话
+    切成几十条垃圾，**加高上限只是把阈值往后推** —— 遇到更大的批次一样撞。
+    二分改变的是「一次喂给 LLM 多少输入」，上限本身不动，防滥用的性质保住了。
+
+    分不动的情况（单行超长文本 / `max_rounds` 用尽）：截断到 `MAX_EVENTS`，
+    丢掉的条数记进 `SplitResult.dropped`，由调用方打 WARNING。**绝不静默。**
+
+    Args:
+        text: 待切分的整段文本。
+        max_rounds: 最多二分几轮（第一轮不含二分，故 `rounds=1` 表示没分过）。
+
+    Returns:
+        `SplitResult(parts, rounds, dropped)`；空输入是 `parts=[]`、`rounds=0`。
+    """
+    stripped = (text or "").strip()
+    if not stripped:
+        return SplitResult(parts=[], rounds=0, dropped=0)
+
+    queue: list[tuple[str, int]] = [(stripped, 1)]
+    parts: list[str] = []
+    dropped = 0
+    rounds = 1
+
+    while queue:
+        chunk, depth = queue.pop(0)
+        got = _split_once(chunk, settings, client=client, timeout_s=timeout_s)
+
+        # **严格大于**才二分：`== MAX_EVENTS` 是「刚好到上限」，一条没丢，
+        # 不该为它多付一次 LLM 调用（A2「≤40 条行为不变」也靠这条）。
+        if len(got) <= MAX_EVENTS:
+            parts.extend(got)
+            continue
+
+        halves = _halve(chunk)
+        if halves is not None and depth < max_rounds:
+            rounds = max(rounds, depth + 1)
+            queue[0:0] = [(h, depth + 1) for h in halves]
+            logger.info(
+                "切分撞上限 %d 条 → 二分重切（第 %d 轮）| 输入 %d 字",
+                len(got),
+                depth + 1,
+                len(chunk),
+            )
+            continue
+
+        # 到保护上限仍超限：截断 + 记账
+        kept = min(len(got), MAX_EVENTS)
+        parts.extend(got[:kept])
+        dropped += len(got) - kept
+        logger.warning(
+            "切分到上限仍超限，尾部丢弃 %d 条 | kept=%d dropped=%d rounds=%d 输入=%d 字",
+            len(got) - kept,
+            kept,
+            dropped,
+            rounds,
+            len(chunk),
+        )
+
+    return SplitResult(parts=parts, rounds=rounds, dropped=dropped)
+
+
+def _halve(text: str) -> tuple[str, str] | None:
+    """按行把文本对半分。切不动（只有一行 / 有一半为空）返回 `None`。
+
+    只丢中间那个换行，行内内容原样保留 —— 二分是**分批**的手段，不是改写。
+    """
+    lines = text.splitlines()
+    if len(lines) < 2:
+        return None
+    mid = len(lines) // 2
+    left = "\n".join(lines[:mid]).strip()
+    right = "\n".join(lines[mid:]).strip()
+    if not left or not right:
+        return None
+    return left, right
 
 
 def _parse_array(text: str) -> list[str] | None:

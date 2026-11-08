@@ -503,6 +503,11 @@ class IngestJobResponse(BaseModel):
     events_created: int = 0
     turns_total: int = 0
     turns_skipped: int = 0
+    #: spec 036：切分到上限仍超限时**真的丢了几条**（0 = 一条没丢）。
+    #: 有这个字段，「丢数据」才是可观测的；没有它就是日志里的一句 WARNING。
+    dropped_events: int = 0
+    #: spec 036：切分用掉的二分轮次（1 = 没二分）。>1 说明这批大到需要分片。
+    split_rounds: int = 1
     source: str = "chat"
     session_id: str | None = None
     error: str | None = None

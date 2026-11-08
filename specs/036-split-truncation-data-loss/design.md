@@ -46,6 +46,28 @@ split_all(text, settings, round_no=0):
 - `round_no >= MAX_SPLIT_ROUNDS` 仍超限：保留当前片，`dropped = 原始 - 保留`，
   打 WARNING。此时至少「知道丢了」，不再是静默
 
+### 2.1 实现时的偏离（2026-11-07）
+
+伪代码里 `parts = split_events(text, ...)` 有个**致命前提问题**：`split_events`
+返回前已经砍到 40 条了，`split_all` 拿不到「原始切出多少条」，
+上面那句 `dropped = 原始 - 保留` **永远算成 0** —— A3 根本没法过。
+
+落地时改成：
+
+| 改动 | 说明 |
+|---|---|
+| 新增内部 `_split_once()` | 原 `split_events` 的函数体，**不截断**，LLM 给多少返回多少 |
+| `split_events()` 变成两行 | `_split_once(...)[:MAX_EVENTS]`，对外契约不变（现有 27 条单测全过） |
+| `split_all()` 用 `_split_once` | 因此能看见 65 > 40，二分才有触发条件，`dropped` 才是真数 |
+| 返回值 `SplitResult(parts, rounds, dropped)` | 原设计是 `(parts, rounds)` 二元组；`dropped` 要一路传到 job，加一个字段 |
+
+另外两处实现细节：
+
+- **二分条件是 `> MAX_EVENTS` 而不是 `>=`**：刚好 40 条一条没丢，为它重切会破坏
+  A2（≤40 条结果不变），也白付一次 LLM 调用
+- **BFS 队列而不是递归**：两半的先后顺序与递归一致，但不用把 `rounds` 沿栈回传；
+  `rounds` 取（最大深度）
+
 ## 3. 观测与数据模型
 
 `ingest_job` 加两列（沿用项目 `CREATE TABLE IF NOT EXISTS` + `ALTER` 的迁移风格）：

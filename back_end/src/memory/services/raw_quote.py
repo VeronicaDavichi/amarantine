@@ -60,6 +60,8 @@ CREATE TABLE IF NOT EXISTS ingest_job (
     turns_total    INTEGER NOT NULL DEFAULT 0,
     turns_skipped  INTEGER NOT NULL DEFAULT 0,
     events_created INTEGER NOT NULL DEFAULT 0,
+    dropped_events INTEGER NOT NULL DEFAULT 0,
+    split_rounds   INTEGER NOT NULL DEFAULT 1,
     error          TEXT,
     created_at     TEXT NOT NULL,
     updated_at     TEXT NOT NULL
@@ -67,6 +69,25 @@ CREATE TABLE IF NOT EXISTS ingest_job (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_ingest_job_dedupe
     ON ingest_job(namespace, dedupe_key);
 """
+
+#: 后续版本加的列。`CREATE TABLE IF NOT EXISTS` 对**已存在**的表是空操作，
+#: 所以老库必须靠 `ALTER TABLE` 补齐 —— 否则升级后第一次写入就报 no such column。
+#: 加列只允许「带默认值的 NOT NULL」或可空列，不能让老行变非法。
+_ADDED_COLUMNS: tuple[tuple[str, str], ...] = (
+    # spec 036：切分超限时丢了几条（0 = 一条没丢）
+    ("dropped_events", "INTEGER NOT NULL DEFAULT 0"),
+    # spec 036：切分用掉了几轮二分（1 = 没二分）
+    ("split_rounds", "INTEGER NOT NULL DEFAULT 1"),
+)
+
+
+def _ensure_added_columns(conn: sqlite3.Connection) -> None:
+    """给老库补列（幂等）。"""
+    existing = {row["name"] for row in conn.execute("PRAGMA table_info(ingest_job)")}
+    for name, ddl in _ADDED_COLUMNS:
+        if name not in existing:
+            conn.execute(f"ALTER TABLE ingest_job ADD COLUMN {name} {ddl}")
+            logger.info("ingest_job 补列 %s %s", name, ddl)
 
 
 def db_path_from_settings(settings: Settings) -> Path:
@@ -153,6 +174,10 @@ class IngestJob:
     error: str | None
     created_at: str
     updated_at: str
+    #: spec 036：切分超限丢掉的条数（0 = 一条没丢）
+    dropped_events: int = 0
+    #: spec 036：切分用掉的二分轮次（1 = 没二分）
+    split_rounds: int = 1
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -161,6 +186,8 @@ class IngestJob:
             "events_created": self.events_created,
             "turns_total": self.turns_total,
             "turns_skipped": self.turns_skipped,
+            "dropped_events": self.dropped_events,
+            "split_rounds": self.split_rounds,
             "source": self.source,
             "session_id": self.session_id,
             "error": self.error,
@@ -176,6 +203,10 @@ class IngestOutcome:
     job_id: str
     events_created: int = 0
     turns_skipped: int = 0
+    #: spec 036：切分超限丢掉的条数（0 = 一条没丢）
+    dropped_events: int = 0
+    #: spec 036：切分用掉的二分轮次（1 = 没二分）
+    split_rounds: int = 1
     errors: list[str] = field(default_factory=list)
 
 
@@ -283,6 +314,7 @@ class IngestJobStore:
     def _ensure_schema(self) -> None:
         with self._connect() as conn:
             conn.executescript(_SCHEMA)
+            _ensure_added_columns(conn)
 
     def find_by_dedupe(self, namespace: str, dedupe_key: str) -> IngestJob | None:
         with self._connect() as conn:
@@ -363,6 +395,8 @@ class IngestJobStore:
         status: str,
         events_created: int | None = None,
         turns_skipped: int | None = None,
+        dropped_events: int | None = None,
+        split_rounds: int | None = None,
         error: str | None = None,
         now: datetime | None = None,
     ) -> None:
@@ -379,6 +413,13 @@ class IngestJobStore:
         if turns_skipped is not None:
             sets.append("turns_skipped = ?")
             args.append(turns_skipped)
+        # spec 036：两个观测字段也要能落库，否则「丢了几条」只活在日志里
+        if dropped_events is not None:
+            sets.append("dropped_events = ?")
+            args.append(dropped_events)
+        if split_rounds is not None:
+            sets.append("split_rounds = ?")
+            args.append(split_rounds)
         if error is not None:
             sets.append("error = ?")
             args.append(error)
@@ -390,6 +431,7 @@ class IngestJobStore:
 
 
 def _row_to_job(row: sqlite3.Row) -> IngestJob:
+    keys = row.keys()
     return IngestJob(
         job_id=row["job_id"],
         namespace=row["namespace"],
@@ -403,6 +445,10 @@ def _row_to_job(row: sqlite3.Row) -> IngestJob:
         error=row["error"],
         created_at=row["created_at"],
         updated_at=row["updated_at"],
+        # 兜底：万一拿到的是迁移前的库（没走 `_ensure_added_columns`），
+        # 也按「没丢、没二分」读，而不是让整个 GET 500。
+        dropped_events=int(row["dropped_events"]) if "dropped_events" in keys else 0,
+        split_rounds=int(row["split_rounds"]) if "split_rounds" in keys else 1,
     )
 
 
@@ -447,11 +493,11 @@ def run_ingest(
     **单条失败不整批 failed**：200 条里第 50 条超时，不该让前 49 条白干。
     只有「连切分都做不了」这种批级故障才置 failed。
 
-    切分用 `split_events()`，它自己会把失败降级成 `[整段文本]`，
-    所以这里不需要 try 包切分 —— 但它也可能因为配置缺失直接抛，
-    那种才是批级故障。
+    切分用 `split_all()`（spec 036）：超上限会二分而不是丢尾部。
+    它自己会把失败降级成 `[整段文本]`，所以这里不需要 try 包切分 ——
+    但它也可能因为配置缺失直接抛，那种才是批级故障。
     """
-    from memory.services.llm_split import split_events
+    from memory.services.llm_split import split_all
     from memory.services.remember import remember_event
 
     raw_store = raw_store or RawQuoteStore(db_path_from_settings(settings))
@@ -475,7 +521,7 @@ def run_ingest(
 
     joined = "\n".join(f'{t["role"]}: {t["text"]}' for t in usable)
     try:
-        summaries = split_events(joined, settings)
+        split = split_all(joined, settings)
     except Exception as exc:  # noqa: BLE001 - 批级故障才把整批标 failed
         outcome.errors.append(f"{type(exc).__name__}: {exc}")
         job_store.set_status(
@@ -486,6 +532,21 @@ def run_ingest(
         )
         logger.warning("ingest 切分失败 %s: %s", job_id, exc)
         return outcome
+
+    summaries = split.parts
+    outcome.split_rounds = split.rounds
+    outcome.dropped_events = split.dropped
+
+    # 两层各记一条：切分层（split_all）说明「丢在哪、丢了多少」，
+    # 这里补上「是哪个 job 丢的」—— 排查时只凭其中一条都定位不到责任批次。
+    if split.dropped:
+        logger.warning(
+            "ingest 切分丢弃事件 | job=%s kept=%d dropped=%d rounds=%d",
+            job_id,
+            len(summaries),
+            split.dropped,
+            split.rounds,
+        )
 
     for idx, summary in enumerate(summaries):
         try:
@@ -510,6 +571,8 @@ def run_ingest(
         status=final,
         events_created=outcome.events_created,
         turns_skipped=outcome.turns_skipped,
+        dropped_events=outcome.dropped_events,
+        split_rounds=outcome.split_rounds,
         error="; ".join(outcome.errors[:3]) if outcome.errors else None,
     )
     return outcome

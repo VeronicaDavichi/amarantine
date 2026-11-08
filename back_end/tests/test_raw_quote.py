@@ -12,6 +12,8 @@
 
 from __future__ import annotations
 
+import logging
+import sqlite3
 from typing import Any
 
 import pytest
@@ -22,6 +24,7 @@ from memory.entrypoints.admin_http import create_app
 from memory.services.raw_quote import (
     JOB_DONE,
     JOB_QUEUED,
+    IngestJobStore,
     RawQuoteStore,
     db_path_from_settings,
     quote_id_for,
@@ -54,6 +57,12 @@ def env(tmp_path, monkeypatch):
         calls["split"].append(text)
         return ["主人接受新 offer", "通勤一小时"]
 
+    def fake_split_all(text: str, settings: Any, **kw: Any):
+        """spec 036：run_ingest 现在走 split_all，仍复用 fake_split 的口径。"""
+        from memory.services.llm_split import SplitResult
+
+        return SplitResult(parts=fake_split(text, settings, **kw), rounds=1, dropped=0)
+
     def fake_remember(**kw: Any) -> _FakeRememberResult:
         calls["remember"].append(
             {
@@ -64,6 +73,7 @@ def env(tmp_path, monkeypatch):
         return _FakeRememberResult(kw["summary"])
 
     monkeypatch.setattr(split_mod, "split_events", fake_split)
+    monkeypatch.setattr(split_mod, "split_all", fake_split_all)
     monkeypatch.setattr(remember_mod, "remember_event", fake_remember)
 
     # GET /raw 的反查要扫 Weaviate；这里给它一个可控的卡列表
@@ -537,3 +547,91 @@ def test_card_failure_does_not_inflate_turns_skipped(env, monkeypatch) -> None:
     assert got["turns_skipped"] == 0
     assert got["status"] == "failed"
     assert "LLM 超时" in (got["error"] or "")
+
+# ---------------- 036 切分可观测：dropped / rounds ----------------
+
+
+def test_ingest_job_exposes_split_fields(env) -> None:
+    """036 A3：正常批次 → dropped_events=0、split_rounds=1（没丢、没二分）。"""
+    client, _, _, _ = env
+    r = client.post(
+        "/admin/ingest",
+        json={"dedupe_key": "k_split_ok", "turns": [_turn("正常一批")]},
+        headers=AUTH,
+    )
+    job_id = r.json()["job_id"]
+
+    got = client.get(f"/admin/ingest/{job_id}", headers=AUTH).json()
+    assert got["dropped_events"] == 0
+    assert got["split_rounds"] == 1
+
+
+def test_ingest_records_dropped_events(env, monkeypatch, caplog) -> None:
+    """036 T5：切分真的丢了 → job 里有数，且 WARNING 带 job_id。
+
+    「丢了几条」如果只存在于日志里，等于没丢 —— 查 job 的人看不到。
+    所以这条同时验落库字段和日志。
+    """
+    client, _, _, _ = env
+    import memory.services.llm_split as split_mod
+
+    def dropping_split_all(text: str, settings: Any, **kw: Any):
+        from memory.services.llm_split import SplitResult
+
+        return SplitResult(parts=["留下的一条"], rounds=3, dropped=5)
+
+    monkeypatch.setattr(split_mod, "split_all", dropping_split_all)
+
+    with caplog.at_level(logging.WARNING, logger="memory.raw_quote"):
+        r = client.post(
+            "/admin/ingest",
+            json={"dedupe_key": "k_split_drop", "turns": [_turn("超长的一批")]},
+            headers=AUTH,
+        )
+        job_id = r.json()["job_id"]
+
+    got = client.get(f"/admin/ingest/{job_id}", headers=AUTH).json()
+    assert got["dropped_events"] == 5
+    assert got["split_rounds"] == 3
+
+    warnings = [rec.getMessage() for rec in caplog.records if rec.levelno >= logging.WARNING]
+    assert any(
+        job_id in msg and "dropped=5" in msg for msg in warnings
+    ), f"WARNING 里找不到 job_id / dropped：{warnings}"
+
+
+def test_ingest_job_schema_migrates_old_table(tmp_path) -> None:
+    """036 T4：老库（没有两列）启动时自动补列，不报 no such column。"""
+    db = tmp_path / "old.sqlite3"
+    conn = sqlite3.connect(db)
+    conn.executescript(
+        """
+        CREATE TABLE ingest_job (
+            job_id         TEXT PRIMARY KEY,
+            namespace      TEXT NOT NULL,
+            dedupe_key     TEXT NOT NULL,
+            status         TEXT NOT NULL,
+            source         TEXT NOT NULL,
+            session_id     TEXT,
+            turns_total    INTEGER NOT NULL DEFAULT 0,
+            turns_skipped  INTEGER NOT NULL DEFAULT 0,
+            events_created INTEGER NOT NULL DEFAULT 0,
+            error          TEXT,
+            created_at     TEXT NOT NULL,
+            updated_at     TEXT NOT NULL
+        );
+        """
+    )
+    conn.close()
+
+    store = IngestJobStore(db)  # 构造即迁移
+    job = store.create(
+        namespace=NS, dedupe_key="k_old", source="chat", session_id=None, turns_total=1
+    )
+    assert job.dropped_events == 0
+    assert job.split_rounds == 1
+
+    store.set_status(job.job_id, status=JOB_DONE, dropped_events=7, split_rounds=2)
+    again = store.get(job.job_id)
+    assert again is not None
+    assert (again.dropped_events, again.split_rounds) == (7, 2)
