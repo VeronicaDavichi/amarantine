@@ -190,6 +190,9 @@ class Settings(BaseSettings):
     RERANK_ENABLED: bool = False
     RERANK_MODEL: str = "BAAI/bge-reranker-v2-m3"
     RERANK_BASE_URL: str = "http://127.0.0.1:8083"
+    #: rerank 服务的 Bearer key。为空时不发 header（本地服务不需要）。
+    #: 混合部署（模型在高配机）时填上，避免任何能连到 8083 的进程都能白嫖算力。
+    RERANK_API_KEY: str | None = None
     RERANK_CANDIDATES: int = 50
     #: CPU 上 bge-reranker-v2-m3 实测热身后 0.22-0.26s、冷启动更久。
     #: 原来 300ms 卡在边界上，真服务一开就几乎必然 ReadTimeout（等于白开）。

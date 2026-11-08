@@ -35,8 +35,10 @@ class _FakeClient:
         self.boom = boom
         self.calls: list[dict] = []
 
-    def post(self, url, json=None, timeout=None):
-        self.calls.append({"url": url, "json": json, "timeout": timeout})
+    def post(self, url, json=None, timeout=None, headers=None, **kw):
+        self.calls.append(
+            {"url": url, "json": json, "timeout": timeout, "headers": headers or {}}
+        )
         if self.boom is not None:
             raise self.boom
         return _FakeResp(self.status, self.data)
@@ -242,3 +244,21 @@ def test_normalization_keeps_relative_order() -> None:
     )
     ids = [m["event_id"] for m in result.materials]
     assert ids[0] == "evt_b", f"顺序被归一化搞乱了：{ids}"
+
+# ---------------- 鉴权 header（混合部署：模型在高配机） ----------------
+
+
+def test_sends_authorization_when_key_configured() -> None:
+    """配了 RERANK_API_KEY 就必须发出去 —— 否则远端谁都能白嫖算力。"""
+    client = _FakeClient(data=[{"index": 0, "score": 0.9}])
+    rerank(
+        "欧盟", [("e1", "文本")], settings=_settings(RERANK_API_KEY="k-123"), client=client
+    )
+    assert client.calls[0]["headers"]["Authorization"] == "Bearer k-123"
+
+
+def test_no_authorization_header_when_key_absent() -> None:
+    """没配就不发空 Bearer（本地服务不校验，空 header 只会污染日志）。"""
+    client = _FakeClient(data=[{"index": 0, "score": 0.9}])
+    rerank("欧盟", [("e1", "文本")], settings=_settings(), client=client)
+    assert "Authorization" not in client.calls[0]["headers"]

@@ -87,12 +87,16 @@ def rerank(
     }
     url = f"{settings.RERANK_BASE_URL.rstrip('/')}/rerank"
     timeout_s = max(settings.RERANK_TIMEOUT_MS / 1000.0, 0.05)
+    # 空 key 不发 header：本地服务不校验，发个空 Bearer 只会让日志变脏
+    headers: dict[str, str] = {}
+    if getattr(settings, "RERANK_API_KEY", None):
+        headers["Authorization"] = f"Bearer {settings.RERANK_API_KEY}"
 
     owns_client = client is None
     http = client or httpx.Client(timeout=timeout_s)
     started = time.monotonic()
     try:
-        resp = http.post(url, json=payload, timeout=timeout_s)
+        resp = http.post(url, json=payload, timeout=timeout_s, headers=headers)
         if resp.status_code != 200:
             # 424（模型不是 reranker）也走这里 —— 服务「在」但「不可用」
             return RerankResult(

@@ -35,7 +35,8 @@ WHITELIST: dict[str, str] = {
     "CONSOLIDATE_DUP_RATIO": "P2 consolidation 冗余判据，未实现",
     "CONSOLIDATE_LATENCY_MS": "P2 consolidation 预算，未实现",
     # ---- 外部服务适配（当前只支持本地无鉴权的 TEI）----
-    "EMBEDDING_API_KEY": "换商用 embedding 服务时才需要，本地 TEI 无鉴权",
+    # 037 之后 `EMBEDDING_API_KEY` 有消费点了（embedding.py 会发 Bearer），
+    # 所以它从这份「零引用白名单」里毕业了。
     "EMBEDDING_PROVIDER": "同上，当前硬编码 TEI 协议",
     "WEAVIATE_GRPC_PORT": "用 REST 而非 gRPC，保留了端口配置未接线",
     # ---- 未接线的真参数（有价值，但本 spec 范围外）----

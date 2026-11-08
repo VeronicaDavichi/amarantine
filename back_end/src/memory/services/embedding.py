@@ -43,12 +43,17 @@ def embed_texts(
 
     payload = {"input": texts, "model": settings.EMBEDDING_MODEL}
     url = f"{settings.EMBEDDING_BASE_URL.rstrip('/')}/v1/embeddings"
+    # `EMBEDDING_API_KEY` 是给「远端 embedding」用的（高低配混合部署：模型在高配机）。
+    # 为空时不发 header —— 本地服务不需要，也别让空 Bearer 去触发别人的鉴权分支。
+    headers: dict[str, str] = {}
+    if settings.EMBEDDING_API_KEY:
+        headers["Authorization"] = f"Bearer {settings.EMBEDDING_API_KEY}"
 
     owns_client = client is None
     http = client or httpx.Client(timeout=timeout_s)
     try:
         try:
-            resp = http.post(url, json=payload)
+            resp = http.post(url, json=payload, headers=headers)
         except httpx.HTTPError as exc:
             raise EmbeddingError(f"embedding 服务不可达: {exc}") from exc
 
