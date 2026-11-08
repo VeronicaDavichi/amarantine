@@ -150,6 +150,79 @@ _CODED_PATTERN = re.compile(
     r"((?:项目|系统|产品|平台|版本)[A-Za-z0-9]+|[A-Za-z0-9]+(?:项目|系统))"
 )
 
+#: 拉丁词形（spec 037 的第三条通道）。
+#:
+#: 边界用「前后不能是字母数字下划线」，避免从长串中间切一半：
+#: `m_fileName` 里不能只捞 `fileName`，`a4adda39` 不能被切成 `adda39`。
+_ACRONYM = re.compile(r"(?<![A-Za-z0-9_])[A-Za-z][A-Za-z0-9_\-]{1,9}(?![A-Za-z0-9_])")
+
+#: 通用技术词 / 噪声词：**看到就丢**。
+#:
+#: 首版按 spec 037 的 30 项打底，后面这几组是**真实语料实测补的**
+#: （500 张卡的摘要里真的出现过，见 spec 037 的进展记录）：
+#: 媒体后缀、URL/TLD 片段、XML 关键字、文件元数据字段名。
+_STOP_ACRONYMS = frozenset(
+    {
+        # 通用技术词（spec 原表）
+        "API", "SQL", "JSON", "HTTP", "HTTPS", "URL", "URI", "ID", "OK", "CPU",
+        "RAM", "IO", "UI", "UX", "DB", "GET", "POST", "PUT", "DELETE", "JS",
+        "TS", "CSS", "HTML", "XML", "YAML", "PDF", "EXCEL", "PPT", "AND", "OR",
+        "NOT", "THE", "FOR", "ALL", "NEW", "TODO",
+        # 媒体/文件后缀（真实语料里 jpg 36 次、png 36 次、jpeg/amr 各若干）
+        "JPG", "JPEG", "PNG", "GIF", "BMP", "WEBP", "MP4", "MP3", "WAV", "AMR",
+        "AVI", "MOV", "ZIP", "RAR", "TAR", "GZ", "DOC", "DOCX", "XLS", "XLSX",
+        "PPTX", "TXT", "CSV", "MD", "EXE", "APK", "ISO",
+        # URL / TLD / 域名片段
+        "WWW", "COM", "CN", "ORG", "NET", "IO_", "HTTP_",
+        # XML / 结构化片段
+        "UTF", "SERVICEID", "CDATA", "DOCTYPE",
+        # 文件元数据字段名（摘要里会出现 `m_fileName=...`）
+        "M_FILENAME", "FILENAME", "FILE_NAME",
+    }
+)
+
+#: 纯 hex / UUID 片段：`B8BB6E6F52`、`a4adda39`、`F439`。
+#:
+#: 这类在摘要里几乎只来自图片/文件 id，不是实体；判据是「全是 16 进制字符
+#: 且含数字」——`FACE`、`BEEF` 这种纯字母的单词不在此列。
+_HEXISH = re.compile(r"^[0-9A-Fa-f]*[0-9][0-9A-Fa-f]*$")
+
+
+def _looks_like_acronym(word: str) -> bool:
+    """判断一个拉丁词形是否「像专有名词」。
+
+    判据（spec 037 REQ-2 + 真实语料补的两条）：
+
+    1. 长度 2–10
+    2. 不在停用词表
+    3. 不是纯小写、不是纯数字
+    4. **不是 hex/UUID 片段**（真实语料里最多的噪声来源）
+    5. 满足以下任一：全大写且 ≤6 字 / 含 ≥2 个大写 / 含数字 /
+       首字母大写且其余小写且 ≥4 字（CamelCase 单词，如 `Kafka`）
+    """
+    if not 2 <= len(word) <= 10:
+        return False
+    upper = word.upper()
+    if upper in _STOP_ACRONYMS:
+        return False
+    if word.islower() or word.isdigit():
+        return False
+    # 序号型噪声：a4adda39 / B8BB6E6F52 / F439 —— 全 hex 且带数字
+    if len(word) >= 4 and _HEXISH.match(word):
+        return False
+    # 数字占比过半也不像缩写（`db44d2`），保留 `ESB2` 这种单数字
+    digits = sum(1 for c in word if c.isdigit())
+    if digits and digits * 2 >= len(word):
+        return False
+
+    uppers = sum(1 for c in word if c.isupper())
+    return (
+        uppers >= 2
+        or digits >= 1
+        or (word.isupper() and len(word) <= 6)
+        or (word[0].isupper() and len(word) >= 4 and word[1:].islower())
+    )
+
 #: 人名允许出现的位置：句首，或紧跟这些字之后。
 #:
 #: `了` 也在里面：`张三批评了李四` 的 `李四` 就在助词后面，
@@ -1240,6 +1313,48 @@ def _extract_entities(summary: str, *, skip: set[str] | None = None) -> list[Ent
     return entities
 
 
+def _extract_acronyms(text: str, taken: list[Entity]) -> list[Entity]:
+    """第三条通道：拉丁词形 → `topic`（spec 037）。
+
+    两条额外约束都是**真实语料逼出来的**（500 张卡的摘要实测）：
+
+    1. **跳过与已抽实体字符区间重叠的命中** —— `项目AB` 已整条收过，
+       不能再拆出 `AB`；只按名字去重挡不住这种情况。
+    2. **跳过名册名字的组成部分** —— `Veronica Davichi` 是发言人（名册里是 `Person`），
+       不能因为首字母大写就额外建一个 `Veronica` 的 topic 节点。人名归 043 管，
+       本通道只处理「不是人」的专有名词。
+    """
+    covered: list[tuple[int, int]] = []
+    for entity in taken:
+        start = text.find(entity.name)
+        while start != -1:
+            covered.append((start, start + len(entity.name)))
+            start = text.find(entity.name, start + 1)
+
+    roster_words: set[str] = set()
+    for name in roster_names():
+        roster_words.add(name.lower())
+        for part in re.split(r"[\s\-_.]+", name):
+            if len(part) >= 2:
+                roster_words.add(part.lower())
+
+    found: list[Entity] = []
+    seen = {entity.name for entity in taken}
+    for match in _ACRONYM.finditer(text):
+        start, end = match.start(), match.end()
+        # 与已覆盖区间**有任意重叠**就跳过（包含关系只是其中一种）
+        if any(not (end <= s or e <= start) for s, e in covered):
+            continue
+        word = match.group(0)
+        if word.lower() in roster_words:
+            continue
+        if word in seen or not _looks_like_acronym(word):
+            continue
+        seen.add(word)
+        found.append(Entity(name=word, kind="topic"))
+    return found
+
+
 def extract_entities(text: str) -> list[Entity]:
     """从自由文本抽实体（召回时从 query 里抽，用于图通道）。
 
@@ -1287,6 +1402,13 @@ def extract_entities(text: str) -> list[Entity]:
     # 名册命中的排前面：它们比 jieba 的猜测可信
     seen = {e.name for e in roster_entities}
     merged = list(roster_entities) + [e for e in entities if e.name not in seen]
+
+    # 第三条通道：拉丁缩写 / 专有名词（spec 037）。
+    #
+    # **为什么接在这里而不是 `_extract_entities`**：生产环境走 jieba 路径，
+    # 而 `_extract_entities` 只在 jieba 不可用的降级路径里被调用 ——
+    # 加在那儿等于「只对没装 jieba 的人生效」，是典型的配置在、逻辑不在。
+    merged = merged + _extract_acronyms(text, merged)
 
     # 别名声明仍在**原文**上做（挖掉后的文本会丢掉 `A 就是 B` 的结构）
     return _merge_alias_names(text, merged)
