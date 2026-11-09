@@ -343,3 +343,161 @@ RETURN s.term AS term, s.scope AS scope, s.gloss AS gloss,
        s.status AS status, s.confidence AS confidence, s.evidence AS evidence
 ORDER BY s.confidence DESC
 """
+
+# ============================================================ M2：Claim
+
+#: Claim 的三种模式。`question` 只记证据、**不建边**（REQ-4）
+CLAIM_MODES = ("assert", "question", "deny")
+
+#: 断言句式后缀词（分词后判断）
+_ASSERT_LEADS = ("是", "就是", "指", "指的是", "是指")
+_QUESTION_TAILS = ("吗", "吧", "？", "?", "呢")
+#: gloss 里出现这些词说明是疑问句（`密码是多少`），不是定义
+_QUESTION_WORDS = ("什么", "多少", "怎么", "哪", "是否", "何时", "为何")
+_DENY_LEADS = ("不是", "并不是", "不指")
+
+
+@dataclass(frozen=True)
+class Claim:
+    """一条关于义项的断言。"""
+
+    term: str
+    scope: str
+    gloss: str | None
+    mode: str                      # assert / question / deny
+    speaker: str | None = None
+    quote_id: str | None = None
+    ts: str | None = None
+
+
+def extract_claims(text: str, *, scope: str, quote_id: str | None = None,
+                   ts: str | None = None, speaker: str | None = None) -> list[Claim]:
+    """从文本抽断言（三态）。
+
+    - `X是Y` → assert
+    - `X是Y吧？` / `X是Y吗` → question（**只记证据，不建边**）
+    - `X不是Y` → deny
+
+    判据仍是 jieba 词边界：`X` 必须是名词性词，`Y` 是最多 4 个词。
+    """
+    tokens = _tokenize(text)
+    words = [w for w, _ in tokens]
+    flags = [f for _, f in tokens]
+    out: list[Claim] = []
+
+    def _noun(idx: int) -> bool:
+        if idx < 0 or idx >= len(words):
+            return False
+        word, flag = words[idx], flags[idx]
+        if not word or word in _SURFACE_STOP or word.isdigit():
+            return False
+        if not any(c.isalnum() or "\u4e00" <= c <= "\u9fa5" for c in word):
+            return False
+        return flag.startswith(_NOUN_FLAGS) or flag in ("x", "eng")
+
+    for idx, word in enumerate(words):
+        if not _noun(idx) or idx + 1 >= len(words):
+            continue
+        nxt = words[idx + 1]
+        mode = None
+        lead_len = 1
+        if nxt in _DENY_LEADS:
+            mode, lead_len = "deny", 1
+        elif nxt in _ASSERT_LEADS:
+            mode, lead_len = "assert", 1
+        if mode is None:
+            continue
+
+        gloss_words = words[idx + 1 + lead_len: idx + 1 + lead_len + 4]
+        gloss = "".join(gloss_words).strip().rstrip("的了")
+        # 去掉开头的标点/引号（`“中登不可查` / `，单点登录有`）
+        gloss = gloss.lstrip("，。、：；！？“”‘’\"'（）()【】[]")
+        if not gloss or len(gloss) < 1:
+            continue
+        # 疑问判定看**整句结尾**：`X是Y吧？` / `X是Y吗`
+        _tail_text = (text or "").rstrip()
+        if mode == "assert" and (
+            _tail_text.endswith("？") or _tail_text.endswith("?")
+            or (_tail_text and _tail_text[-1] in ("吗", "吧", "呢"))
+            or any(w in gloss for w in _QUESTION_WORDS)
+        ):
+            mode = "question"
+
+        out.append(Claim(
+            term=_clean_surface(word), scope=scope, gloss=gloss, mode=mode,
+            speaker=speaker, quote_id=quote_id, ts=ts,
+        ))
+
+    # 去重
+    seen: set[tuple[str, str, str | None]] = set()
+    uniq: list[Claim] = []
+    for c in out:
+        key = (c.term, c.mode, c.gloss)
+        if key in seen:
+            continue
+        seen.add(key)
+        uniq.append(c)
+    return uniq
+
+
+def resolve_status(current: str, claims: list[Claim]) -> str:
+    """按断言裁决义项状态（spec 041 §6 升降级）。
+
+    规则顺序（先到先得）：
+
+    1. 有人否认 → `denied`
+    2. 两个不同的 gloss 都被断言过 → `conflict`
+    3. 人确认过（`exact`）**不被降级** —— 只被否认改
+    4. ≥2 条 assert → `probable`
+    5. 其余保持原状（`uncertain` 不因单条断言升高）
+    """
+    if current == "exact":
+        return "denied" if any(c.mode == "deny" for c in claims) else "exact"
+
+    if any(c.mode == "deny" for c in claims):
+        return "denied"
+
+    asserted = {c.gloss for c in claims if c.mode == "assert" and c.gloss}
+    if len(asserted) >= 2:
+        return "conflict"
+
+    if sum(1 for c in claims if c.mode == "assert") >= 2:
+        return "probable"
+
+    return current
+
+
+#: 写 Claim 并按裁决更新 Sense
+APPLY_CLAIM_CYPHER = """
+UNWIND $items AS item
+MATCH (s:Sense {term: item.term, scope: item.scope, gloss: item.gloss})
+MERGE (c:Claim {term: item.term, scope: item.scope, gloss: item.gloss,
+                mode: item.mode, quote_id: item.quote_id})
+ON CREATE SET c.ts = item.ts, c.speaker = item.speaker, c.created_at = $now
+SET c.last_seen = $now
+// question 只记证据、**不建边**（REQ-4）：`这个是鱼吧？` 不能当成支持
+FOREACH (_ IN CASE WHEN item.mode <> 'question' THEN [1] ELSE [] END |
+    MERGE (c)-[:SUPPORTS]->(s)
+)
+SET s.status = item.status, s.updated_at = $now
+RETURN count(c) AS n
+"""
+
+#: 人确认 / 否认（不经 Claim，直接改状态，留 operator）
+SET_SENSE_STATUS_CYPHER = """
+MATCH (s:Sense {term: $term, scope: $scope, gloss: $gloss})
+SET s.status = $status, s.verdict_operator = $operator, s.verdict_at = $now
+RETURN s.term AS term, s.scope AS scope, s.gloss AS gloss, s.status AS status
+"""
+
+#: 写 Mention（一次出现）
+MERGE_MENTION_CYPHER = """
+UNWIND $items AS item
+MATCH (s:Sense {term: item.term, scope: item.scope, gloss: item.gloss})
+MERGE (m:Mention {scope: item.scope, quote_id: item.quote_id, surface: item.term})
+ON CREATE SET m.ts = item.ts, m.created_at = $now
+MERGE (m)-[r:USES_SENSE]->(s)
+SET r.label = s.status, r.confidence = s.confidence
+RETURN count(m) AS n
+"""
+

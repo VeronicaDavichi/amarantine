@@ -428,6 +428,16 @@ class ArchiveResponse(BaseModel):
     mode: str = "logical"
 
 
+class SenseVerdictRequest(BaseModel):
+    """人确认/否认一个义项（spec 041 M2）。"""
+
+    term: str
+    scope: str
+    gloss: str = ""
+    action: str          # confirm / deny
+    operator: str | None = None
+
+
 class AdminRecallRequest(BaseModel):
     query: str
     namespace: str | None = None
@@ -685,6 +695,50 @@ def create_app(
             )
 
     # ------------------------------------------------------------ health
+
+    @app.post("/admin/sense/verdict", dependencies=[Depends(require_token)])
+    def admin_sense_verdict(body: SenseVerdictRequest) -> dict[str, Any]:
+        """人确认或否认一个义项（spec 041）。
+
+        - `confirm` → `status=exact`（破坏性操作只认它）
+        - `deny`    → `status=denied`（保留证据链，不删）
+
+        **只改状态，不删节点**：否认本身是证据，`explore` 档仍要能看见。
+        """
+        action = (body.action or "").strip()
+        if action not in ("confirm", "deny"):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="action 只能是 confirm / deny",
+            )
+        status_value = "exact" if action == "confirm" else "denied"
+        from memory.services.reference import SET_SENSE_STATUS_CYPHER
+        from neo4j import GraphDatabase
+
+        drv = GraphDatabase.driver(
+            cfg.NEO4J_URI, auth=(cfg.NEO4J_USER, cfg.NEO4J_PASSWORD)
+        )
+        try:
+            now = datetime.now(timezone.utc).isoformat()
+            with drv.session() as session:
+                row = session.run(
+                    SET_SENSE_STATUS_CYPHER,
+                    term=body.term,
+                    scope=body.scope,
+                    gloss=body.gloss or "",
+                    status=status_value,
+                    operator=body.operator or "manual",
+                    now=now,
+                ).single()
+        finally:
+            drv.close()
+        if row is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"没找到义项 term={body.term} scope={body.scope} gloss={body.gloss!r}",
+            )
+        return {"term": row["term"], "scope": row["scope"],
+                "gloss": row["gloss"], "status": row["status"]}
 
     @app.get("/admin/senses", dependencies=[Depends(require_token)])
     def admin_senses(term: str, scope: str, tier: str = "default") -> dict[str, Any]:

@@ -155,8 +155,8 @@ transitions:
   - [x] T3 离线建候选：`harness/build_references.py --dry-run/--apply`
   - [x] T4 查询接 `tier`（默认 default），命中标「疑似」
 - [ ] **M2 升降级**
-  - [ ] T5 `Claim` 写入（`assert/question/deny` 三态，question 不建边）
-  - [ ] T6 确认 / 否认 / 冲突接口
+  - [x] T5 `Claim` 写入（`assert/question/deny` 三态，question 不建边）
+  - [x] T6 确认 / 否认 / 冲突接口
 - [ ] **M3 扩展**
   - [ ] T7 与 038（称呼带 scope）、042（账号族）对接
   - [ ] T8 评测：候选召回率 + 误绑率（人工标 20 条）
@@ -165,11 +165,11 @@ transitions:
 
 - [x] A1 `@鱼 帮我查下` → `Sense(鱼, session:X)` 候选，score ≥3
 - [x] A2 `这鱼新鲜吗` → 反向信号生效，不建 Sense
-- [ ] A3 `xxx账号是鱼吧？` → 只写 `Claim(mode=question)`，无 `USES_SENSE` 边
-- [ ] A4 同 Term 同 scope 两个 Sense（bot / 动物）可共存
+- [x] A3 `xxx账号是鱼吧？` → 只写 `Claim(mode=question)`，无 `USES_SENSE` 边
+- [x] A4 同 Term 同 scope 两个 Sense（bot / 动物）可共存
 - [x] A5 跨 scope 不串：群 A 的 Sense 在群 B 查不到
 - [x] A6 `tier=strict` 只返回 exact；`default` 含 probable 并标「疑似」
-- [ ] A7 人否认后 `status=denied`，`strict` 不再命中、`explore` 仍可见
+- [x] A7 人否认后 `status=denied`，`strict` 不再命中、`explore` 仍可见
 - [x] A8 弱边不传递：A~B、B~C 不产出 A~C
 - [ ] A9 全量 pytest 无回归
 
@@ -234,3 +234,42 @@ strict 查询同条件 → 空（probable 不外泄给破坏性操作）
 - 证据只写到 Sense 上，还没写 `Mention` 节点（M2 补）
 
 **M2/M3 未开工**：Claim 三态、确认/否认、cluster 与 042 对接。
+
+### 2026-11-09 · M2 落地（Claim 三态 / 确认否认 / Mention）
+
+**已交付**
+
+| 文件 | 内容 |
+|---|---|
+| `reference.py` | `Claim` 三态抽取、`resolve_status` 裁决、`APPLY_CLAIM_CYPHER`、`MERGE_MENTION_CYPHER`、`SET_SENSE_STATUS_CYPHER` |
+| `harness/apply_claims.py` | 扫原文 → 断言 → 裁决 → 写 Claim/Mention（dry-run / `--apply`） |
+| `admin_http.py` | `POST /admin/sense/verdict`（confirm / deny） |
+| `tests/test_reference_claims.py` | 14 条 |
+
+**真库结果**（294 条原文）
+
+```
+断言 26 条：assert 17 / question 9 / deny 0
+写入 Claim 14 条、Mention 9 条
+Sense 状态：uncertain 29 / probable 2
+```
+
+**人确认/否认链路（实测）**
+
+```
+confirm → status=exact → strict 查得到
+deny    → status=denied → strict 空、explore 仍可见
+不存在的义项 → 404
+```
+
+**修掉一个真实违规**
+
+第一版 cypher 对所有 claim 都 `MERGE (c)-[:SUPPORTS]->(s)`，
+**9 条 `X是Y吧？` 也贡献了支持边**（违反 REQ-4）。现在用
+`FOREACH ... WHERE item.mode <> 'question'` 守卫，并清掉了已建的 5 条错边；
+现有数据：question → SUPPORTS = 0，assert → SUPPORTS = 9。
+
+**判据收紧**：`是什么/是多少/怎么/哪/是否` 这类疑问词现在一律判 `question`
+（第一版只有句尾 `吗/吧/？`，导致「密码是多少」被当成 assert）。
+
+**M3 未开工**：cluster、与 042 账号族对接。
