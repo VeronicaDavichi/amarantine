@@ -310,3 +310,29 @@ def test_label_by_rules_includes_actions() -> None:
     verbs = [a.verb for a in result.actions]
     assert "决定" in verbs
     assert "延期" in verbs
+
+
+# ---------------- 半截词：名词后面紧贴的 nr 不是人 ----------------
+
+
+def test_fragment_after_noun_is_not_person() -> None:
+    """`王者荣耀` 被切成 `王者`(n) + `荣耀`(nr)，`荣耀` 不能冒充人。
+
+    人名前面不会紧贴名词（`张三让` 是动词、`王五和` 是连词、`跟王老师` 是介词），
+    所以「前一个 token 是名词」就是词被切开的信号 —— 降级为 `topic`。
+    """
+    kinds = {e.name: e.kind for e in extract_entities("王者荣耀这个游戏挺好玩的")}
+    assert kinds.get("荣耀") == "topic", f"半截词又冒充人了：{kinds}"
+
+
+def test_fragment_after_noun_with_and() -> None:
+    """`昨天和王者荣耀一起开的会` 同样要降级。"""
+    kinds = {e.name: e.kind for e in extract_entities("昨天和王者荣耀一起开的会")}
+    assert kinds.get("荣耀") == "topic", f"半截词又冒充人了：{kinds}"
+
+
+def test_real_name_after_verb_still_person() -> None:
+    """守卫不能误伤：动词/连词后面的人名仍是人。"""
+    kinds = {e.name: e.kind for e in extract_entities("张三让李四去做项目A")}
+    assert kinds.get("张三") == "person"
+    assert kinds.get("李四") == "person"

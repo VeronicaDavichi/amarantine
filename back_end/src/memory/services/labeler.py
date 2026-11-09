@@ -1139,6 +1139,17 @@ def _extract_with_jieba(text: str) -> list[Entity]:
             while len(name) > MIN_PERSON_LEN and name[-1] in _PERSON_TAIL_CHARS:
                 name = name[:-1]
             name = _strip_leading_conj(name)
+            # 半截词守卫（spec 043 收尾）：
+            # `王者荣耀` 被切成 `王者`(n) + `荣耀`(nr)，`荣耀` 凭 nr 就冒充人。
+            # **人名前面不会紧贴一个名词**（`张三让`/`王五和`/`跟王老师` 都是
+            # 动词、连词、介词），所以「前一个 token 是名词」就是词被切开的信号。
+            # 降级成 `topic`：不丢信息，也不冒充人。
+            if i > 0:
+                prev_word, prev_flag = tokens[i - 1]
+                if prev_flag in ("n", "nz", "ns", "vn") and len(prev_word) >= 2:
+                    _add(name, "topic")
+                    i += 1
+                    continue
             if len(name) >= MIN_PERSON_LEN and name not in persons:
                 persons.append(name)
             i += 1
