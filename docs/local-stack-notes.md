@@ -284,9 +284,17 @@ daocloud 卡在 r2 blob、1ms.run 卡在同一层，重试 8 轮都没拉全。�
 
 要用 LLM 时，二选一：
 
-1. 管理员 PowerShell 放行 relay 端口，再在 Windows 跑
-   `py -3 harness\vpn_relay.py --listen 3001 --target 192.168.0.58:3000`，
-   `.env` 里 `LLM_BASE_URL=http://<WSL 网关 IP>:3001`
+1. **relay 转发（默认，已自动化）**：`harness/dev-linux.sh` 每次启动会先探
+   `<WSL 网关>:3001`；不可达就用 `powershell.exe` 在 Windows 侧拉起
+   `harness\vpn_relay.py --listen 3001 --target 192.168.0.58:3000`，
+   等端口就绪后再执行命令。WSL 侧 `LLM_BASE_URL` 自动填成
+   `http://<WSL 网关>:3001`，**不需要改 `.env`**。
+   手工排查时：
+   ```
+   .\back_end\.venv\Scripts\python.exe harness\vpn_relay.py --listen 3001 --target 192.168.0.58:3000
+   ```
+   > 端口别搞混：**3001 是 relay**，3000 是网关。WSL 连 3000 会一直超时，
+   > 表现为「切分 60s 后降级成整段原文卡」——2026-11-09 就是踩了这个。
 2. 临时把 `.wslconfig` 改成 `networkingMode=mirrored` 并 `wsl --shutdown`：
    mirrored 共享 localhost，relay 用 `127.0.0.1:3001` 即可（注意 mirrored
    镜像不到 VPN 网卡，仍要靠 relay）

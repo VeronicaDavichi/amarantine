@@ -1642,12 +1642,15 @@ WSL2:    172.20.192.x    ──────────────────�
 **解法**（不需要管理员、不需要重启）：
 
 ```powershell
-# Windows 侧起转发（3000 端口防火墙已放行，所以直接用它）
-python harness\vpn_relay.py --listen 3000 --target 198.51.100.58:3000
+# Windows 侧起转发（relay 监听 3001，转发到网关的 3000）
+python harness\vpn_relay.py --listen 3001 --target 198.51.100.58:3000
 ```
 
-`harness/dev-linux.sh` 会自动把 `LLM_BASE_URL` 填成
-`http://<WSL默认网关>:3000`，所以 WSL 这边**什么都不用改**。
+`harness/dev-linux.sh` 会**自动探活并按需拉起** relay，再把 `LLM_BASE_URL`
+填成 `http://<WSL默认网关>:3001`，所以 WSL 这边**什么都不用改**。
+
+> **端口别搞混**：3001 是 relay，3000 是网关。填错端口的表现是
+> 「LLM 切分 60 秒后超时，降级成整段原文卡」——不会报连接错误，只会变慢变差。
 
 > **网关 IP 会变**：每次 `wsl --shutdown` 之后默认网关可能换一个，
 > 所以别把 IP 写死进 `.env`，交给脚本动态取。
