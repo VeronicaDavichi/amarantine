@@ -48,6 +48,10 @@ function parseArgs(argv) {
     else if (a === "--group") out.group = argv[++i];
     else if (a === "--out") out.out = argv[++i];
     else if (a === "--limit") out.limit = Number(argv[++i]);
+    else if (a === "--per-group-limit") out.perGroupLimit = Number(argv[++i]);
+    else if (a === "--groups") out.groups = argv[++i].split(",").map(Number).filter(Boolean);
+    else if (a === "--since") out.since = argv[++i];
+    else if (a === "--until") out.until = argv[++i];
     else if (a === "--keyword") out.keyword = argv[++i];
   }
   return out;
@@ -74,6 +78,58 @@ async function main() {
   };
 
   try {
+    // 逐群导出：每个群单独查询、单独限条。
+    //
+    // 为什么不用 `--all-groups`：那种做法是「一次查 5000 条再按群分桶」，
+    // 2.6GB 的库里 5000 条会被前几个大群全吃掉，其余群一条不剩。
+    if (args.perGroupLimit) {
+      if (!args.outDir) throw new Error("--per-group-limit 需要 --out-dir");
+      const contacts = await call("list_contacts", { dbPath: args.db, limit: 2000 });
+      let groups = (contacts.groups ?? []).map((g) => ({ qq: Number(g.qq), name: g.name }));
+      if (args.groups?.length) {
+        const keep = new Set(args.groups);
+        groups = groups.filter((g) => keep.has(g.qq));
+      }
+      console.log(`群 ${groups.length} 个，每群最多 ${args.perGroupLimit} 条`);
+
+      mkdirSync(args.outDir, { recursive: true });
+      const summary = [];
+      for (const g of groups) {
+        const query = {
+          dbPath: args.db,
+          chat: "group",
+          groupQq: g.qq,
+          limit: args.perGroupLimit,
+          order: "asc",
+        };
+        if (args.since) query.since = args.since;
+        if (args.until) query.until = args.until;
+        let res;
+        try {
+          res = await call("query_chat_messages", query);
+        } catch (err) {
+          summary.push({ groupQq: g.qq, title: g.name, error: String(err.message).slice(0, 120) });
+          console.log(`  ✗ ${g.qq} ${g.name}: ${String(err.message).slice(0, 80)}`);
+          continue;
+        }
+        const messages = res.messages ?? res.rows ?? [];
+        const corpus = toCorpus(messages, { cid: `qq-${g.qq}`, title: g.name ?? `QQ群 ${g.qq}` });
+        const file = `${args.outDir}/qq-${g.qq}.json`;
+        writeFileSync(file, JSON.stringify(corpus, null, 2), "utf8");
+        summary.push({
+          groupQq: g.qq,
+          title: corpus.title,
+          messages: messages.length,
+          kept: corpus.messages.length,
+          file,
+        });
+        console.log(`  ✓ ${g.qq} ${corpus.title}: ${corpus.messages.length} 条`);
+      }
+      const keepTotal = summary.reduce((n, x) => n + (x.kept ?? 0), 0);
+      console.log(JSON.stringify({ groups: summary.length, kept: keepTotal, detail: summary }, null, 2));
+      return;
+    }
+
     // 一次导出全部群，每个群一个 corpus 文件（seed 脚本一次吃一个会话）
     if (args.allGroups) {
       if (!args.outDir) throw new Error("--all-groups 需要 --out-dir");
