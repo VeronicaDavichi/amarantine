@@ -235,9 +235,10 @@ def test_same_nick_different_uid_creates_two_accounts() -> None:
     assert stats["accounts"] == 2
     uids = [params["uid"] for _, params in drv.calls]
     assert uids == ["111", "222"]
-    # Person 只有一个（key 由名字决定），Account 有两个 —— 两者职责不同
+    # spec 045：同名不同 uid 现在是**两个 Person**（键按 uid 派生），
+    # Account 也是两个 —— 这才是「同名不同人」的正确形态
     keys = {params["key"] for _, params in drv.calls}
-    assert len(keys) == 1
+    assert keys == {"uid:111", "uid:222"}
 
 
 def test_ensure_identities_swallows_driver_errors() -> None:

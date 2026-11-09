@@ -1,5 +1,5 @@
 ---
-status: planned
+status: complete
 created: 2026-11-09
 priority: high
 tags:
@@ -9,9 +9,12 @@ tags:
 depends_on:
 - '043'
 created_at: 2026-11-09T03:00:47.386926156Z
-updated_at: 2026-11-09T03:00:47.386926156Z
+updated_at: 2026-11-09T03:22:58.128202593Z
+completed_at: 2026-11-09T03:22:58.128202593Z
+transitions:
+- status: complete
+  at: 2026-11-09T03:22:58.128202593Z
 ---
-
 # Person 的键：从「名字派生」改为「账号锚定」
 
 > **Status**: planned · **Priority**: high · **Created**: 2026-11-09

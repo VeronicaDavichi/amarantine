@@ -180,7 +180,8 @@ def test_write_event_node_alias_items_carry_key() -> None:
     import inspect
 
     src = inspect.getsource(GO._alias_item)
-    assert '"key": key_for(claim.canonical)' in src, (
+    # spec 045：宿主键改走 resolve_person_key（uid 优先），不再是 key_for
+    assert '"key": resolve_person_key(claim.canonical)' in src, (
         "alias item 必须带 key，否则同时是 {key: null} → MERGE 抛异常"
     )
     # 两条路径都得走这个构造器，不能各写一份（否则拒绝理由会丢）

@@ -62,7 +62,9 @@ DEFAULT_LIMIT = 50
 #: 所有名字（人 + 实体），用于 RELATED 扩展和文本兜底
 _ALL_NAMES_CYPHER = """
 MATCH (e:Event {namespace: $namespace})-[:INVOLVES]->(p:Person)
+// spec 045：改名后旧名要仍能查到 —— 同时匹配曾用名
 WHERE p.name IN $names
+   OR any(n IN $names WHERE n IN coalesce(p.previous_names, []))
 WITH DISTINCT e
 RETURN e.event_id AS event_id
 LIMIT $limit
@@ -110,7 +112,9 @@ LIMIT $limit
 _SEARCH_CYPHER = """
 // 路 1：人直连 —— 终点，不碰动作
 MATCH (e:Event {namespace: $namespace})-[:INVOLVES]->(p:Person)
+// spec 045：曾用名同样能命中
 WHERE p.name IN $person_names
+   OR any(n IN $person_names WHERE n IN coalesce(p.previous_names, []))
 WITH DISTINCT e
 RETURN e.event_id AS event_id
 LIMIT $limit

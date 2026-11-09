@@ -1114,6 +1114,22 @@ WHERE host.name IN $alias_hosts
 改名后**会多出一个 `Person` 节点**（新旧名字各一个），但共用一个 `Account`。
 `Person` 的键由名字派生是全局约定，改成 uid 派生要单开 spec。
 
+
+## 一个人的身份键：uid，不是名字（spec 045）
+
+`Person` 的键是 `uid:<uid>`，不是名字派生。好处：
+
+| 场景 | 现在 |
+|---|---|
+| 同一个人改名 | 仍是**一个** `Person`；旧名进 `previous_names` |
+| 两个同名的人 | 是**两个** `Person`（键不同） |
+| 用旧名查 | 命中 —— 查询同时匹配 `name` 与 `previous_names` |
+
+没有 `uid` 的写入（单条 `memory_remember`）仍按名字派生键，行为与以前一致。
+
+**迁移**：`harness/migrate_person_keys.py` 把旧的名字键节点并到 uid 键上
+（默认 dry-run，`--apply` 才改，`--backup` 可导出回滚）。
+
 ## 分词：称谓与自我学习
 
 实体抽取的第一道关是分词。中文没有空格，切错了后面全错。

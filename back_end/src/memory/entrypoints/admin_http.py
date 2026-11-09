@@ -1687,6 +1687,19 @@ def create_app(
                     dedupe_key,
                 )
             if idents:
+                # spec 045：先登记「名字 → uid」，本批卡片写入才会用 uid 键。
+                # 必须在 ensure_identities 之前 —— 它内部也会登记一次，
+                # 但卡片是后台任务，越早登记越不容易漏。
+                from memory.services.person_key import register_name_uid
+
+                mapping: dict[str, str] = {}
+                for ident in idents:
+                    for candidate in ident.candidate_names():
+                        mapping.setdefault(candidate, ident.uid)
+                    mapping.setdefault(ident.display_name, ident.uid)
+                logger.info(
+                    "登记名字→uid %d 个 | job=%s", register_name_uid(mapping), dedupe_key
+                )
                 stats = _identity.ensure_identities(
                     namespace=ns, identities=idents, settings=cfg
                 )

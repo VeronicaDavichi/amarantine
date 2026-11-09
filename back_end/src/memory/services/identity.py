@@ -58,8 +58,18 @@ SET a.nick = $nick,
     END,
     a.last_seen = $now
 WITH a
+// spec 045：Person 的键用 uid，不随名字变
 MERGE (p:Person {namespace: $namespace, key: $key})
-ON CREATE SET p.name = $display_name, p.first_seen = $now
+ON CREATE SET p.name = $display_name, p.first_seen = $now, p.previous_names = []
+// 改名：旧名进 previous_names，名字换成新的。查询侧靠 previous_names 兼容旧名
+ON MATCH SET p.previous_names = CASE
+        WHEN p.name IS NOT NULL AND p.name <> $display_name
+             AND NOT p.name IN coalesce(p.previous_names, [])
+        THEN coalesce(p.previous_names, []) + p.name
+        ELSE coalesce(p.previous_names, [])
+    END,
+    p.name = $display_name,
+    p.last_seen = $now
 SET p:Person
 MERGE (a)-[r:OPERATED_BY]->(p)
 ON CREATE SET r.created_at = $now, r.source = $source
@@ -376,13 +386,14 @@ def ensure_identities(
                         uid=ident.uid,
                         nick=ident.nick,
                         display_name=name,
-                        key=key_for(name),
+                        key=f"uid:{ident.uid}",
                         platform=ident.platform,
                         source=ident.source,
                         now=now,
                     ).consume()
                     result["accounts"] += 1
                     result["linked"] += 1
+                    _register_identity_names(ident, name)
                 except Exception as exc:  # noqa: BLE001 - 单条失败不拖垮整批
                     result["failed"] += 1
                     logger.warning("账号写入失败 | uid=%s name=%s | %s", ident.uid, name, exc)
@@ -396,6 +407,19 @@ def ensure_identities(
             except Exception:  # noqa: BLE001
                 pass
     return result
+
+
+def _register_identity_names(ident: Identity, display_name: str) -> None:
+    """把「这个名字属于这个 uid」登记进进程级表（spec 045）。
+
+    之后同批次的卡片写入会走 `resolve_person_key(name)` → ``uid:<uid>``，
+    不会再用名字键另起一个节点。
+    """
+    from memory.services.person_key import register_name_uid
+
+    mapping = {name: ident.uid for name in ident.candidate_names()}
+    mapping[display_name] = ident.uid
+    register_name_uid(mapping)
 
 
 def to_identity_payload(identities: Iterable[Identity]) -> list[dict[str, str]]:

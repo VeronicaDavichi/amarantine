@@ -60,6 +60,7 @@ from dataclasses import dataclass, field
 
 from memory.config import Settings
 from memory.core.entity_key import key_for
+from memory.services.person_key import resolve_person_key
 from memory.models.event_card import ALIAS_CONFIDENCE, AliasClaim, EventCard
 from memory.services.labeler import _judge_name as judge_name
 
@@ -332,7 +333,7 @@ def _alias_item(claim: AliasClaim) -> dict[str, str]:
     return {
         "alias": claim.alias,
         "canonical": claim.canonical,
-        "key": key_for(claim.canonical),
+        "key": resolve_person_key(claim.canonical),
         "label": claim.label,
         "confidence": ALIAS_CONFIDENCE.get(claim.label, 0.4),
         "source": claim.source,
@@ -384,7 +385,9 @@ def _split_entities(
     persons: list[dict[str, str]] = []
     entities: list[dict[str, str]] = []
     for e in card.entities:
-        item = {"key": key_for(e.name), "name": e.name}
+        # 人走 uid 优先的键（spec 045）；实体没有账号，仍按名字派生
+        key = resolve_person_key(e.name) if e.kind == "person" else key_for(e.name)
+        item = {"key": key, "name": e.name}
         if e.kind == "person":
             persons.append(item)
         else:
