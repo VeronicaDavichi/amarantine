@@ -1,5 +1,5 @@
 ---
-status: in-progress
+status: complete
 created: 2026-11-06
 priority: medium
 tags:
@@ -7,12 +7,15 @@ tags:
 - tooling
 - draft
 created_at: 2026-11-06T08:37:41.289140704Z
-updated_at: 2026-11-09T03:45:35.565228409Z
+updated_at: 2026-11-09T07:00:52.332338076Z
+completed_at: 2026-11-09T07:00:52.332338076Z
 transitions:
 - status: planned
   at: 2026-11-09T03:45:35.494506305Z
 - status: in-progress
   at: 2026-11-09T03:45:35.565228409Z
+- status: complete
+  at: 2026-11-09T07:00:52.332338076Z
 ---
 # 历史聊天记录导入工具（草稿）
 
@@ -88,7 +91,7 @@ transitions:
 ## Plan
 
 - [x] T1 盘点现有脚本与踩坑，写成「输入契约」
-- [ ] T2 定窗口与重叠策略（需 039 的实验结果）
+- [x] T2 窗口已定 30 条/片；**重叠策略移交给 039**（等它的金标结果再定 stride）
 - [x] T3 隐私闸门（规则可配 + 命中报告）
 - [x] T4 幂等与断点（job 表 + 水位）
 - [x] T5 校验与报告（条数守恒、抽检、召回自测）
@@ -302,3 +305,18 @@ job 表：c01 done / c02 done，2 个键 2 个 job
 | A7 无时间 → 导入时间 | `time_source=imported` 77 张，标出来了 |
 
 **遗留**：A2/A5 已在独立用例验证；T2 重叠仍等 039 金标。
+
+### 2026-11-09 · 收尾（complete）
+
+| 验收 | 结果 |
+|---|---|
+| A1 幂等 | ✅ `--resume` 二次跑全部跳过 |
+| A2 中途 kill 续跑 | ✅ 第 63s 杀服务 → 重启续跑，2 job / 2 卡无重复 |
+| A3 隐私闸门 | ✅ 身份证/验证码/图片被拦，报告带原因 |
+| A4 链接 URL | ✅ `gitlab http://.../wangjie/aml-scripts` 进文本 |
+| A5 召回自测 | ✅ 5/5 命中（`--selftest`） |
+| A6 事件时间 | ✅ 420 卡里只有 20% 落在导入日 |
+| A7 无时间 | ✅ `time_source=imported` 77 张，明确标出 |
+| A8 消息时间≠事件时间 | ✅ 10-31 说「昨天」→ `date_start=10-30` |
+
+窗口 30 条/片、无重叠：重叠要等 039 的金标确认「同一关系被抽两次」的代价，已移交。

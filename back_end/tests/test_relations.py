@@ -165,3 +165,20 @@ def test_statement_rejects_long_phrase_names() -> None:
 def test_depends_on_requires_dependency_verb() -> None:
     """`调用` 不算依赖：`调用了接口` 是动作。"""
     assert R.extract_statements("前端调用了中登查询") == []
+
+
+def test_query_predicates_match_registry() -> None:
+    """A7：查询只走 039 定义的四个谓词，不碰 RELATED 挂载边。
+
+    查询脚本在 `harness/query_relations.py`，这里对齐两边的谓词表，
+    避免有人加谓词只改了一边。
+    """
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "query_relations",
+        "/mnt/e/PycharmProjects/amarantine/harness/query_relations.py",
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)  # type: ignore[union-attr]
+    assert set(module.PREDICATES) == set(R.PREDICATE_SPECS)

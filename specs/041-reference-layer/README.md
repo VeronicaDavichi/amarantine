@@ -149,17 +149,17 @@ transitions:
 
 ## Plan
 
-- [ ] **M1 最小可用**
+- [x] **M1 最小可用**
   - [x] T1 `Term / Sense / Mention` 节点与唯一键（含 scope）
   - [x] T2 触发信号打分器（正则 + 计数，不调 LLM）
   - [x] T3 离线建候选：`harness/build_references.py --dry-run/--apply`
   - [x] T4 查询接 `tier`（默认 default），命中标「疑似」
-- [ ] **M2 升降级**
+- [x] **M2 升降级**
   - [x] T5 `Claim` 写入（`assert/question/deny` 三态，question 不建边）
   - [x] T6 确认 / 否认 / 冲突接口
-- [ ] **M3 扩展**
+- [x] **M3 扩展**
   - [x] T7 与 042（账号族）对接：`Sense -[:REFERS_TO]-> Bot`
-  - [ ] T8 评测：候选召回率 + 误绑率（人工标 20 条）
+  - [ ] T8 评测：候选召回率 + 误绑率 —— **阻塞**（需要人工标注，且当前 31 个候选多为英文词，无代表性）
 
 ## Test
 
@@ -171,7 +171,7 @@ transitions:
 - [x] A6 `tier=strict` 只返回 exact；`default` 含 probable 并标「疑似」
 - [x] A7 人否认后 `status=denied`，`strict` 不再命中、`explore` 仍可见
 - [x] A8 弱边不传递：A~B、B~C 不产出 A~C
-- [ ] A9 全量 pytest 无回归
+- [x] A9 全量 pytest 无回归
 
 ## Notes
 
@@ -288,3 +288,28 @@ v1 仍按 `session` + `global` 两档 scope 运行。
 
 **T8 评测未做**：需要人工标 20 条金标；当前候选只有 31 个 Sense，
 且大多是 `id`/`check` 这类英文词，标出来的 recall 没有代表性。等语料更真实再做。
+
+### 2026-11-09 · 收尾（T8 评测阻塞，其余完成）
+
+| 阶段 | 结果 |
+|---|---|
+| M1 Term/Sense/触发/tier | ✅ 真库 31 个 Sense；default/strict 分档正确 |
+| M2 Claim 三态/确认否认/Mention | ✅ 26 条断言 → Claim 14 / Mention 9；confirm→exact、deny→denied |
+| M3 与 042 对接 | ✅ `Sense -[:REFERS_TO]-> Bot`（`ds` 的 gloss 命中主体 `鱼`） |
+
+**唯一未做**：T8 评测（需要人工标注）。cluster 已按 v1 决定不做。
+
+**A8 的保证方式**：查询语句里**根本没有变长路径**（`QUERY_SENSES_CYPHER` 不含 `*`），
+所以弱边不可能被传递 —— 有测试守住这点。
+
+## 状态摘要（2026-11-09）
+
+| 项 | 状态 |
+|---|---|
+| M1 Term/Sense/触发/tier | ✅ 31 个 Sense，分档正确 |
+| M2 Claim 三态/确认否认/Mention | ✅ Claim 14 / Mention 9 |
+| M3 与 042 对接 | ✅ `Sense -[:REFERS_TO]-> Bot` |
+| cluster | ⛔ v1 不做（缺群成员关系数据，已定） |
+| T8 评测 | ⛔ **阻塞**：需要人工标注，当前候选无代表性 |
+
+**保持 `in-progress`，唯一阻塞项是 T8 评测**。

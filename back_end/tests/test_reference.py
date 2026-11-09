@@ -152,3 +152,12 @@ def test_scope_is_part_of_candidate_key() -> None:
     cb = R.build_candidates(sigs_b, scope="session:B")[0]
     assert ca.scope != cb.scope
     assert ca.term == cb.term
+
+
+def test_query_has_no_transitive_traversal() -> None:
+    """A8：弱边不传递 —— 查询语句里不能有变长路径（`*1..` / `*`）。
+
+    `三哥` 的 `ALIAS_OF` 若是 uncertain，`A~B`、`B~C` 绝不能推出 `A~C`。
+    实现上靠「根本没有传递遍历」来保证，比事后判强度更可靠。
+    """
+    assert "*" not in R.QUERY_SENSES_CYPHER

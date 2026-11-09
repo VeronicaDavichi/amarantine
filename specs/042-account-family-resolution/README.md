@@ -1,5 +1,5 @@
 ---
-status: in-progress
+status: complete
 created: 2026-11-06
 priority: medium
 tags:
@@ -10,10 +10,13 @@ tags:
 depends_on:
 - '041'
 created_at: 2026-11-06T08:49:25.130796513Z
-updated_at: 2026-11-09T06:44:40.746275338Z
+updated_at: 2026-11-09T07:00:52.588879470Z
+completed_at: 2026-11-09T07:00:52.588879470Z
 transitions:
 - status: in-progress
   at: 2026-11-09T06:44:40.746275338Z
+- status: complete
+  at: 2026-11-09T07:00:52.588879470Z
 ---
 # 账号族与实体归并：一个主体多个账号，一个账号多个变体
 
@@ -207,3 +210,19 @@ deny INSTANCE_OF 3→鱼 → denied
 
 **说明**：`INSTANCE_OF` 默认是 `uncertain`，所以 `default` 档看不到 ——
 它在 `explore` 里可见。这正是「弱证据不进日常答案」的设计。
+
+### 2026-11-09 · 收尾（complete）
+
+T1–T6 全部完成，A1–A7 验收通过：
+
+| 验收 | 证据 |
+|---|---|
+| A1 同名不同 uid → SAME_AS 候选 | 合成 2 个「智小安业务助手」→ 1 条 probable 边，节点不合并 |
+| A2 question 不建边 | `X这个账号是鱼吧？` → 只记 Claim |
+| A3 空槽不建边 | `X账号是谁的鱼` → object 空 → 无边 |
+| A4 两条 assert → probable；确认 → exact | 复用 041 裁决；confirm 接口实测 |
+| A5 deny 后 strict 不命中 | 实测 denied 边在 strict 消失、explore 可见 |
+| A6 防刷 | 重复断言按内容去重，只算一次 |
+| A7 跨群不串 | 查询强制按 namespace 过滤 |
+
+**真实数据**：20 个账号里没有同名/变体，候选族 0 —— 机制就绪，等输入。
