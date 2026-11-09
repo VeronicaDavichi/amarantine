@@ -63,7 +63,7 @@ phase: tasks
 
 ## 完成定义（DoD）
 
-- [x] A1–A7 全绿（A4 有偏差，见下）；全量 pytest **1291 passed**
+- [x] A1–A7 全绿（A4 的改名分裂由 [045](../045-person-key-strategy/) 解决）；全量 pytest 绿
 - [x] `check_spec.py` 对本 spec PASS
 - [x] 真库报告：Account 3 个 / OPERATED_BY 3 条（临时 ns `verify043`，已清理）
 - [x] 「未识别姓名」报告非空：导出时标出 23 个非人名账号（钉钉小秘书等）
@@ -112,7 +112,7 @@ contact_friend        0 行  remark 字段存在但无数据
 | A1 备注解析出姓名/说明 | ✅ | `parse_remark("王晓虹 - 加班问题人事")` → `("王晓虹","加班问题人事")`；括号形 `王晓虹（合规）` → `("王晓虹","合规")` |
 | A2 两字昵称成为 `Person` | ✅ | 真库：`王伟民` / `孙柏林` / `刘阅` 三个名册成员全部落成 `Person` |
 | A3 名册外名字降级 `topic` | ✅ | 035 的既有行为未变（回归用例仍绿） |
-| A4 同 uid 改名 → 1 个 Person | ⚠️ **偏差** | `Account.nicks` 数组已记历史昵称，但**新昵称仍会新建一个 Person**（见下） |
+| A4 同 uid 改名 → 1 个 Person | ✅ **已由 045 收口** | 045 把 Person 键改成 `uid:<uid>`；真库验证「同 uid 两次写入 → 1 个 Person，旧名进 `previous_names`」 |
 | A5 同名不同 uid → 2 个 Account | ✅ | 单测 `test_same_nick_different_uid_creates_two_accounts` |
 | A6 非汉族姓名不建 Person + 报告 | ✅ | **已返工为四分类**（见下）；导出：service 20 / placeholder 3 / ethnic 0，真人剥名 3 个 |
 | A7 品牌仍为 topic | ✅ | 035 回归用例 |
@@ -210,3 +210,12 @@ person 451 / service 20 / placeholder 3 / ethnic_name 0
 
 **端到端**：真库临时 ns `verify043b` 灌 4 条 → Account 3 个（刘阅/孙柏林/王伟民）、
 Person 3 个，与名册一致；已清理。
+
+### 2026-11-09 · 收尾
+
+A4 的偏差（改名产生第二个 `Person`）已由 [045 Person 键策略](../045-person-key-strategy/) 解决：
+Person 的键从 `key_for(name)` 改成 `uid:<uid>`，改名只更新 `name` 并把旧名并入
+`previous_names`，不再新建节点。
+
+**本 spec 到此完成**：身份来源分层（uid > 备注 > 真名 > 昵称 > jieba）、
+四分类防误伤、Account/OPERATED_BY 落图，三项都已在真库验证。

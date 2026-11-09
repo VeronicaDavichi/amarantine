@@ -1,5 +1,5 @@
 ---
-status: planned
+status: complete
 created: 2026-11-06
 priority: high
 tags:
@@ -7,9 +7,12 @@ tags:
 - labeler
 - accounts
 created_at: 2026-11-06T09:03:55.763080508Z
-updated_at: 2026-11-06T09:03:55.763080508Z
+updated_at: 2026-11-09T06:53:18.141132582Z
+completed_at: 2026-11-09T06:53:18.141132582Z
+transitions:
+- status: complete
+  at: 2026-11-09T06:53:18.141132582Z
 ---
-
 # 身份来源分层：uid > 备注 > 昵称 > 姓名，短名字优先
 
 > **Status**: planned · **Priority**: high · **Created**: 2026-11-06
