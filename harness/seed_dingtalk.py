@@ -104,6 +104,53 @@ def collect_roster(data: dict) -> list[str]:
     return list(seen)
 
 
+def merge_identity_roster(roster: list[str], data: dict, identity_path: str) -> list:
+    """把身份记录并进名册（spec 043 T3）。
+
+    只并入**本批出现的**人：语料里的 sender / 群标题里出现的名字。
+    全量 474 条身份每次都带上会让每批注册几百个名字、写几百个 Account —— 没必要。
+
+    返回的列表是混合形态：老格式的纯字符串 + 新格式的身份 dict。
+    """
+    from memory.services.identity import from_json_file
+
+    idents = from_json_file(identity_path)
+    if not idents:
+        return roster
+
+    appeared: set[str] = set()
+    for m in data.get("messages") or []:
+        sender = str(m.get("sender") or "").strip()
+        if sender:
+            appeared.add(sender)
+    for part in str(data.get("title") or "").replace("，", ",").split(","):
+        name = part.strip()
+        if name:
+            appeared.add(name)
+
+    matched = [i for i in idents if set(i.candidate_names()) & appeared]
+    if not matched:
+        return roster
+
+    covered: set[str] = set()
+    for i in matched:
+        covered |= set(i.candidate_names())
+    plain = [n for n in roster if n not in covered]
+    payload = [
+        {
+            "uid": i.uid,
+            "nick": i.nick,
+            "remark": i.remark,
+            "real_name": i.real_name,
+            "platform": i.platform,
+            "source": "identity_file",
+        }
+        for i in matched
+    ]
+    print(f"  身份匹配: 本批出现 {len(appeared)} 人 → 命中身份记录 {len(matched)} 条")
+    return plain + payload
+
+
 def load_turns(path: pathlib.Path) -> tuple[str, str, list[dict]]:
     data = json.loads(path.read_text())
     cid = data["cid"]
@@ -145,7 +192,7 @@ def post_ingest(
     cid: str,
     turns: list[dict],
     suffix: str = "",
-    roster: list[str] | None = None,
+    roster: list | None = None,
     *,
     source: str = "dingtalk",
     key_prefix: str = "dt",
@@ -209,6 +256,11 @@ def main() -> int:
         default="",
         help="dedupe_key 后缀。上一个 job 失败时用它重试（failed 也做幂等）",
     )
+    ap.add_argument(
+        "--identity",
+        default="",
+        help="身份记录 JSON（harness/export_identity.py 产出）。给了就带 uid 写 Account（spec 043）",
+    )
     args = ap.parse_args()
 
     settings = load_settings()
@@ -225,12 +277,18 @@ def main() -> int:
     data = json.loads(path.read_text())
     cid, title, turns = load_turns(path)
     roster = collect_roster(data)
+    if args.identity:
+        if not pathlib.Path(args.identity).exists():
+            print(f"✗ 身份文件不存在: {args.identity}")
+            return 1
+        roster = merge_identity_roster(roster, data, args.identity)
     print("=" * 68)
     print(f"语料: {path.name}")
     print(f"  会话: {title} ({cid})")
     print(f"  保留 {len(turns)} / 原始若干 条消息")
     print(f"  namespace: {args.namespace}")
-    print(f"  名册 {len(roster)} 个: {roster[:8]}{'…' if len(roster) > 8 else ''}")
+    _sample = [r if isinstance(r, str) else r.get("nick", "") for r in roster[:8]]
+    print(f"  名册 {len(roster)} 个: {_sample}{'…' if len(roster) > 8 else ''}")
     print("=" * 68)
     for i, t in enumerate(turns[:3], 1):
         print(f"  [{i}] {t['ts']}  {t['text'][:56]}…")

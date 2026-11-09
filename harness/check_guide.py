@@ -104,6 +104,8 @@ def main() -> int:
         # 非配置项：Neo4j 关系类型名 / 节点标签 / 图上的字符串枚举
         "RELATES_TO", "MENTIONS", "RELATED", "INVOLVES", "ACTION",
         "ALIAS_OF", "Alias", "Person", "Event", "Action",
+        # spec 043：账号层的关系类型与节点标签
+        "OPERATED_BY", "Account",
         # 非配置项：模型层常量
         "ALIAS_PROBABLE_MIN", "ALIAS_CONFIDENCE", "ALIAS_EXACT",
         "ALIAS_PROBABLE", "ALIAS_UNCERTAIN",

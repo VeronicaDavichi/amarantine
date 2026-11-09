@@ -476,15 +476,17 @@ class IngestRequest(BaseModel):
     dedupe_key: str
     turns: list[IngestTurn]
     namespace: str | None = None
-    #: 权威名册（spec 035）。数据源明确给出的人名列表，如 DingTalk 的
-    #: contacts / 群标题 / sender_name。
+    #: 权威名册（spec 035 / 043）。两种形态都收：
+    #:
+    #: - `["王泳", "韩晓迪"]` —— 纯名字（老格式）
+    #: - `[{"uid": "...", "nick": "...", "remark": "..."}]` —— 带账号信息（新格式）
     #:
     #: **为什么必须随请求传**：`extract_entities` 跑在**服务进程**里，
     #: 客户端脚本注册名册没用（那是另一个进程的模块级状态）。
     #:
     #: 有了名册，`陈柏林` 不会被 jieba 切成 `陈` + `柏林`（后者的
     #: 「柏林」是德国首都，在词典里）。没有名册时行为与改动前一致。
-    roster: list[str] | None = None
+    roster: list[str | dict[str, Any]] | None = None
 
 
 class IngestResponse(BaseModel):
@@ -1654,17 +1656,35 @@ def create_app(
 
         # 名册要在**切分之前**注册 —— `remember_event` 内部会调
         # `extract_entities`，那时候名册必须已经在模块状态里。
+        #
+        # spec 043：roster 可能是「纯名字」或「带账号信息」两种形态。
+        # 带账号信息时顺手写 `(:Account)-[:OPERATED_BY]->(:Person)`，
+        # 让「同一个 uid 改名」「同名不同 uid」在图上可区分。
+        non_han: list[str] = []
         if body.roster:
+            from memory.services import identity as _identity
             from memory.services import labeler as _labeler
 
-            added = _labeler.register_roster(body.roster)
+            names, idents, non_han = _identity.split_roster(body.roster)
+            added = _labeler.register_roster(names)
             logger.info(
                 "ingest 注册名册 %d 个（新增 %d，总计 %d）| job=%s",
-                len(body.roster),
+                len(names),
                 added,
                 len(_labeler.roster_names()),
                 dedupe_key,
             )
+            if non_han:
+                logger.warning(
+                    "跳过非汉族姓名 %d 个（spec 043 暂不支持解析）| %s",
+                    len(non_han),
+                    non_han[:5],
+                )
+            if idents:
+                stats = _identity.ensure_identities(
+                    namespace=ns, identities=idents, settings=cfg
+                )
+                logger.info("账号层写入 | job=%s | %s", dedupe_key, stats)
 
         normalized = [normalize_turn(t.model_dump()) for t in body.turns]
         valid = [t for t in normalized if t is not None]

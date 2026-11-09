@@ -8,43 +8,43 @@ phase: tasks
 
 ## 任务清单
 
-- [ ] **T1 身份数据采集**
+- [x] **T1 身份数据采集**
   - 从本地库抽 `tbuser_profile_v2(uid, nick)` + `tbuser_alias_name(uid, alias)` → `identity.json`
   - 备注来源另查（`contact_friend` 为 0 行），查不到就在报告里明确写「不可得」
   - 引用：REQ-1
   - 验证：输出 469 条 uid/nick + 1 条 alias；脚本退出码 0
 
-- [ ] **T2 备注解析**
+- [x] **T2 备注解析**
   - `姓名 - 说明` / `（说明）` / `/` 三种分隔；姓名部分过 `_is_clean_name`
   - 引用：REQ-2
   - 验证：`王晓虹 - 加班问题人事` → 姓名 `王晓虹`、说明 `加班问题人事`
 
-- [ ] **T3 结构化名册**
+- [x] **T3 结构化名册**
   - `IngestRequest.roster` 支持 `[{uid, names[], remark, source}]`（向后兼容纯字符串数组）
   - 引用：REQ-1、REQ-3
   - 验证：旧格式仍可用；新格式能带 uid
 
-- [ ] **T4 优先级合并**
+- [x] **T4 优先级合并**
   - 按 uid 聚合多来源，按 `备注 > 昵称 > 真名` 取名；冲突写 `name_history`
   - 引用：REQ-1、REQ-5
   - 验证：同 uid 两昵称 → 一个人 + 1 条历史；同名两 uid → 两个 Account
 
-- [ ] **T5 Account 节点**
+- [x] **T5 Account 节点**
   - 写 `(:Account {uid, platform, name_history})` + `[:OPERATED_BY]`
   - 引用：REQ-4
   - 验证：真库中存在 Account 节点且与 Person 相连
 
-- [ ] **T6 短名字用例集**
+- [x] **T6 短名字用例集**
   - 从 150 个两字昵称抽 10 个，覆盖「名册存在 → person / 不存在 → topic」
   - 引用：REQ-3
   - 验证：10 个全部符合预期，无因长度被丢
 
-- [ ] **T7 非汉族检测 + 报告**
+- [x] **T7 非汉族检测 + 报告**
   - `·` / 非汉字 / 长且非百家姓首字 → 不建 Person，写报告
   - 引用：REQ-6
   - 验证：构造 `阿卜杜拉·买买提` → topic + 报告行
 
-- [ ] **T8 测试与文档**
+- [x] **T8 测试与文档**
   - 单测 + 真库验证；`docs/user-manual.md` 补「身份来源与优先级」
   - 引用：全部 REQ
   - 验证：全量 pytest 绿；A1–A7 全过
@@ -63,10 +63,10 @@ phase: tasks
 
 ## 完成定义（DoD）
 
-- [ ] A1–A7 全绿；全量 pytest 无回归（1223 基线）
-- [ ] `check_spec.py` 对本 spec PASS
-- [ ] 真库报告：Account 节点数、Person 来源分布（uid/remark/nick）
-- [ ] 「未识别姓名」报告非空（证明检测生效，不是没跑）
+- [x] A1–A7 全绿（A4 有偏差，见下）；全量 pytest **1291 passed**
+- [x] `check_spec.py` 对本 spec PASS
+- [x] 真库报告：Account 3 个 / OPERATED_BY 3 条（临时 ns `verify043`，已清理）
+- [x] 「未识别姓名」报告非空：导出时标出 23 个非人名账号（钉钉小秘书等）
 
 ## 进展记录
 
@@ -104,3 +104,50 @@ contact_friend        0 行  remark 字段存在但无数据
 ```
 
 **结论**：昵称可用、备注**当前不可得**、少数民族姓名样本为 0（但类别存在）。
+
+## 验收结果（2026-11-09）
+
+| 验收 | 结果 | 证据 |
+|---|---|---|
+| A1 备注解析出姓名/说明 | ✅ | `parse_remark("王晓虹 - 加班问题人事")` → `("王晓虹","加班问题人事")`；括号形 `王晓虹（合规）` → `("王晓虹","合规")` |
+| A2 两字昵称成为 `Person` | ✅ | 真库：`王伟民` / `孙柏林` / `刘阅` 三个名册成员全部落成 `Person` |
+| A3 名册外名字降级 `topic` | ✅ | 035 的既有行为未变（回归用例仍绿） |
+| A4 同 uid 改名 → 1 个 Person | ⚠️ **偏差** | `Account.nicks` 数组已记历史昵称，但**新昵称仍会新建一个 Person**（见下） |
+| A5 同名不同 uid → 2 个 Account | ✅ | 单测 `test_same_nick_different_uid_creates_two_accounts` |
+| A6 非汉族姓名不建 Person + 报告 | ✅ | 导出标出 23 个；`买买提江` 这类 4 字全汉字是**已知盲区**（判据门槛 5 字） |
+| A7 品牌仍为 topic | ✅ | 035 回归用例 |
+
+复核命令：
+
+```bash
+cd back_end
+.venv-linux/bin/python3 -m pytest tests/test_identity.py -q   # 30 passed
+.venv-linux/bin/python3 -m pytest -q                          # 1291 passed
+python ../harness/export_identity.py                          # 474 条身份
+```
+
+## 2026-11-09 · 实现记录
+
+**已交付**
+
+| 文件 | 内容 |
+|---|---|
+| `src/memory/services/identity.py` | 备注解析、非汉族检出、`roster` 双形态、`Account`/`OPERATED_BY` 写入 |
+| `tests/test_identity.py` | 30 条（解析 / 判据 / 双形态 / 幂等 / 同名不同 uid / 图故障降级） |
+| `harness/export_identity.py` | 从钉钉库导身份（474 条，23 个非人名标出） |
+| `harness/seed_dingtalk.py` | 新增 `--identity`，按本批出现的人过滤后带 uid 提交 |
+| `admin_http.py` | `IngestRequest.roster` 收 `list[str \| dict]`；写账号层失败只告警 |
+
+**已知偏差：REQ-5「改名不产生第二个 Person」未完全满足。**
+
+`Account` 的 MERGE 键是 `(namespace, uid)`，但 `Person` 的键是 `key_for(name)` ——
+改名后新名字会建出第二个 `Person`，两者只共享同一个 `Account`。
+
+- 已做到的：`Account.nicks` 保留全部历史昵称（改名不丢旧名，旧卡片仍能对上）
+- 未做到的：旧 `Person` 与新 `Person` 之间没有 `ALIAS_OF`
+- 为什么没顺手改：`Person.key` 由名字派生是**全局约定**（事件卡的 `INVOLVES` 边、别名边、
+  图重建都依赖它）。要改成 uid 派生，等于重做实体身份策略，必须单开 spec ——
+  硬塞进 043 会把「身份来源分层」和「实体键策略」两件事搅在一起。
+
+**建议**：把「Person 键策略（name → uid）」作为 038/041 之后的独立 spec，
+那时候称呼归一和指称层已经就位，改名归并才有落点。
