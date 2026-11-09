@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Iterable
@@ -101,10 +102,15 @@ class Identity:
         `蓝网-韩晓迪` 这种全称，也有 `韩晓迪` 这种简称。
         """
         out: list[str] = []
-        for name in (self.remark_name, self.real_name.strip(), clean_nick(self.nick), self.nick.strip()):
+        raw = [self.remark_name, self.real_name.strip(), clean_nick(self.nick), self.nick.strip()]
+        for name in raw:
             name = (name or "").strip()
             if name and name not in out:
                 out.append(name)
+        # `BOB洪亚军` 这类带修饰的昵称，剥出来的中文名才是能进名册的形态
+        kind, core = classify_identity_name(self.nick)
+        if kind == KIND_PERSON and core and core not in out:
+            out.append(core)
         return out
 
 
@@ -163,55 +169,134 @@ def clean_nick(nick: str) -> str:
     return text
 
 
-def is_non_han(name: str) -> bool:
-    """是不是「明显不像汉族姓名」的形态（REQ-6：只检出，不解析）。
+#: 服务号 / 机器人昵称里的标记词。命中即判定「这不是一个人」。
+#:
+#: 为什么单列一类：`钉钉小秘书`、`工资条管家`、`AI助理` 与「汉族姓名」,
+#: 本质是**两种不同的判断**。把它们混进「非汉族姓名」里，
+#: 就会顺带把 `BOB洪亚军`、`Gavin` 这类真人英文昵称一起扫出去。
+_SERVICE_MARKERS = (
+    "助手", "机器人", "小秘书", "管家", "工资条", "应用中心", "文档助手",
+    "听记", "智能助理", "业务助手", "小钉", "小智", "助理",
+)
 
-    三条判据（满足任一）：
+#: 身份分类结果。用字符串而不是布尔 —— 报告要能说清「为什么」。
+KIND_PERSON = "person"            # 可用的人名（可能带了修饰，已剥干净）
+KIND_SERVICE = "service"          # 服务号 / 机器人，不是人
+KIND_ETHNIC = "ethnic_name"       # 少数民族姓名，暂不解析
+KIND_PLACEHOLDER = "placeholder"  # 纯占位/无意义昵称，不入名册
 
-    1. 含 `·`（`阿卜杜拉·买买提`）
-    2. 去掉 `-`/`_`/空格这类分隔符后，仍有非汉字字符（字母、数字、其他符号）
-    3. 长度 ≥ 5 且首字不在百家姓里
+_HAN_LO = "\u4e00"
+_HAN_HI = "\u9fa5"
 
-    **分隔符先剥掉再判**：`蓝网-刘佳` 是「公司-姓名」的昵称写法，
-    不是少数民族姓名；不剥的话它会因为一个连字符被误挡。
 
-    **盲区（已知）**：`买买提江` 这种「4 字、全汉字、首字非百家姓」的形态
-    判不出来 —— 汉族姓名最多 4 字（复姓 + 双名），长度门槛只能设在 5。
-    宁可漏，也不能把复姓名误伤成非汉族。
+def _is_han(ch: str) -> bool:
+    return _HAN_LO <= ch <= _HAN_HI
+
+
+def strip_decorations(name: str) -> str:
+    """剥掉昵称里的人名前缀/后缀修饰，尽量还原出中文姓名。
+
+    实测样本：`BOB洪亚军` → `洪亚军`、`王政博Yves` → `王政博`、
+    `22传32马雯卓` → `马雯卓`；剥不出汉字的原样返回。
+
+    只剥**首尾**的修饰，中间的汉字保留 —— 它们才是姓名本体。
+    """
+    text = (name or "").strip()
+    if not text:
+        return ""
+    # 取**最长**的连续汉字段：`22传32马雯卓` 里 `传` 和 `马雯卓` 两段，
+    # 长的那段才是姓名本体。只剥首尾会漏掉夹在中间的修饰。
+    runs = re.findall(r"[\u4e00-\u9fa5]+", text)
+    if not runs:
+        return text
+    return max(runs, key=len)
+
+
+def classify_identity_name(name: str) -> tuple[str, str]:
+    """判断一个昵称/备注该归哪一类，返回 `(kind, 处理后的名字)`。
+
+    四类（spec 043 A6 返工）：
+
+    - ``service``       `钉钉小秘书` `AI助理` `工资条管家` —— 不入名册，不是人
+    - ``ethnic_name``   `阿卜杜拉·买买提` —— 不入名册，暂不解析
+    - ``placeholder``   `aaa` `123` —— 不入名册，无信息量
+    - ``person``        `王泳`；`BOB洪亚军`→`洪亚军`；`Gavin` —— 入名册
+
+    **与旧版的关键差别**：旧版把「含字母」等同于「非汉族」，于是
+    `BOB洪亚军`、`王政博Yves`、`Gavin` 全被当成少数民族姓名挡掉 ——
+    8 个真人因此失去了成为 `Person` 的资格。新顺序：
+
+    1. 先看是不是**服务号**（标记词 → 不是人）
+    2. 再看能不能**剥出中文姓名**（`BOB洪亚军` → `洪亚军`，是真人）
+    3. 纯英文昵称**默认是真人**（`Gavin` 确实可能是同事）
+    4. 只有「含 `·`」或「≥5 字且首字非百家姓」才算少数民族姓名
     """
     from memory.services.labeler import _COMMON_SURNAMES, COMPOUND_SURNAMES
 
     text = (name or "").strip()
     if not text:
-        return True
+        return KIND_PLACEHOLDER, ""
+
+    # 1) 服务号 / 机器人：按标记词判，不看字符构成
+    if any(marker in text for marker in _SERVICE_MARKERS):
+        return KIND_SERVICE, text
+
+    # 1.5) 家长号 / 职务号：`五一班和子轩同学家长` 是真人，只是昵称长
+    if any(w in text for w in ("家长", "爸爸", "妈妈", "妈妈", "同学家长")):
+        return KIND_PERSON, strip_decorations(text)
+
+    # 2) 少数民族姓名：`·` 分隔，或 ≥5 个汉字且首字非百家姓（汉族姓名最多 4 字）
     if "·" in text or "•" in text:
-        return True
+        return KIND_ETHNIC, text
+    han_only = "".join(c for c in text if _is_han(c))
+    if len(text) == len(han_only) and len(han_only) >= 5:
+        if han_only[0] not in _COMMON_SURNAMES and han_only[:2] not in COMPOUND_SURNAMES:
+            return KIND_ETHNIC, text
 
-    stripped = text.replace("-", "").replace("_", "").replace(" ", "")
-    if not all("\u4e00" <= c <= "\u9fa5" for c in stripped):
-        return True
+    # 3) 剥首尾修饰，能还原出中文姓名就是真人
+    core = strip_decorations(text)
+    if core != text and len(core) >= 2 and all(_is_han(c) for c in core):
+        return KIND_PERSON, core
 
-    if len(stripped) >= 5:
-        first = stripped[0]
-        if first not in _COMMON_SURNAMES and stripped[:2] not in COMPOUND_SURNAMES:
-            return True
-    return False
+    # 4) 纯英文/数字昵称：默认真人，明显无信息量的才丢
+    if not han_only:
+        letters = "".join(c for c in text if c.isalpha())
+        if len(letters) < 2 or len(set(letters.lower())) <= 2:
+            return KIND_PLACEHOLDER, text
+        return KIND_PERSON, text
+
+    # 5) 其余含汉字但没剥出纯中文名的，原样当人
+    if len(han_only) >= 2:
+        return KIND_PERSON, text
+    return KIND_PLACEHOLDER, text
 
 
-def split_roster(items: Iterable[Any] | None) -> tuple[list[str], list[Identity], list[str]]:
-    """把 `IngestRequest.roster` 归一成（名字列表, 身份记录, 被挡掉的名字）。
+def is_non_han(name: str) -> bool:
+    """向后兼容的布尔壳：**只有少数民族姓名**返回 True。
+
+    `service` / `placeholder` 不算「非汉族姓名」—— 它们不是人，也不是姓名问题。
+    新代码请直接用 `classify_identity_name`，它能说清是哪一类。
+    """
+    return classify_identity_name(name)[0] == KIND_ETHNIC
+
+
+def split_roster(
+    items: Iterable[Any] | None,
+) -> tuple[list[str], list[Identity], list[dict[str, str]]]:
+    """把 `IngestRequest.roster` 归一成（名字列表, 身份记录, 被挡掉的记录）。
 
     兼容两种入参（REQ-3 向后兼容）：
 
     - `["王泳", "韩晓迪"]`          —— 老格式，纯名字
     - `[{"uid": "1", "nick": "王泳"}]` —— 新格式，带账号信息
 
-    **非汉族姓名在这里就被挡掉**：不进名册、不建 `Person`，
-    但会原样返回给调用方写报告（REQ-6）。
+    **挡掉的东西带原因**（spec 043 A6 返工）：返回的不是裸名字列表，而是
+    `[{"name": ..., "kind": "service|ethnic_name|placeholder"}]` ——
+    「为什么没进名册」必须能回答，否则报告没法复核。
     """
     names: list[str] = []
     identities: list[Identity] = []
-    rejected: list[str] = []
+    rejected: list[dict[str, str]] = []
 
     for item in items or []:
         if isinstance(item, str):
@@ -233,16 +318,21 @@ def split_roster(items: Iterable[Any] | None) -> tuple[list[str], list[Identity]
     return names, identities, rejected
 
 
-def _add_name(name: str, names: list[str], rejected: list[str]) -> None:
+def _add_name(name: str, names: list[str], rejected: list[dict[str, str]]) -> None:
     text = (name or "").strip()
     if len(text) < 2:
         return  # 单字会误伤大量普通词（035 的既有约束）
-    if is_non_han(text):
-        if text not in rejected:
-            rejected.append(text)
+
+    kind, core = classify_identity_name(text)
+    if kind != KIND_PERSON:
+        entry = {"name": text, "kind": kind}
+        if entry not in rejected:
+            rejected.append(entry)
         return
-    if text not in names:
-        names.append(text)
+    # 剥出来的中文名（`洪亚军`）连同原文一起收：群里可能两种叫法都有
+    for candidate in (core, text):
+        if candidate and len(candidate) >= 2 and candidate not in names:
+            names.append(candidate)
 
 
 def ensure_identities(

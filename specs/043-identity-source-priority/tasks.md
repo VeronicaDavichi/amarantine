@@ -114,7 +114,7 @@ contact_friend        0 行  remark 字段存在但无数据
 | A3 名册外名字降级 `topic` | ✅ | 035 的既有行为未变（回归用例仍绿） |
 | A4 同 uid 改名 → 1 个 Person | ⚠️ **偏差** | `Account.nicks` 数组已记历史昵称，但**新昵称仍会新建一个 Person**（见下） |
 | A5 同名不同 uid → 2 个 Account | ✅ | 单测 `test_same_nick_different_uid_creates_two_accounts` |
-| A6 非汉族姓名不建 Person + 报告 | ✅ | 导出标出 23 个；`买买提江` 这类 4 字全汉字是**已知盲区**（判据门槛 5 字） |
+| A6 非汉族姓名不建 Person + 报告 | ✅ | **已返工为四分类**（见下）；导出：service 20 / placeholder 3 / ethnic 0，真人剥名 3 个 |
 | A7 品牌仍为 topic | ✅ | 035 回归用例 |
 
 复核命令：
@@ -173,3 +173,41 @@ python ../harness/export_identity.py                          # 474 条身份
 无上下文的单句本来就分不清，有名单时由准入兜底。
 
 **测试**：`test_labeler.py` 新增 3 条；全量 1295 passed。
+
+### 2026-11-09 · A6 返工：从「非汉族」改为四分类
+
+**为什么要返工**：旧判据把「含字母」等同于「非汉族姓名」，23 个标记里
+**8 个是真的人**被扫出名册（`BOB洪亚军`、`王政博Yves`、`22传32马雯卓`、
+`五一班和子轩同学家长`、`Gavin`、`nice`、`Phoebe.Ding`、`aaa`），
+它们由「该不该当人」的判断问题，被误当成「姓名构词」问题。
+
+**新判据**（`identity.classify_identity_name`，四类）：
+
+| 类 | 判据 | 例子 | 处理 |
+|---|---|---|---|
+| `service` | 含标记词（助手/机器人/小秘书/管家/工资条/助理…） | 钉钉小秘书、AI助理 | 不入名册 |
+| `ethnic_name` | 含 `·`，或 ≥5 汉字且首字非百家姓 | 阿卜杜拉·买买提 | 不入名册（暂不解析） |
+| `placeholder` | 无信息量（单字、纯重复小写、纯数字） | aaa、王 | 不入名册 |
+| `person` | 其余；带修饰的先剥首尾/取最长汉字段 | BOB洪亚军→洪亚军 | **入名册** |
+
+**关键修正**：含英文**不再等于**非汉族姓名。剥出中文名的是真人，
+纯英文昵称（`Gavin`）默认也是真人 —— 昵称难看是显示问题，不是身份问题。
+
+**导出实测**（474 条身份）：
+
+```
+person 451 / service 20 / placeholder 3 / ethnic_name 0
+剥掉修饰的真人 3 个：BOB洪亚军→洪亚军、22传32马雯卓→马雯卓、王政博Yves→王政博
+```
+
+**拒绝要带原因**：`split_roster()` 的第三项从 `list[str]` 改为
+`[{"name": ..., "kind": "service|ethnic_name|placeholder"}]` —— 报告能回答「为什么没进名册」。
+
+**审计报告**：`harness/export_identity.py` 现在额外产出
+`back_end/data/corpus/identity_audit.json`（分类统计 + 三类明细 + 剥名对照表）。
+
+**测试**：新增 22 条（服务号/修饰名/纯英文/占位/原因）；`test_identity.py` 49 passed；
+全量 **1314 passed**。
+
+**端到端**：真库临时 ns `verify043b` 灌 4 条 → Account 3 个（刘阅/孙柏林/王伟民）、
+Person 3 个，与名册一致；已清理。

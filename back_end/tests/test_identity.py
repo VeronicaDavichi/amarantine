@@ -60,13 +60,22 @@ def test_candidate_names_include_raw_and_clean_nick() -> None:
 # ------------------------------------------------------------ A6 非汉族姓名
 
 
-@pytest.mark.parametrize(
-    "name",
-    ["阿卜杜拉·买买提", "Gavin", "BOB洪亚军", "阿拉法特江"],
-)
-def test_non_han_names_detected(name: str) -> None:
-    """这些形态一律不建 Person（只检出，不解析）。"""
+@pytest.mark.parametrize("name", ["阿卜杜拉·买买提", "阿拉法特江", "买买提·阿不都"])
+def test_ethnic_names_detected(name: str) -> None:
+    """少数民族姓名（含 `·` 或 ≥5 字非百家姓）→ 不建 Person。"""
     assert I.is_non_han(name) is True
+    assert I.classify_identity_name(name)[0] == I.KIND_ETHNIC
+
+
+@pytest.mark.parametrize("name", ["Gavin", "BOB洪亚军", "王政博Yves", "Phoebe.Ding"])
+def test_english_nick_is_not_ethnic(name: str) -> None:
+    """**回归**：含英文的昵称不是「非汉族姓名」。
+
+    旧实现把「含字母」直接当成非汉族姓名，于是 `BOB洪亚军`、`Gavin` 这些
+    真人被扫出名册 —— 8 个真人因此失去了成为 `Person` 的资格。
+    """
+    assert I.is_non_han(name) is False
+    assert I.classify_identity_name(name)[0] == I.KIND_PERSON
 
 
 def test_short_non_han_is_known_blind_spot() -> None:
@@ -113,7 +122,7 @@ def test_split_roster_rejects_non_han() -> None:
         [{"uid": "1", "nick": "阿卜杜拉·买买提"}, "王泳"]
     )
     assert names == ["王泳"]
-    assert rejected == ["阿卜杜拉·买买提"]
+    assert rejected == [{"name": "阿卜杜拉·买买提", "kind": I.KIND_ETHNIC}]
 
 
 def test_split_roster_drops_single_char() -> None:
@@ -245,3 +254,57 @@ def test_ensure_identities_swallows_driver_errors() -> None:
         driver=Boom(),
     )
     assert stats["failed"] == 1
+
+
+# ------------------------------------------------------------ A6 返工：四分类
+
+
+@pytest.mark.parametrize(
+    "nick",
+    ["钉钉小秘书", "AI助理", "工资条管家", "报表推送机器人", "OpenClaw业务助手"],
+)
+def test_service_accounts_are_not_person(nick: str) -> None:
+    """服务号/机器人不是人 —— 按标记词判，不看字符构成。"""
+    assert I.classify_identity_name(nick)[0] == I.KIND_SERVICE
+
+
+@pytest.mark.parametrize(
+    "nick,core",
+    [
+        ("BOB洪亚军", "洪亚军"),
+        ("王政博Yves", "王政博"),
+        ("22传32马雯卓", "马雯卓"),
+    ],
+)
+def test_decorated_real_names_are_unwrapped(nick: str, core: str) -> None:
+    """真人带英文/数字修饰 → 剥出中文姓名后照常入名册。"""
+    kind, name = I.classify_identity_name(nick)
+    assert kind == I.KIND_PERSON
+    assert name == core
+
+
+@pytest.mark.parametrize("nick", ["Gavin", "Phoebe.Ding", "nice"])
+def test_plain_english_nick_counts_as_person(nick: str) -> None:
+    """纯英文昵称默认是真人（可能是同事），不能因为「不像汉族姓名」被扫掉。"""
+    assert I.classify_identity_name(nick)[0] == I.KIND_PERSON
+
+
+@pytest.mark.parametrize("nick", ["aaa", "王", "李"])
+def test_placeholder_is_dropped(nick: str) -> None:
+    """无信息量的昵称（重复小写、单字）不入名册。"""
+    assert I.classify_identity_name(nick)[0] == I.KIND_PLACEHOLDER
+
+
+def test_roster_keeps_both_raw_and_core_name() -> None:
+    """带修饰的真人：剥出来的中文名和原文都进名册（群里两种叫法都有）。"""
+    names, _, _ = I.split_roster([{"uid": "1", "nick": "BOB洪亚军"}])
+    assert "洪亚军" in names
+    assert "BOB洪亚军" in names
+
+
+def test_roster_rejection_carries_reason() -> None:
+    """被挡的必须带原因，报告才可复核。"""
+    _, _, rejected = I.split_roster(
+        [{"uid": "1", "nick": "AI助理"}, {"uid": "2", "nick": "aaa"}]
+    )
+    assert {r["kind"] for r in rejected} == {I.KIND_SERVICE, I.KIND_PLACEHOLDER}

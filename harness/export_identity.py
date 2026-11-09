@@ -33,7 +33,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "back_end" / "src"))
 
-from memory.services.identity import Identity, is_non_han  # noqa: E402
+from memory.services.identity import Identity, classify_identity_name  # noqa: E402
 
 DEFAULT_DB = Path.home() / ".dingtalk_mcp" / "decrypted" / "dingtalk.db"
 DEFAULT_OUT = ROOT / "back_end" / "data" / "corpus" / "identity.json"
@@ -93,12 +93,14 @@ def export(db_path: Path) -> dict:
         )
         if not ident.display_name:
             continue
+        kind, core = classify_identity_name(ident.display_name)
         identities.append({
             "uid": ident.uid,
             "nick": ident.nick,
             "remark": ident.remark,
             "display_name": ident.display_name,
-            "non_han": is_non_han(ident.display_name),
+            "kind": kind,
+            "core_name": core,
             "source": ident.source,
         })
     return {
@@ -127,12 +129,40 @@ def main() -> int:
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
 
-    non_han = [r for r in rows if r["non_han"]]
+    by_kind: dict[str, list[dict]] = {}
+    for r in rows:
+        by_kind.setdefault(r["kind"], []).append(r)
     with_remark = [r for r in rows if r["remark"]]
+
+    report = {
+        "_note": "spec 043 A6：昵称四分类结果，供人工复核",
+        "total": len(rows),
+        "by_kind": {k: len(v) for k, v in sorted(by_kind.items())},
+        "detail": {
+            k: [{"uid": r["uid"], "display_name": r["display_name"], "core_name": r["core_name"]}
+                for r in v]
+            for k, v in sorted(by_kind.items())
+            if k != "person"
+        },
+        "renamed": [
+            {"uid": r["uid"], "from": r["display_name"], "to": r["core_name"]}
+            for r in rows
+            if r["kind"] == "person" and r["core_name"] and r["core_name"] != r["display_name"]
+        ],
+    }
+    report_path = out.with_name("identity_audit.json")
+    report_path.write_text(json.dumps(report, ensure_ascii=False, indent=1), encoding="utf-8")
+
     print(f"身份记录 {len(rows)} 条 → {out}")
-    print(f"  带备注: {len(with_remark)} | 非汉族姓名(已标): {len(non_han)}")
-    if non_han:
-        print("  非汉族样例:", [r["display_name"] for r in non_han[:5]])
+    print(f"  带备注: {len(with_remark)}")
+    print(f"  分类: {report['by_kind']}")
+    for kind in ("service", "ethnic_name", "placeholder"):
+        names = [r["display_name"] for r in by_kind.get(kind, [])]
+        if names:
+            print(f"    {kind:<12} {len(names):>3} 个: {names[:6]}{'…' if len(names) > 6 else ''}")
+    print(f"  剥掉修饰的真人: {len(report['renamed'])} 个 → "
+          f"{[(r['from'], r['to']) for r in report['renamed'][:5]]}")
+    print(f"  审计报告 → {report_path}")
     print("  备注字段状态: contact_friend 为空表 → 备注实际不可得（见 spec 043 design）")
     return 0
 

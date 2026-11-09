@@ -1661,11 +1661,12 @@ def create_app(
         # 带账号信息时顺手写 `(:Account)-[:OPERATED_BY]->(:Person)`，
         # 让「同一个 uid 改名」「同名不同 uid」在图上可区分。
         non_han: list[str] = []
+        skipped_names: list[dict[str, str]] = []
         if body.roster:
             from memory.services import identity as _identity
             from memory.services import labeler as _labeler
 
-            names, idents, non_han = _identity.split_roster(body.roster)
+            names, idents, skipped_names = _identity.split_roster(body.roster)
             added = _labeler.register_roster(names)
             logger.info(
                 "ingest 注册名册 %d 个（新增 %d，总计 %d）| job=%s",
@@ -1674,11 +1675,16 @@ def create_app(
                 len(_labeler.roster_names()),
                 dedupe_key,
             )
-            if non_han:
+            if skipped_names:
+                # spec 043：被挡的带原因（service / ethnic_name / placeholder）
+                by_kind: dict[str, list[str]] = {}
+                for item in skipped_names:
+                    by_kind.setdefault(item["kind"], []).append(item["name"])
                 logger.warning(
-                    "跳过非汉族姓名 %d 个（spec 043 暂不支持解析）| %s",
-                    len(non_han),
-                    non_han[:5],
+                    "名册过滤 %d 个 | %s | job=%s",
+                    len(skipped_names),
+                    {k: v[:5] for k, v in by_kind.items()},
+                    dedupe_key,
                 )
             if idents:
                 stats = _identity.ensure_identities(
