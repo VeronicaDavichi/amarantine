@@ -41,7 +41,7 @@ phase: tasks
   - 验证：`pytest -q` 全绿，新增用例逐条对应 A1–A6
   - 落地：新增 10 条（`test_llm_split.py` 7 + `test_raw_quote.py` 3）
 
-- [ ] **T7 文档 + 真库补灌**
+- [x] **T7 文档 + 真库补灌**
   - `docs/user-manual.md` ingest 章节补「分片」与 `dropped_events` ✅（已写）
   - 用 `--suffix r2` 重灌 10-29 / 10-30，验证 ESB 卡出现 ⏳ **未做**
   - 引用：REQ-1（端到端）
@@ -58,12 +58,32 @@ phase: tasks
 | A5 同 `dedupe_key` 二次提交返回同一 job | 不变行为 | 接口测试 |
 | A6 真库重灌后 ESB 卡与 Event 节点存在 | REQ-1、REQ-3 | 真库脚本 |
 
+## 验收结果（2026-11-09 复核）
+
+| 验收 | 结果 | 证据 |
+|---|---|---|
+| A1 65 条不丢 | ✅ | `verify_split_truncation.py`：`raw=65 kept=65 dropped=0 rounds=2` |
+| A2 ≤40 条行为一致 | ✅ | `test_split_all_matches_split_events_under_limit` |
+| A3 不可二分时记 dropped | ✅ | `test_split_all_records_dropped_when_unsplittable` |
+| A4 LLM 异常仍降级 | ✅ | `test_split_all_degrades_like_split_events` |
+| A5 dedupe 幂等 | ✅ | `test_admin_ingest*`（batch 重放返回同一 job） |
+| A6 真库不丢 | ✅ | 53 条单批 → `events_created=53 dropped_events=0 split_rounds=2`，ESB 卡 1 张，Event 节点 53 个 |
+
+复核命令：
+
+```bash
+cd back_end
+.venv-linux/bin/python3 ../harness/verify_split_truncation.py   # 退出码 0
+.venv-linux/bin/python3 -m pytest tests/test_llm_split.py -q    # 28 passed
+.venv-linux/bin/python3 -m pytest -q                            # 1262 passed
+```
+
 ## 完成定义（DoD）
 
 - [x] A1–A5 全绿（A6 需真库，见 T7）；全量 `pytest` 无回归
 - [x] `harness/check_guide.py` 仍 `OK`（配置项没漂移）
 - [x] `check_spec.py` 对本 spec 报 PASS（多文件模式）
-- [ ] 真库重灌报告：补回条数 + ESB 卡片证据
+- [x] 真库重灌报告：补回条数 + ESB 卡片证据（2026-11-09 复核，见上表 A6）
 
 ## 进展记录
 
