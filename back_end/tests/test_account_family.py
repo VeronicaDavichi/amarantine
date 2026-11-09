@@ -94,3 +94,33 @@ def test_confirm_and_deny_semantics() -> None:
     """A5：deny 后 strict 不再命中（复用 tier 规则）。"""
     assert not R.tier_allows("denied", "strict")
     assert R.tier_allows("denied", "explore")
+
+
+# ------------------------------------------------------------ T5/T6 三档查询
+
+
+def test_labels_for_tier_maps_to_statuses() -> None:
+    """strict 只认 exact；default 含 probable；explore 全含。"""
+    assert AF.labels_for_tier("strict") == ["exact"]
+    assert "probable" in AF.labels_for_tier("default")
+    assert "uncertain" in AF.labels_for_tier("explore")
+
+
+def test_labels_for_unknown_tier_raises() -> None:
+    import pytest
+
+    with pytest.raises(ValueError):
+        AF.labels_for_tier("nope")
+
+
+def test_family_query_cypher_covers_both_edges() -> None:
+    """查询要同时覆盖 SAME_AS 与 INSTANCE_OF，否则复核队列看不全。"""
+    assert "SAME_AS" in AF.QUERY_FAMILIES_CYPHER
+    assert "INSTANCE_OF" in AF.QUERY_FAMILIES_CYPHER
+    assert "$labels" in AF.QUERY_FAMILIES_CYPHER
+
+
+def test_family_verdict_cypher_targets_both_kinds() -> None:
+    """确认/否认要能区分两类边：SAME_AS 比 uid，INSTANCE_OF 比主体名。"""
+    assert "b.uid = $target" in AF.SET_FAMILY_LABEL_CYPHER
+    assert "b.name = $target" in AF.SET_FAMILY_LABEL_CYPHER

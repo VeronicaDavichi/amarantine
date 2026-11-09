@@ -91,6 +91,14 @@ def main() -> int:
                 n = int(res["n"]) if res else 0
                 written += n
                 print(f"  写入 INSTANCE_OF: {n}")
+            # 041 M3 对接：义项 gloss 命中主体名 → Sense -[:REFERS_TO]-> Bot
+            from memory.services.reference import LINK_SENSE_BOT_CYPHER
+
+            res = session.run(LINK_SENSE_BOT_CYPHER,
+                              namespace=args.namespace, now=now).single()
+            linked = int(res["n"]) if res else 0
+            print(f"  关联 Sense→Bot: {linked}")
+
             print(f"\n共写入 {written} 条边")
             return 0
     finally:

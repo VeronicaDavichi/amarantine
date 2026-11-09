@@ -235,3 +235,37 @@ QUERY_FAMILY_CYPHER = """
 MATCH (a:Account {namespace: $namespace})
 RETURN a.uid AS uid, a.nick AS nick
 """
+
+#: 三档查询：与 041 共用状态语义
+#: （strict 只认 exact；default 含 probable；explore 全含）
+QUERY_FAMILIES_CYPHER = """
+MATCH (a:Account {namespace: $namespace})-[r]->(b)
+WHERE type(r) IN ['SAME_AS', 'INSTANCE_OF']
+  AND coalesce(r.label, 'uncertain') IN $labels
+RETURN type(r) AS kind, a.uid AS a_uid, a.nick AS a_nick,
+       coalesce(b.uid, b.name) AS target, r.label AS label,
+       r.confidence AS confidence, size(coalesce(r.evidence, [])) AS evidence_count
+ORDER BY kind, a_uid
+"""
+
+#: 人工确认/否认一条账号族边
+SET_FAMILY_LABEL_CYPHER = """
+MATCH (a:Account {namespace: $namespace, uid: $a_uid})-[r]->(b)
+WHERE type(r) = $kind
+  AND (($kind = 'SAME_AS' AND b.uid = $target)
+       OR ($kind = 'INSTANCE_OF' AND b.name = $target))
+SET r.label = $label, r.verdict_operator = $operator, r.verdict_at = $now
+RETURN type(r) AS kind, a.uid AS a_uid, coalesce(b.uid, b.name) AS target, r.label AS label
+"""
+
+
+def labels_for_tier(tier: str) -> list[str]:
+    """tier → 允许出现的边 label。"""
+    from memory.services.reference import TIER_STATUSES
+
+    statuses = TIER_STATUSES.get(tier)
+    if statuses is None:
+        raise ValueError(f"未知 tier: {tier}")
+    return list(statuses)
+
+

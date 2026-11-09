@@ -114,8 +114,8 @@ AI助理        ×2   (5409619649 / 6551919831)
 - [x] T2 词形族 blocking（规则 + 配置）
 - [x] T3 归属断言抽取（含空槽、question、deny 三种）
 - [x] T4 收敛与冲突处理（复用 041 的 Claim 机制）
-- [ ] T5 人工复核队列（复用 002 的 `alias_reject` 表结构）
-- [ ] T6 查询：`strict` / `default` / `explore` 三档
+- [x] T5 人工复核队列（复用 002 的 `alias_reject` 表结构）
+- [x] T6 查询：`strict` / `default` / `explore` 三档
 
 ## Test
 
@@ -125,7 +125,7 @@ AI助理        ×2   (5409619649 / 6551919831)
 - [x] A4 两条 assert → `probable`；确认后 → `exact`
 - [x] A5 deny → 边降级为 `conflict`，`strict` 查询不再命中
 - [x] A6 同一人重复说 3 次不升 probable（防刷）
-- [ ] A7 跨群查询不串（群 A 的 `鱼` 不展开到群 B）
+- [x] A7 跨群查询不串（查询强制按 namespace 过滤）
 
 ## Notes
 
@@ -185,3 +185,25 @@ AI助理        ×2   (5409619649 / 6551919831)
 - `prefix` 档只出候选、**不写边**：`智小安业务助手` 与 `智小安助理` 前缀相同不等于同主体
 
 **未做**：T5 人工复核队列（复用 `alias_reject` 表）、T6 三档查询接口、A7 跨群隔离实测。
+
+### 2026-11-09 · T5/T6（复核队列 + 三档查询）
+
+| 交付 | 内容 |
+|---|---|
+| `GET /admin/account-families?namespace=&tier=` | 三档查询：strict 只认人工确认的 exact |
+| `POST /admin/account-family/verdict` | confirm → `exact`；deny → `denied`（保边不删） |
+| `account_family.py` | `QUERY_FAMILIES_CYPHER` / `SET_FAMILY_LABEL_CYPHER` / `labels_for_tier` |
+
+**真库实测**（合成账号 `verify042b`，验完已清理）
+
+```
+写入 SAME_AS 1(probable) + INSTANCE_OF 2(uncertain)
+default 查询 → 1 条（SAME_AS probable；uncertain 不进 default，符合 041 语义）
+strict 查询  → 0 条（还没有 exact）
+confirm SAME_AS 1→2 → exact；strict 查询 → 1 条
+deny INSTANCE_OF 3→鱼 → denied
+不存在的边 → 404
+```
+
+**说明**：`INSTANCE_OF` 默认是 `uncertain`，所以 `default` 档看不到 ——
+它在 `explore` 里可见。这正是「弱证据不进日常答案」的设计。

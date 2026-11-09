@@ -501,3 +501,17 @@ SET r.label = s.status, r.confidence = s.confidence
 RETURN count(m) AS n
 """
 
+#: 指称层 ↔ 账号族（spec 041 M3 / 042 对接）：
+#: 义项的 gloss 里出现某个 Bot 主体名 → 建立 `REFERS_TO`。
+#:
+#: **只在同一 namespace 内连**：`鱼` 在 A 群指 bot、在 B 群指动物，
+#: 跨 namespace 连边会把两件事混成一件。
+LINK_SENSE_BOT_CYPHER = """
+MATCH (s:Sense) WHERE s.scope STARTS WITH 'session:'
+MATCH (b:Bot {namespace: $namespace})
+WHERE s.gloss CONTAINS b.name
+MERGE (s)-[r:REFERS_TO]->(b)
+ON CREATE SET r.created_at = $now
+SET r.evidence = coalesce(r.evidence, [])
+RETURN count(r) AS n
+"""

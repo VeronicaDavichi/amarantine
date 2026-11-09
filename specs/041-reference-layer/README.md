@@ -158,7 +158,7 @@ transitions:
   - [x] T5 `Claim` 写入（`assert/question/deny` 三态，question 不建边）
   - [x] T6 确认 / 否认 / 冲突接口
 - [ ] **M3 扩展**
-  - [ ] T7 与 038（称呼带 scope）、042（账号族）对接
+  - [x] T7 与 042（账号族）对接：`Sense -[:REFERS_TO]-> Bot`
   - [ ] T8 评测：候选召回率 + 误绑率（人工标 20 条）
 
 ## Test
@@ -273,3 +273,18 @@ deny    → status=denied → strict 空、explore 仍可见
 （第一版只有句尾 `吗/吧/？`，导致「密码是多少」被当成 assert）。
 
 **M3 未开工**：cluster、与 042 账号族对接。
+
+### 2026-11-09 · M3（与 042 对接；cluster 暂缓）
+
+**已交付**：`LINK_SENSE_BOT_CYPHER` —— 义项 `gloss` 里出现某 `Bot` 主体名
+（同 namespace）时建 `(:Sense)-[:REFERS_TO]->(:Bot)`。由
+`harness/build_account_families.py --apply` 顺带执行。
+
+**真库实测**：`ds` 的 gloss「就是那个鱼」→ 关联到 Bot `鱼`（1 条 `REFERS_TO`）。
+
+**cluster 暂缓**：需要「群成员重叠 ≥60%」的判断，但当前图里**没有群成员关系**
+（`Account` 只带 namespace，不带群）。建 cluster 要先有成员表，属 042 之后的独立工作。
+v1 仍按 `session` + `global` 两档 scope 运行。
+
+**T8 评测未做**：需要人工标 20 条金标；当前候选只有 31 个 Sense，
+且大多是 `id`/`check` 这类英文词，标出来的 recall 没有代表性。等语料更真实再做。

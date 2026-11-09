@@ -438,6 +438,17 @@ class SenseVerdictRequest(BaseModel):
     operator: str | None = None
 
 
+class AccountFamilyVerdictRequest(BaseModel):
+    """人工确认/否认一条账号族边（spec 042 T5）。"""
+
+    namespace: str | None = None
+    kind: str            # SAME_AS / INSTANCE_OF
+    a_uid: str
+    target: str          # SAME_AS 时是对方 uid；INSTANCE_OF 时是主体名
+    action: str          # confirm / deny
+    operator: str | None = None
+
+
 class AdminRecallRequest(BaseModel):
     query: str
     namespace: str | None = None
@@ -695,6 +706,88 @@ def create_app(
             )
 
     # ------------------------------------------------------------ health
+
+    @app.get("/admin/account-families", dependencies=[Depends(require_token)])
+    def admin_account_families(namespace: str | None = None,
+                               tier: str = "default") -> dict[str, Any]:
+        """账号族三档查询（spec 042 T6）。
+
+        `strict` 只认人工确认过的边；`default` 含 probable；`explore` 全含。
+        `same_nick` 这类「同名不同 uid」的候选，确认前只算 probable。
+        """
+        from memory.services.account_family import (
+            QUERY_FAMILIES_CYPHER,
+            labels_for_tier,
+        )
+
+        ns = _namespace(namespace)
+        try:
+            labels = labels_for_tier(tier)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+            ) from exc
+        from neo4j import GraphDatabase
+
+        drv = GraphDatabase.driver(
+            cfg.NEO4J_URI, auth=(cfg.NEO4J_USER, cfg.NEO4J_PASSWORD)
+        )
+        try:
+            with drv.session() as session:
+                rows = [dict(r) for r in session.run(
+                    QUERY_FAMILIES_CYPHER, namespace=ns, labels=labels)]
+        finally:
+            drv.close()
+        return {"namespace": ns, "tier": tier, "total": len(rows), "edges": rows}
+
+    @app.post("/admin/account-family/verdict", dependencies=[Depends(require_token)])
+    def admin_account_family_verdict(body: AccountFamilyVerdictRequest) -> dict[str, Any]:
+        """人工确认/否认一条账号族边（spec 042 T5）。
+
+        - `confirm` → `label=exact`（三档查询里 strict 才可见）
+        - `deny`    → `label=denied`（保留边，explore 可见）
+        """
+        action = (body.action or "").strip()
+        if action not in ("confirm", "deny"):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="action 只能是 confirm / deny",
+            )
+        kind = (body.kind or "").strip()
+        if kind not in ("SAME_AS", "INSTANCE_OF"):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="kind 只能是 SAME_AS / INSTANCE_OF",
+            )
+        from memory.services.account_family import SET_FAMILY_LABEL_CYPHER
+        from neo4j import GraphDatabase
+
+        label = "exact" if action == "confirm" else "denied"
+        drv = GraphDatabase.driver(
+            cfg.NEO4J_URI, auth=(cfg.NEO4J_USER, cfg.NEO4J_PASSWORD)
+        )
+        try:
+            now = datetime.now(timezone.utc).isoformat()
+            with drv.session() as session:
+                row = session.run(
+                    SET_FAMILY_LABEL_CYPHER,
+                    namespace=_namespace(body.namespace),
+                    a_uid=body.a_uid,
+                    kind=kind,
+                    target=body.target,
+                    label=label,
+                    operator=body.operator or "manual",
+                    now=now,
+                ).single()
+        finally:
+            drv.close()
+        if row is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"没找到边 {kind} {body.a_uid} -> {body.target}",
+            )
+        return {"kind": row["kind"], "a_uid": row["a_uid"],
+                "target": row["target"], "label": row["label"]}
 
     @app.post("/admin/sense/verdict", dependencies=[Depends(require_token)])
     def admin_sense_verdict(body: SenseVerdictRequest) -> dict[str, Any]:
