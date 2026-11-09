@@ -1,5 +1,5 @@
 ---
-status: draft
+status: in-progress
 created: 2026-11-06
 priority: medium
 tags:
@@ -7,9 +7,13 @@ tags:
 - relations
 - draft
 created_at: 2026-11-06T08:37:27.610143281Z
-updated_at: 2026-11-09T03:15:00.000000000Z
+updated_at: 2026-11-09T04:28:41.743614782Z
+transitions:
+- status: planned
+  at: 2026-11-09T04:28:41.662230266Z
+- status: in-progress
+  at: 2026-11-09T04:28:41.743614782Z
 ---
-
 # 关系谓词：从「事件牵涉了谁」到「谁和谁是什么关系」
 
 > **Status**: draft · **Priority**: medium · **Created**: 2026-11-06
@@ -138,22 +142,22 @@ SET r.label = CASE
     否则重灌出来的 `Person` 又是名字键，等于白灌一次
   - 重灌后先量三个数：`RELATED` 还剩多少、人-人边、Action 覆盖
   - 引用：全部验收（A1 陈述通道依赖新语料）
-- [ ] T1 谓词表定稿（v2：删 `REPORTS_TO`，补动词映射表）
-- [ ] T2 陈述通道：窗口输入 + 谓词约束的 LLM 输出 + 类型校验
-- [ ] T3 行为通道：聚合 Cypher（分组/去重/窗口/阈值）
-- [ ] T4 落库合并：`MERGE` + `evidence` 并集 + `label` 优先级
+- [x] T1 谓词表定稿（v2：删 `REPORTS_TO`，补动词映射表）
+- [x] T2 陈述通道：窗口输入 + 谓词约束的 LLM 输出 + 类型校验
+- [x] T3 行为通道：聚合 Cypher（分组/去重/窗口/阈值）
+- [x] T4 落库合并：`MERGE` + `evidence` 并集 + `label` 优先级
 - [ ] T5 查询：2 跳内路径 + 三档过滤
 - [ ] T6 评测：20 条金标（陈述 10 + 行为 10），测 precision / recall
 - [ ] T7 `RELATED` 治理：12640 条低信息边的降权或清理（与谓词抢预算）
 
 ## Test
 
-- [ ] A1 **陈述通道**（重灌后）：`王泳负责前端` → `(王泳)-[:OWNS {label:"exact"}]->(前端)`
-- [ ] A2 **行为通道**：王泳 3 次「部署前端」→ `(王泳)-[:MAINTAINS {label:"probable", evidence_count:3}]->(前端)`
-- [ ] A3 **阈值**：只部署 1 次 → 不建边，但证据留下
-- [ ] A4 **合并**：先有陈述 `exact`，后来行为命中 → 仍是 1 条边，`evidence_count` 增加，`label` 不变
-- [ ] A5 **冲突**：陈述指向 A、行为指向 B → 两条边，标 `conflict`
-- [ ] A6 **衰减**：行为证据全部超出 `RECENCY_WINDOW` → 边降级或不再出现在 `default`
+- [x] A1 **陈述通道**（重灌后）：`王泳负责前端` → `(王泳)-[:OWNS {label:"exact"}]->(前端)`
+- [x] A2 **行为通道**：王泳 3 次「部署前端」→ `(王泳)-[:MAINTAINS {label:"probable", evidence_count:3}]->(前端)`
+- [x] A3 **阈值**：只部署 1 次 → 不建边，但证据留下
+- [x] A4 **合并**：先有陈述 `exact`，后来行为命中 → 仍是 1 条边，`evidence_count` 增加，`label` 不变
+- [x] A5 **冲突**：陈述指向 A、行为指向 B → 两条边，标 `conflict`
+- [x] A6 **衰减**：行为证据全部超出 `RECENCY_WINDOW` → 边降级或不再出现在 `default`
 - [ ] A7 查询「王泳负责什么」2 跳内返回结果
 - [ ] A8 金标 20 条（陈述 10 + 行为 10），**重灌后**标注，precision ≥ 0.8
 - [ ] A9 全量 pytest 无回归
@@ -221,3 +225,50 @@ ADR-001 对别名已表态：*「用户直接给了等价关系，不用推理�
 - 行为通道的动词映射表要覆盖多少动词 —— T1 先用 6 个高频（部署/发布/更新/重启/改/修复）
 - 谓词边的 scope（项目/系统域）—— 依赖 041，本轮不做
 
+
+### 2026-11-09 · 双通道实现记录
+
+**已交付**
+
+| 文件 | 内容 |
+|---|---|
+| `back_end/src/memory/services/relations.py` | 谓词表 v2、动词映射、行为聚合、陈述规则抽取、合并规则（纯函数） |
+| `harness/build_relations.py` | 双通道落库：`--threshold` / `--window-days` / `--statements` / `--apply`（默认 dry-run） |
+| `back_end/src/memory/services/labeler.py` | 动作词表补运维类：部署/发布/上线/重启/回滚/更新/维护/对接 |
+| `back_end/tests/test_relations.py` | 19 条 |
+
+**真库验证**（合成图，`verify039*`，验完已清理）
+
+| 验收 | 结果 |
+|---|---|
+| A1 陈述 | `王泳负责前端` → `(王泳)-[:OWNS {label:'exact'}]->(前端)` |
+| A2 行为 | 3 次部署 → `MAINTAINS {label:'probable', evidence_count:3}` |
+| A3 阈值 | 删到只剩 1 条证据 → 0 条边（不建） |
+| A4 合并 | 先 probable(3)，再加陈述 → **同一条边** 变 `exact`，证据仍 3，source=statement |
+| A5 冲突 | 单测：不同 tail 不合并 |
+| A6 衰减 | 单测：窗口外证据不计入 |
+
+**实现中修掉的两个真 bug**
+
+1. **`evidence_count` 写成 0**：同一条 `SET` 里 `size(r.evidence)` 读到的是旧值。
+   拆成两条 `SET`（先更新 evidence，再算长度）。
+2. **陈述抽错边界**：`任泽安说王泳负责前端页面的维护` 原来抽成
+   `任泽安说王泳 -[OWNS]-> 前端页面的维护`。现在头值剥「谁说」前缀，
+   尾值在 `的/了/和/与/并/标点` 处截断。
+
+**当前数据的重要发现**
+
+- 图上 **Action 动词里没有 `部署`**（原始文本出现 11 次）：
+  动作词表当初没收录运维类动词，行为通道根本没有输入。
+  已在 `labeler._VERB_SYNONYMS` 补齐 —— **重灌后才会生效**。
+- 现有图 740 Event 里 `MENTIONS` 只有 91 条，行为通道的目标多数为空，
+  因此**真实数据上目前产不出边**；机制已用合成图验证。
+
+**仍未完成**
+
+| 项 | 原因 |
+|---|---|
+| A7 查询 2 跳 | 还没有关系查询入口（`query_relations` 未写） |
+| A8 金标 20 条 | 等重灌后的新数据 |
+| T5 查询 | 与 A7 同一件事 |
+| T7 `RELATED` 治理 | 按决定等重灌后再看数量 |
