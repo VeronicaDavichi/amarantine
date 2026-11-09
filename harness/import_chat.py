@@ -131,6 +131,44 @@ def wait_job(base_url: str, token: str, job_id: str, timeout_s: int) -> dict:
     return job
 
 
+def run_selftest(base_url: str, token: str, namespace: str, path: pathlib.Path) -> dict:
+    """灌完自动跑召回自测（A5）。
+
+    自测文件格式：
+
+        [{"q": "ESB 字段映射谁改的", "expect": ["ESB"]}]
+
+    「命中」的定义：**任意一条材料的摘要里出现任意一个 expect 关键词**。
+    这是粗判据 —— 它测的是「灌进去的东西查得回来」，不是语义正确性。
+    """
+    cases = json.loads(path.read_text(encoding="utf-8"))
+    results = []
+    hits = 0
+    for case in cases:
+        q = case["q"]
+        expect = case.get("expect") or []
+        with httpx.Client(timeout=60.0) as client:
+            resp = client.post(
+                f"{base_url}/admin/recall",
+                json={"query": q, "namespace": namespace},
+                headers={"Authorization": f"Bearer {token}"},
+            )
+        if resp.status_code >= 400:
+            results.append({"q": q, "hit": False, "error": resp.text[:120]})
+            continue
+        materials = resp.json().get("materials") or []
+        text = " ".join(str(m.get("summary") or "") for m in materials)
+        hit = any(k in text for k in expect) if expect else bool(materials)
+        hits += int(hit)
+        results.append({
+            "q": q, "hit": hit, "materials": len(materials),
+            "matched": [k for k in expect if k in text],
+        })
+    return {"total": len(cases), "hits": hits,
+            "rate": round(hits / len(cases), 3) if cases else 0.0,
+            "cases": results}
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="历史聊天导入（spec 040）")
     ap.add_argument("--corpus", default="", help="单个语料 JSON")
@@ -149,6 +187,11 @@ def main() -> int:
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--wait", type=int, default=300, help="每片等待秒数")
     ap.add_argument("--report", default=str(ROOT / "back_end" / "data" / "import_report.json"))
+    ap.add_argument(
+        "--selftest",
+        default="",
+        help="召回自测 JSON（灌完后自动跑，输出命中率）",
+    )
     args = ap.parse_args()
 
     if not args.corpus and not args.corpus_dir:
@@ -247,6 +290,19 @@ def main() -> int:
             totals["dropped_events"] += job.get("dropped_events", 0)
 
         report["files"].append(entry)
+
+    if args.selftest:
+        st = pathlib.Path(args.selftest)
+        if st.exists():
+            print(f"\n=== 召回自测（{st.name}）===")
+            st_result = run_selftest(args.base_url, token, args.namespace, st)
+            for case in st_result["cases"]:
+                mark = "✓" if case.get("hit") else "✗"
+                print(f"  {mark} {case['q']} → 材料 {case.get('materials', 0)} 条")
+            print(f"  命中率 {st_result['hits']}/{st_result['total']} = {st_result['rate']}")
+            report["selftest"] = st_result
+        else:
+            print(f"⚠ 自测文件不存在，跳过：{st}")
 
     report["totals"] = totals
     report["finished_at"] = datetime.now(timezone.utc).isoformat()
