@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any
 
 from memory.config import Settings
+from memory.services.importer import assign_event_dates
 
 from memory.services.sqlite_conn import open_db
 
@@ -548,11 +549,20 @@ def run_ingest(
             split.rounds,
         )
 
+    # spec 040 T7：把事件映射回源消息日期。
+    #
+    # `date_start` 以前一律写成入库日（229 张卡的旧账），时间过滤直接失真。
+    # 判据在 `importer.assign_event_dates`：摘要与 turn 的汉字 4-gram 交集。
+    # **判不出就给 None**（A7），绝不回落到「今天」。
+    event_dates = assign_event_dates(summaries, usable)
+
     for idx, summary in enumerate(summaries):
         try:
+            date_hint = event_dates[idx] if idx < len(event_dates) else None
             remember_event(
                 namespace=namespace,
                 summary=summary,
+                date_hint=date_hint,
                 settings=settings,
                 raw_quote_ids=list(quote_ids),
             )

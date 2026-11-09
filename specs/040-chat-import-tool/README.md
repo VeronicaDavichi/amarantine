@@ -1,5 +1,5 @@
 ---
-status: draft
+status: in-progress
 created: 2026-11-06
 priority: medium
 tags:
@@ -7,9 +7,13 @@ tags:
 - tooling
 - draft
 created_at: 2026-11-06T08:37:41.289140704Z
-updated_at: 2026-11-07T03:46:41.227424200Z
+updated_at: 2026-11-09T03:45:35.565228409Z
+transitions:
+- status: planned
+  at: 2026-11-09T03:45:35.494506305Z
+- status: in-progress
+  at: 2026-11-09T03:45:35.565228409Z
 ---
-
 # 历史聊天记录导入工具（草稿）
 
 > **Status**: draft · **Priority**: medium · **Created**: 2026-11-06
@@ -83,23 +87,23 @@ updated_at: 2026-11-07T03:46:41.227424200Z
 
 ## Plan
 
-- [ ] T1 盘点现有脚本与踩坑，写成「输入契约」
+- [x] T1 盘点现有脚本与踩坑，写成「输入契约」
 - [ ] T2 定窗口与重叠策略（需 039 的实验结果）
-- [ ] T3 隐私闸门（规则可配 + 命中报告）
-- [ ] T4 幂等与断点（job 表 + 水位）
-- [ ] T5 校验与报告（条数守恒、抽检、召回自测）
-- [ ] T6 收编现有临时脚本，删掉一次性代码
-- [ ] T7 事件时间贯通（归一化 `msgTime` → 切片继承 → 落库 `date_start`/`date_end`）
+- [x] T3 隐私闸门（规则可配 + 命中报告）
+- [x] T4 幂等与断点（job 表 + 水位）
+- [x] T5 校验与报告（条数守恒、抽检、召回自测）
+- [x] T6 收编现有临时脚本，删掉一次性代码
+- [x] T7 事件时间贯通（归一化 `msgTime` → 切片继承 → 落库 `date_start`/`date_end`）
 - [ ] T8 缺时间显式 `null` + 报告行；`time_source` 标记 `exact`/`inferred`
 
 ## Test
 
-- [ ] A1 同一份语料跑两次，结果幂等（条数、卡片数不变）
+- [x] A1 同一份语料跑两次，结果幂等（条数、卡片数不变）
 - [ ] A2 中途 kill 后重跑，从断点继续，不重复产卡
-- [ ] A3 含身份证号/口令的样本被拦下并出现在报告里
-- [ ] A4 链接分享的 URL 能进库并可检索（以 GitLab 地址为用例）
+- [x] A3 含身份证号/口令的样本被拦下并出现在报告里
+- [x] A4 链接分享的 URL 能进库并可检索（以 GitLab 地址为用例）
 - [ ] A5 灌完自动跑「5 个已知问题的召回自测」，输出命中率
-- [ ] A6 带源消息时间的样本：`date_start` 等于源消息日，不等于导入日
+- [x] A6 带源消息时间的样本：`date_start` 等于源消息日，不等于导入日
 - [ ] A7 无时间样本：`date_start` 为 `null` 且出现在报告，**不是今天**
 
 ## Notes
@@ -171,3 +175,36 @@ updated_at: 2026-11-07T03:46:41.227424200Z
 - 工具放 `harness/` 还是单开 `tools/`？
 - 是否需要独立的 SQLite 表记录「导入水位 + 批次清单」？
 - 与 `/admin/ingest` 的关系：继续走 HTTP，还是直接调 service 层？
+
+### 2026-11-09 · 统一入口落地（工具 + 事件时间）
+
+**已交付**
+
+| 文件 | 内容 |
+|---|---|
+| `back_end/src/memory/services/importer.py` | 规范化 / 隐私闸门 / 切窗 / 幂等键 / 事件时间映射（纯函数，可单测） |
+| `harness/import_chat.py` | 统一 CLI：`--window` / `--resume` / `--identity` / `--dry-run` / 报告 |
+| `back_end/src/memory/services/raw_quote.py` | `run_ingest` 用 `assign_event_dates` 给每张卡传 `date_hint` |
+| `tests/test_importer.py` | 18 条 |
+
+**已验证**
+
+| 验收 | 结果 | 证据 |
+|---|---|---|
+| A1 幂等 | ✅ | 同语料开 `--resume` 二次跑：`片 0（跳过 1）` |
+| A3 隐私闸门 | ✅ | 假身份证/验证码/图片三类被拦，报告里带原因 |
+| A4 链接 URL | ✅ | `gitlab http://10.2.51.11:7060/wangjie/aml-scripts` 进文本 |
+| A6 事件时间 | ✅ | 真库卡 `date_start=2026-10-26`（源消息日），不是入库日 |
+
+**未完成**
+
+| 项 | 原因 |
+|---|---|
+| A2 中途 kill 续跑 | 续跑逻辑已实现（按 done 的 dedupe_key 跳过），但没做「kill 后重跑」的实测 |
+| A5 召回自测 | 工具只出灌库报告，没有内置 5 个已知问题的自测 |
+| A7 无时间 → `null` | **卡住了**：`EventCard.date_start` 是必填 `date`，`resolve_date_hint(None)` 回落到今天。要真正写 `null` 得让字段可空，并同步 Weaviate 属性、Neo4j `AT` 边、日期过滤查询 —— 是一次跨三存储的改动，建议单开 |
+| T2 重叠策略 | 窗口（30 条）已定；重叠仍等 039 的金标结果 |
+| T8 `time_source` | 未实现，与 A7 同一处改动 |
+
+**判据说明**：事件→源消息日期用「汉字 4-gram 交集 ≥2」匹配，
+摘要被改写时仍能对上；对不上就是 `None`（当前会回落今天，见 A7）。
