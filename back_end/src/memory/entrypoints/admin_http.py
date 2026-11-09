@@ -686,6 +686,42 @@ def create_app(
 
     # ------------------------------------------------------------ health
 
+    @app.get("/admin/senses", dependencies=[Depends(require_token)])
+    def admin_senses(term: str, scope: str, tier: str = "default") -> dict[str, Any]:
+        """按 `tier` 查某字面在某 scope 内的义项（spec 041）。
+
+        `tier` 三档：`strict` 只 exact；`default` 含 probable；`explore` 全含。
+        **默认 `default`** —— 日常问答要能看到「疑似」，但破坏性操作必须传 `strict`。
+        """
+        from memory.services.reference import QUERY_SENSES_CYPHER, TIER_STATUSES
+
+        statuses = TIER_STATUSES.get(tier)
+        if statuses is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"未知 tier: {tier}（可选 {sorted(TIER_STATUSES)}）",
+            )
+        from neo4j import GraphDatabase
+
+        drv = GraphDatabase.driver(
+            cfg.NEO4J_URI, auth=(cfg.NEO4J_USER, cfg.NEO4J_PASSWORD)
+        )
+        try:
+            with drv.session() as session:
+                rows = [
+                    dict(r) for r in session.run(
+                        QUERY_SENSES_CYPHER,
+                        term=term,
+                        scope=scope,
+                        statuses=list(statuses),
+                    )
+                ]
+        finally:
+            drv.close()
+        for row in rows:
+            row["evidence_count"] = len(row.get("evidence") or [])
+        return {"term": term, "scope": scope, "tier": tier, "senses": rows}
+
     @app.get("/health")
     def health() -> dict[str, Any]:
         """不需要认证：给探活用。只报「活着」，不报内部状态。"""

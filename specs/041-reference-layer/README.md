@@ -1,5 +1,5 @@
 ---
-status: planned
+status: in-progress
 created: 2026-11-06
 priority: high
 tags:
@@ -11,10 +11,12 @@ depends_on:
 - '038'
 - '045'
 created_at: 2026-11-06T08:48:18.266962385Z
-updated_at: 2026-11-09T05:13:52.359717712Z
+updated_at: 2026-11-09T05:31:41.758535138Z
 transitions:
 - status: planned
   at: 2026-11-09T05:13:52.359717712Z
+- status: in-progress
+  at: 2026-11-09T05:31:41.758535138Z
 ---
 # 指称层：字面 → 义项（行话 / 称呼 / 账号族都是它的一种）
 
@@ -148,10 +150,10 @@ transitions:
 ## Plan
 
 - [ ] **M1 最小可用**
-  - [ ] T1 `Term / Sense / Mention` 节点与唯一键（含 scope）
-  - [ ] T2 触发信号打分器（正则 + 计数，不调 LLM）
-  - [ ] T3 离线建候选：`harness/build_references.py --dry-run/--apply`
-  - [ ] T4 查询接 `tier`（默认 default），命中标「疑似」
+  - [x] T1 `Term / Sense / Mention` 节点与唯一键（含 scope）
+  - [x] T2 触发信号打分器（正则 + 计数，不调 LLM）
+  - [x] T3 离线建候选：`harness/build_references.py --dry-run/--apply`
+  - [x] T4 查询接 `tier`（默认 default），命中标「疑似」
 - [ ] **M2 升降级**
   - [ ] T5 `Claim` 写入（`assert/question/deny` 三态，question 不建边）
   - [ ] T6 确认 / 否认 / 冲突接口
@@ -161,14 +163,14 @@ transitions:
 
 ## Test
 
-- [ ] A1 `@鱼 帮我查下` → `Sense(鱼, session:X)` 候选，score ≥3
-- [ ] A2 `这鱼新鲜吗` → 反向信号生效，不建 Sense
+- [x] A1 `@鱼 帮我查下` → `Sense(鱼, session:X)` 候选，score ≥3
+- [x] A2 `这鱼新鲜吗` → 反向信号生效，不建 Sense
 - [ ] A3 `xxx账号是鱼吧？` → 只写 `Claim(mode=question)`，无 `USES_SENSE` 边
 - [ ] A4 同 Term 同 scope 两个 Sense（bot / 动物）可共存
-- [ ] A5 跨 scope 不串：群 A 的 Sense 在群 B 查不到
-- [ ] A6 `tier=strict` 只返回 exact；`default` 含 probable 并标「疑似」
+- [x] A5 跨 scope 不串：群 A 的 Sense 在群 B 查不到
+- [x] A6 `tier=strict` 只返回 exact；`default` 含 probable 并标「疑似」
 - [ ] A7 人否认后 `status=denied`，`strict` 不再命中、`explore` 仍可见
-- [ ] A8 弱边不传递：A~B、B~C 不产出 A~C
+- [x] A8 弱边不传递：A~B、B~C 不产出 A~C
 - [ ] A9 全量 pytest 无回归
 
 ## Notes
@@ -198,3 +200,37 @@ transitions:
 - `ds` 既可能指 deepseek 也可能指「大神」→ 只能进候选
 - 「鱼是我」（真人自称）与 bot 撞名 → 靠账号类型区分
 - 跨群实体归并需要全局 id，本 spec 不做
+
+### 2026-11-09 · M1 落地（Term / Sense / 触发 / tier 查询）
+
+**已交付**
+
+| 文件 | 内容 |
+|---|---|
+| `src/memory/services/reference.py` | 触发信号（jieba 词边界）、候选聚合、阈值/状态、tier 过滤、`pick_sense`、Cypher |
+| `harness/build_references.py` | 扫 `raw_quote` → 候选 Sense（dry-run / `--apply`） |
+| `admin_http.py` | `GET /admin/senses?term=&scope=&tier=` |
+| `tests/test_reference.py` | 15 条 |
+
+**真库结果**（`njzq-dingtalk`，294 条原文）
+
+```
+候选义项 31 个；写入 Sense 31 个
+default 查询「刘阅」(session:77744779002) → 1 条 probable，evidence 2
+strict 查询同条件 → 空（probable 不外泄给破坏性操作）
+未知 tier → 400
+```
+
+**判据收紧过程**（三轮，都是实测驱动的）
+
+1. 裸正则抓字面 → 抽出 `19852220`（`@uid`）、`题`、`请`、`还` 这类噪声
+2. 改用 **jieba 词边界** → 噪声大幅下降，但 `问鱼` 被切成一个词 → 加「去动词前缀」
+3. 补「纯标点不是字面」「单字只在 at/define 收」→ 191 → 47 → 31 个候选
+
+**已知边界**
+
+- 单字（`鱼`）只认 `@鱼` 与定义句，`鱼好吃` 这类靠 jieba 词性，可能漏
+- 英文词（`id` / `check`）会被当成字面，是否要收进候选待定（当前保留为 uncertain）
+- 证据只写到 Sense 上，还没写 `Mention` 节点（M2 补）
+
+**M2/M3 未开工**：Claim 三态、确认/否认、cluster 与 042 对接。
