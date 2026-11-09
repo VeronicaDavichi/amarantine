@@ -50,6 +50,35 @@ from memory.services.importer import (  # noqa: E402
 )
 
 
+def senders_of(chunk: list[dict]) -> set[str]:
+    """从 turn 文本里取发言人（`王洁：内容` → `王洁`）。"""
+    out: set[str] = set()
+    for turn in chunk:
+        text = str(turn.get("text") or "")
+        if "：" in text:
+            name = text.split("：", 1)[0].strip()
+            if 2 <= len(name) <= 6:
+                out.add(name)
+    return out
+
+
+def roster_for(chunk: list[dict], idents: list) -> list:
+    """只把**本片出现的人**放进名册。
+
+    不过滤的代价：474 个联系人全被建成 `Person` 与 `Account`（实测），
+    图被灌进一堆从没出现过的人，`OPERATED_BY` 边也凭空多 474 条。
+    """
+    if not idents:
+        return []
+    senders = senders_of(chunk)
+    picked = [i for i in idents if set(i.candidate_names()) & senders]
+    return [
+        {"uid": i.uid, "nick": i.nick, "remark": i.remark, "real_name": i.real_name,
+         "platform": i.platform, "source": "identity_file"}
+        for i in picked
+    ]
+
+
 def load_corpus(path: pathlib.Path) -> dict:
     data = json.loads(path.read_text(encoding="utf-8"))
     if "messages" not in data:
@@ -212,17 +241,12 @@ def main() -> int:
     if not args.dry_run and not token:
         raise SystemExit("✗ 没配 ADMIN_TOKEN")
 
-    roster: list | None = None
+    idents: list = []
     if args.identity:
-        from memory.services.identity import from_json_file, split_roster
+        from memory.services.identity import from_json_file
 
         idents = from_json_file(args.identity)
-        if idents:
-            names, _, _ = split_roster(idents)
-            roster = [{"uid": i.uid, "nick": i.nick, "remark": i.remark,
-                       "real_name": i.real_name, "platform": i.platform,
-                       "source": "identity_file"} for i in idents] or names
-            print(f"身份记录 {len(idents)} 条（名册 {len(names)} 个名字）")
+        print(f"身份记录 {len(idents)} 条（按每片发言人过滤后再提交）")
 
     db_path = pathlib.Path(settings.DATABASE_URL.replace("sqlite:///", "")).expanduser()
     if not db_path.is_absolute():
@@ -263,8 +287,9 @@ def main() -> int:
                 "turns": chunk,
                 "namespace": args.namespace,
             }
-            if roster:
-                payload["roster"] = roster
+            chunk_roster = roster_for(chunk, idents)
+            if chunk_roster:
+                payload["roster"] = chunk_roster
             if args.dry_run:
                 print(f"  [{idx}] dry-run {len(chunk)} 条 | {key}")
                 entry["chunks"].append({"index": idx, "key": key, "turns": len(chunk),

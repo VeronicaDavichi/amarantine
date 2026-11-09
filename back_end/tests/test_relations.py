@@ -145,3 +145,23 @@ def test_merge_keeps_conflicting_targets_separate() -> None:
     b = R.RelationClaim(head="王泳", predicate="OWNS", tail="B", label="probable")
     merged = R.merge_claims([a, b])
     assert {c.tail for c in merged} == {"A", "B"}
+
+
+def test_statement_rejects_prose_with_function_words() -> None:
+    """实测假阳性：`第一个接口是` 与 `的接口需要前端轮询来` 不该成边。"""
+    text = "第一个接口是中登查询，依赖它的接口需要前端轮询来获取结果"
+    claims = R.extract_statements(text)
+    heads = {c.head for c in claims}
+    tails = {c.tail for c in claims}
+    assert "第一个接口是" not in heads | tails
+    assert "的接口需要前端轮询来" not in heads | tails
+
+
+def test_statement_rejects_long_phrase_names() -> None:
+    """超过 8 个字的一定是短语，不是实体名。"""
+    assert R.extract_statements("这个特别长的东西依赖那个也很长的东西") == []
+
+
+def test_depends_on_requires_dependency_verb() -> None:
+    """`调用` 不算依赖：`调用了接口` 是动作。"""
+    assert R.extract_statements("前端调用了中登查询") == []

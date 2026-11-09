@@ -147,7 +147,9 @@ _STATEMENT_PATTERNS: tuple[tuple[str, str], ...] = (
     ("OWNS", r"(?P<head>[\u4e00-\u9fa5A-Za-z0-9]{2,8})\s*(?:负责|牵头|主管)\s*(?P<tail>[\u4e00-\u9fa5A-Za-z0-9]{2,10})"),
     ("MAINTAINS", r"(?P<head>[\u4e00-\u9fa5A-Za-z0-9]{2,8})\s*(?:维护|对接)\s*(?P<tail>[\u4e00-\u9fa5A-Za-z0-9]{2,10})"),
     ("COLLABORATES_WITH", r"(?P<head>[\u4e00-\u9fa5]{2,4})\s*(?:和|与|跟)\s*(?P<tail>[\u4e00-\u9fa5]{2,4})\s*(?:一起|共同)"),
-    ("DEPENDS_ON", r"(?P<head>[\u4e00-\u9fa5A-Za-z0-9]{2,10})\s*(?:依赖|依赖了|调用)\s*(?P<tail>[\u4e00-\u9fa5A-Za-z0-9]{2,10})"),
+    # 只认「依赖」。`调用` 太常见（「调用了接口」是动作不是依赖），实测会抽出
+    # `第一个接口是 -[DEPENDS_ON]-> 中登查询` 这种垃圾边。
+    ("DEPENDS_ON", r"(?P<head>[\u4e00-\u9fa5A-Za-z0-9]{2,12})\s*依赖\s*(?P<tail>[\u4e00-\u9fa5A-Za-z0-9]{2,12})"),
 )
 
 
@@ -179,6 +181,30 @@ def _clean_tail(raw: str) -> str:
     return text[:cut].strip()
 
 
+#: 名字里不该出现的虚词/动词：出现就说明抽到的是短语，不是实体名。
+_NAME_STOP_CHARS = frozenset("的了是需要来去进行通过获取使用你他她我")
+
+#: 名字不能以这些字开头（「的接口」「是第一个」）
+_NAME_BAD_PREFIX = frozenset("的是了和与跟而但也就在把被让给")
+
+#: 名字最长几个字（实体名很少超过 8 个字）
+_NAME_MAX_LEN = 8
+
+
+def _looks_like_name(text: str) -> bool:
+    """粗判一个抽取结果是不是「像实体名」。
+
+    规则版陈述通道的防护：宁可漏，也不要把整句短语写成关系边。
+    实测反例：`第一个接口是` / `的接口需要前端轮询来` / `获取结果`。
+    """
+    name = (text or "").strip()
+    if len(name) < 2 or len(name) > _NAME_MAX_LEN:
+        return False
+    if name[0] in _NAME_BAD_PREFIX:
+        return False
+    return not any(ch in _NAME_STOP_CHARS for ch in name)
+
+
 def extract_statements(text: str) -> list[RelationClaim]:
     """从文本抽关系陈述（规则版，`label=exact`）。
 
@@ -195,7 +221,7 @@ def extract_statements(text: str) -> list[RelationClaim]:
             tail = _clean_tail(match.group("tail"))
             if not head or not tail or head == tail:
                 continue
-            if len(head) < 2 or len(tail) < 2:
+            if not _looks_like_name(head) or not _looks_like_name(tail):
                 continue
             out.append(
                 RelationClaim(
