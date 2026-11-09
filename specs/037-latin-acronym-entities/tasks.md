@@ -48,9 +48,31 @@ phase: tasks
 | A5 `陈柏林询问…` → `陈柏林` | 不变行为 | 复用 035 用例 |
 | A6 真库 `MENTIONS→ESB` 计数 > 0 | REQ-1、REQ-4 | 真库脚本 |
 
+## 验收结果（2026-11-09 复核）
+
+| 验收 | 结果 | 证据 |
+|---|---|---|
+| A1 `ESB` 进实体 | ✅ | `extract_entities("ESB接口返回字段的数据字典")` → `[('ESB','topic')]` |
+| A2 `API` 被停用词挡 | ✅ | 同句 → `[]` |
+| A3 `项目A` 只一条 | ✅ | `[('项目A','topic')]`（无拆分、无重复） |
+| A4 PyCharm / Kafka / MQ / CIF | ✅ | 各 1 条 topic |
+| A5 名册回归 | ✅ | 名册含陈柏林时 → `[('陈柏林','person')]` |
+| A6 真库 | ✅ | 临时 ns 现灌：`ESB` / `Kafka` 各 1 节点、`MENTIONS` 2 条；`API` 节点 0 |
+
+说明：A6 用临时 namespace 现灌验证（既有卡片是 11-06 灌的，早于本实现，图里没有 ESB 节点属预期）。
+验证后临时数据已清理（6 卡 / 10 节点 / job 1，无残留）。
+
+复核命令：
+
+```bash
+cd back_end
+.venv-linux/bin/python3 -m pytest tests/test_acronym_entities.py -q   # 24 passed
+.venv-linux/bin/python3 -m pytest -q                                  # 1262 passed
+```
+
 ## 完成定义（DoD）
 
-- [ ] A1–A6 全绿，全量 `pytest` 无回归（尤其 035 的名册用例）—— 目标模块 86 passed；全量为 1258 passed / 4 failed，那 4 条是本地 `.env` 开 `RERANK_ENABLED=true` 导致（去掉 .env 即全绿），与本 spec 无关
+- [x] A1–A6 全绿，全量 `pytest` 无回归：**1262 passed / 0 failed**（早前记录的 4 条失败是本地 `.env` 开了 `RERANK_ENABLED=true`，已不复现）
 - [x] `harness/check_guide.py` 仍 `OK`
 - [x] `check_spec.py` 对本 spec 报 PASS（多文件模式）
 - [x] 真库报告：ESB 节点 + 至少一条 `MENTIONS` 边（ESB/Kafka 各 1 节点 1 边）

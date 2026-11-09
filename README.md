@@ -4,8 +4,8 @@
 > **开发中 · 未完成（WIP）**
 >
 > 这个项目还在施工：接口、数据模型、spec 都可能变，**不保证对外稳定，不要用于生产**。
-> 当前状态：1223 个测试全绿、43 个 spec；但还有 **4 项有 spec 未开工 + 4 项草稿**
-> （`date_start` 缺陷已并入 [040](specs/040-chat-import-tool/)，见[已知限制](#已知限制)）。
+> 当前状态：1262 个测试全绿、44 个 spec；已实现 036（切分不丢）/ 037（英文实体），
+> 还剩 **2 项有 spec 未开工 + 4 项草稿**（`date_start` 缺陷已并入 [040](specs/040-chat-import-tool/)，见[已知限制](#已知限制)）。
 
 > 给大模型用的长期记忆：**MCP 工具（LLM 侧）+ 本地管理通道（人侧）**。
 > 事件卡片进向量库与图库双写，支持召回、遗忘、复核、反馈的完整闭环。
@@ -99,7 +99,7 @@ docker-compose.yml
 ### 质量
 
 ```bash
-cd back_end && uv run pytest -q        # 1223 passed
+cd back_end && uv run pytest -q        # 1262 passed
 python3 ../harness/check_spec.py       # spec 骨架一致（43 个）
 python3 ../harness/check_guide.py      # 文档与代码一致
 ```
@@ -110,10 +110,15 @@ python3 ../harness/check_guide.py      # 文档与代码一致
 
 | 项 | spec | 影响 |
 |---|---|---|
-| 批次切分超上限会静默丢尾部事件 | [036](specs/036-split-truncation-data-loss/) | 灌数据可能漏事件 |
-| 英文缩写不进图（ESB / Kafka / PyCharm） | [037](specs/037-latin-acronym-entities/) | 系统名检索不到 |
 | 称呼不归一（`王老师` 与实名是两个节点） | [038](specs/038-appellation-normalization/) | 「谁负责 X」查不准 |
 | 身份判定只到昵称，未用 uid / 备注 | [043](specs/043-identity-source-priority/) | 同名多账号分不清 |
+
+**已实现（供对照）**
+
+| 项 | spec |
+|---|---|
+| 切分超上限按行二分，不再静默丢尾部 | [036](specs/036-split-truncation-data-loss/) |
+| 英文词形（ESB / Kafka / PyCharm）成为实体 | [037](specs/037-latin-acronym-entities/) |
 
 **已知缺陷**
 
@@ -133,7 +138,7 @@ python3 ../harness/check_guide.py      # 文档与代码一致
 
 > [!WARNING]
 > **Work in progress** — APIs and data models are still changing. Tests are green
-> (1223 passing), but this is **not production-ready** and carries several known gaps.
+> (1262 passing), but this is **not production-ready** and carries several known gaps.
 
 **amarantine** is a self-hosted long-term memory service for LLMs.
 
