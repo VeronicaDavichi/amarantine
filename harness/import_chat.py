@@ -139,6 +139,11 @@ def main() -> int:
     ap.add_argument("--window", type=int, default=30, help="每片多少条（默认 30）")
     ap.add_argument("--identity", default="", help="身份记录 JSON（spec 043）")
     ap.add_argument("--prefix", default="dt", help="dedupe_key 前缀")
+    ap.add_argument(
+        "--suffix",
+        default="",
+        help="dedupe_key 后缀。上一片 failed 时用它重试（failed 也做幂等）",
+    )
     ap.add_argument("--base-url", default="http://127.0.0.1:8765")
     ap.add_argument("--resume", action="store_true", help="跳过已 done 的窗口")
     ap.add_argument("--dry-run", action="store_true")
@@ -201,6 +206,8 @@ def main() -> int:
 
         for idx, chunk in enumerate(chunks, 1):
             key = dedupe_key_for(cid, chunk, idx, prefix=args.prefix)
+            if args.suffix:
+                key = f"{key}-{args.suffix}"
             if f"{args.namespace}|{key}" in already:
                 print(f"  [{idx}] 已 done，跳过 {key}")
                 totals["skipped"] += 1

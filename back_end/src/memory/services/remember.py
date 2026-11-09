@@ -147,6 +147,8 @@ def remember_event(
     namespace: str,
     summary: str,
     date_hint: str | None = None,
+    #: 消息发送时间（spec 040）。相对时间（「昨天」）以它为基准换算
+    msg_time: datetime | None = None,
     pinned: bool = False,
     important: bool = False,
     emotion_intensity: float = 0.0,
@@ -217,7 +219,17 @@ def remember_event(
     vocab_version = current_version(settings)
 
     # 2) 时间解析（规则层）
-    date_range = resolve_date_hint(date_hint, today=base_day)
+    # spec 040：相对时间（昨天/上周）必须锚在**消息时间**上，不是导入日。
+    # 10-30 发的「昨天开的会」是 10-29，不是「今天往前一天」。
+    anchor_day = msg_time.date() if msg_time is not None else base_day
+    date_range = resolve_date_hint(date_hint, today=anchor_day)
+
+    # 事件时间来源，按可信度从高到低：
+    # stated（原话给日期）> relative（按消息时间换算）> msg_ts（消息时间当事件时间）
+    # > imported（都判不出，用导入时间 —— 明确标出来，不假装精确）
+    from memory.services.importer import time_source_for
+
+    time_source = time_source_for(date_hint, msg_time)
 
     # 3) 护栏（需要 24h 计数）
     counter = counter or DirectiveCounter(_db_path(settings))
@@ -282,6 +294,9 @@ def remember_event(
         event_id=event_id,
         date_start=date_range.start,
         date_end=date_range.end,
+        # spec 040：消息时间与事件时间分开存，来源可追溯（不进 event_id 哈希）
+        msg_time=msg_time,
+        time_source=time_source,
         types=labels.types,
         entities=labels.entities,
         actions=list(getattr(labels, "actions", []) or []),

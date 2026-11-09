@@ -126,9 +126,78 @@ def dedupe_key_for(cid: str, turns: Sequence[dict[str, Any]], index: int,
     return f"{prefix}:{cid}:{start}:{end}:c{index:02d}"
 
 
+#: 相对时间词（与 `_RELATIVE_TIME` 同源，用于判定 time_source）
+_RELATIVE_WORDS = (
+    "前天", "昨天", "今天", "明天", "后天",
+    "上周", "本周", "这周", "下周", "上个月", "这个月", "月初", "月底",
+)
+
+
+def time_source_for(date_hint: str | None, msg_time: object | None) -> str:
+    """事件时间从哪来（spec 040）。
+
+    ============  ==============================================
+    值             条件
+    ============  ==============================================
+    ``relative``  原话是相对时间（昨天/上周），按消息时间换算
+    ``stated``    原话给了明确日期（10月28日 / 2026-10-28）
+    ``msg_ts``    没给时间，用消息发送时间
+    ``imported``  连消息时间都没有 → 用导入时间（明确标出）
+    ============  ==============================================
+
+    **`relative` 与 `stated` 的区别不只是措辞**：前者依赖消息时间做换算，
+    后者与消息无关；标错会让「为什么这张卡是 10-29」失去可解释性。
+    """
+    text = (date_hint or "").strip()
+    if text:
+        return "relative" if any(w in text for w in _RELATIVE_WORDS) else "stated"
+    return "msg_ts" if msg_time is not None else "imported"
+
+
 def _cjk_grams(text: str, n: int = 4) -> set[str]:
     chars = "".join(c for c in (text or "") if "\u4e00" <= c <= "\u9fa5")
     return {chars[i:i + n] for i in range(0, max(0, len(chars) - n + 1))}
+
+
+#: 摘要里常见的相对时间词。命中才把 `date_hint` 传给服务端换算 ——
+#: 换算的基准是**消息时间**，不是导入日（spec 040）。
+_RELATIVE_TIME = re.compile(
+    r"(前天|昨天|今天|明天|后天|上周[一二三四五六日天]?|上个?星期[一二三四五六日天]?|"
+    r"本周[一二三四五六日天]?|这周[一二三四五六日天]?|上个月|这个月|月初|月底)"
+)
+
+
+def relative_time_hint(text: str) -> str | None:
+    """摘要里出现相对时间词时返回它（交给服务端按消息时间换算）。"""
+    match = _RELATIVE_TIME.search(text or "")
+    return match.group(1) if match else None
+
+
+def assign_event_msg_times(
+    parts: Sequence[str],
+    turns: Sequence[dict[str, Any]],
+    *,
+    min_overlap: int = 2,
+) -> list[str | None]:
+    """与 `assign_event_dates` 同判据，但返回**完整消息时间**（含时分秒）。
+
+    事件时间可能不等于消息时间（10-30 的消息在说「昨天」），
+    所以把消息时间单独带出去，服务端再决定事件日。
+    """
+    prepared = [(_cjk_grams(t.get("text") or ""), t.get("ts")) for t in turns]
+    out: list[str | None] = []
+    for part in parts:
+        grams = _cjk_grams(part)
+        best_ts: str | None = None
+        best_score = 0
+        for turn_grams, ts in prepared:
+            if not ts:
+                continue
+            score = len(grams & turn_grams)
+            if score > best_score:
+                best_ts, best_score = ts, score
+        out.append(best_ts if best_ts and best_score >= min_overlap else None)
+    return out
 
 
 def assign_event_dates(

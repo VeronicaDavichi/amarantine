@@ -93,6 +93,9 @@ SCHEMA_PROPERTIES: list[dict[str, Any]] = [
     {"name": "vocab_version", "dataType": ["text"]},
     {"name": "ingested_at", "dataType": ["date"]},
     {"name": "observed_at", "dataType": ["date"]},
+    # spec 040：消息时间与事件时间分开存，来源可追溯
+    {"name": "msg_time", "dataType": ["date"]},
+    {"name": "time_source", "dataType": ["text"]},
     # 护栏降级留痕（A33）
     {"name": "anomaly", "dataType": ["text"]},
     # 派生片段层软删标记（事件卡本身永不软删）
@@ -158,6 +161,7 @@ _BACKFILL_FIELDS = frozenset(
         "resolves",
         "alias_claims",
         "date_start",
+        "time_source",
         "date_end",
         "conclusion",
         "conclusion_tokens",
@@ -223,6 +227,9 @@ def to_properties(
         props["user_directive"] = card.user_directive
     if card.observed_at is not None:
         props["observed_at"] = _rfc3339(card.observed_at)
+    if card.msg_time is not None:
+        props["msg_time"] = _rfc3339(card.msg_time)
+    props["time_source"] = card.time_source
     if card.review_verdict is not None:
         props["review_verdict"] = card.review_verdict
     if card.reviewer is not None:

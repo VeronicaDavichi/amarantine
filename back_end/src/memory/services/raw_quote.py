@@ -17,12 +17,12 @@ import hashlib
 import logging
 import sqlite3
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
 from memory.config import Settings
-from memory.services.importer import assign_event_dates
+from memory.services.importer import assign_event_msg_times, relative_time_hint
 
 from memory.services.sqlite_conn import open_db
 
@@ -479,6 +479,24 @@ def normalize_turn(raw: Any) -> dict[str, Any] | None:
     }
 
 
+def _parse_ts(value: str | None) -> datetime | None:
+    """把语料里的 `YYYY-MM-DD HH:MM:SS` 解析成**带时区**的 datetime。
+
+    聊天记录里的时间都是本地时间（`+08:00`）。必须带时区 —— Weaviate 的
+    date 属性只收 RFC3339，裸 datetime 会被 422 拒掉（实测报错：
+    `invalid date property 'msg_time' ... requires a string with a RFC3339`）。
+    """
+    if not value:
+        return None
+    local = timezone(timedelta(hours=8))
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(value.strip(), fmt).replace(tzinfo=local)
+        except ValueError:
+            continue
+    return None
+
+
 def run_ingest(
     *,
     job_id: str,
@@ -554,15 +572,24 @@ def run_ingest(
     # `date_start` 以前一律写成入库日（229 张卡的旧账），时间过滤直接失真。
     # 判据在 `importer.assign_event_dates`：摘要与 turn 的汉字 4-gram 交集。
     # **判不出就给 None**（A7），绝不回落到「今天」。
-    event_dates = assign_event_dates(summaries, usable)
+    # spec 040：消息时间与事件时间分开传。
+    #
+    # - `msg_time`：这条事件来自哪条消息（用于相对时间换算，也单独存）
+    # - `date_hint`：摘要里的相对时间词（`昨天`/`上周`），由服务端按 msg_time 换算
+    #
+    # 原来的写法把「消息日期」当 `date_hint` 传，混淆了两件事：
+    # 10-30 的消息说「昨天」，事件应该是 10-29，不是 10-30。
+    event_msg_times = assign_event_msg_times(summaries, usable)
 
     for idx, summary in enumerate(summaries):
         try:
-            date_hint = event_dates[idx] if idx < len(event_dates) else None
+            raw_ts = event_msg_times[idx] if idx < len(event_msg_times) else None
+            msg_time = _parse_ts(raw_ts)
             remember_event(
                 namespace=namespace,
                 summary=summary,
-                date_hint=date_hint,
+                date_hint=relative_time_hint(summary),
+                msg_time=msg_time,
                 settings=settings,
                 raw_quote_ids=list(quote_ids),
             )

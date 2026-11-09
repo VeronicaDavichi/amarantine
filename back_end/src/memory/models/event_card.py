@@ -122,6 +122,16 @@ class EventCard(BaseModel):
 
     # ---------- 可选（17） ----------
     date_end: date | None = None
+    #: 消息的发送时间（spec 040）。**与事件时间不是一回事**：
+    #: 10-30 发的消息可能在说「昨天开的会」，事件日是 10-29。
+    msg_time: datetime | None = None
+    #: 事件时间是怎么来的（spec 040）：
+    #:
+    #: - ``stated``   原话明确给了日期（10月28日 / 2026-10-28）
+    #: - ``relative`` 相对时间按**消息时间**换算（昨天 / 上周）
+    #: - ``msg_ts``  用消息发送时间当事件时间
+    #: - ``imported`` 都判不出 → 用导入时间，并明确标出来
+    time_source: Literal["stated", "relative", "msg_ts", "imported"] = "imported"
     conclusion: str | None = None
     unresolved: list[str] = Field(default_factory=list)
     resolves: list[EventId] = Field(default_factory=list)
