@@ -351,7 +351,11 @@ def search_by_entities(
                 #
                 # 一个别名可能解析出多个主人（`三哥` 的歧义），全部带上 ——
                 # 宁可多召回，也不能替用户挑一个。
-                resolved = _clean_names([h.canonical for h in alias_hits])
+                # **双向**都算主人（spec 038 A5）：
+                # 查「王泳」要能召回「王老师」名下的卡，反之亦然。
+                resolved = _clean_names(
+                    [h.canonical for h in alias_hits] + [h.alias for h in alias_hits]
+                )
                 if resolved:
                     alias_hosts = list(resolved)
                     all_names = _clean_names(all_names + resolved)

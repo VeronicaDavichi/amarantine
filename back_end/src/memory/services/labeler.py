@@ -313,6 +313,32 @@ _ALIAS_PATTERN = re.compile(
     r"([\u4e00-\u9fa5A-Za-z0-9_]{2,12})"
 )
 
+#: 称呼声明句式（spec 038）：`称呼王泳为王老师` / `叫他王老师` / `王泳（王老师）`。
+#:
+#: **与 `_ALIAS_PATTERN` 的区别**：等价词（`就是`/`也叫`）说的是「同一类东西」，
+#: 称呼句式说的是「这个人被这样叫」。前者 alias/canonical 都是泛实体，
+#: 后者 canonical 是**真人**、alias 是**称呼** —— 方向必须固定。
+#:
+#: 组顺序即 `(canonical, alias)` 的取值顺序。
+_APPELLATION_PATTERNS: tuple[re.Pattern[str], ...] = (
+    # 称呼王泳为王老师
+    re.compile(r"称呼\s*([\u4e00-\u9fa5]{2,4})\s*为\s*([\u4e00-\u9fa5]{2,5})"),
+    # 大家都叫他王老师 / 称王泳为王老师
+    # `(?:他|她)?` 让「叫他XX」能被吃掉，不会把「他」算进名字里。
+    # `(?<!称)(?<!呼)` 让它在「称呼X为Y」里不抢跑（从「呼」开始匹配）。
+    re.compile(
+        r"(?<!称)(?<!呼)(?:叫|称)\s*([\u4e00-\u9fa5]{2,4})\s*为?\s*([\u4e00-\u9fa5]{2,5})"
+    ),
+    # 王泳（王老师）
+    re.compile(r"([\u4e00-\u9fa5]{2,4})\s*[（(]\s*([\u4e00-\u9fa5]{2,5})\s*[）)]"),
+)
+
+#: 代词首字：称呼句里的 `他/她/我/你` 不是人名的一部分。
+_PRONOUN_CHARS = frozenset("他她我你它您咱")
+
+#: 称呼的常见后缀。右侧不是「姓 + 称呼」就不当称呼，避免 `叫他不要动` 被抽成别名。
+_APPELLATION_SUFFIXES = ("老师", "总", "经理", "工", "哥", "姐", "师傅", "主任", "组长")
+
 #: 描述性内容里常见的**多字**词。出现它们说明这不是一个干净的名字，
 #: 而是「那个……的东西」，得靠推理才能落到具体名字上 → 置信度降级。
 #:
@@ -857,6 +883,8 @@ def extract_alias_claims(text: str) -> list[AliasClaim]:
 
 def extract_alias_claims_verbose(
     text: str,
+    *,
+    source: str = "utterance",
 ) -> tuple[list[AliasClaim], list[AliasReject]]:
     """抽别名声明，**同时**返回被拒的和拒绝理由。
 
@@ -924,7 +952,106 @@ def extract_alias_claims_verbose(
                 source="user_declared",
             )
         )
+
+    # ---- spec 038：称呼句式 ----
+    for claim in _extract_appellation_claims(text):
+        key = (claim.alias, claim.canonical)
+        if key in seen:
+            continue
+        seen.add(key)
+        claims.append(claim)
+
+    # ---- spec 038 REQ-4：摘要上的护栏 ----
+    #
+    # `就是` 在**用户原话**里是等价断言（`糖包就是豆包`），
+    # 在**卡片摘要**里却常常是叙述谓语（`任泽昂说明就是这个接口`）。
+    # 同一个模式两种语义 —— 摘要在叙述，所以左值带「说明/表示/提到」这类
+    # 动词时，整条声明直接拒，并留痕。
+    if source == "summary":
+        kept: list[AliasClaim] = []
+        for claim in claims:
+            if _looks_like_summary_prose(claim.alias):
+                rejects.append(
+                    AliasReject(
+                        alias=claim.alias,
+                        canonical=claim.canonical,
+                        side="alias",
+                        reason="summary_prose",
+                        detail=claim.alias[:12],
+                    )
+                )
+                continue
+            kept.append(claim)
+        claims = kept
+
     return claims, rejects
+
+
+#: 摘要里的叙述动词：左值以它们开头说明这是「谁做了什么」的句子，
+#: 不是「A 也叫 B」的等价断言。
+_SUMMARY_PROSE_VERBS = (
+    "说明", "表示", "提到", "指出", "询问", "回复", "承认", "确认",
+    "认为", "希望", "要求", "让", "请", "说", "问", "指出",
+)
+
+
+def _looks_like_summary_prose(left: str) -> bool:
+    """左值是不是摘要叙述的开头（是则不该当别名）。"""
+    text = (left or "").strip()
+    if not text:
+        return False
+    head = text[:6]
+    return any(v in head for v in _SUMMARY_PROSE_VERBS)
+
+
+def _extract_appellation_claims(text: str) -> list[AliasClaim]:
+    """抽「称呼 X 为 Y」这类声明（spec 038 REQ-1）。
+
+    方向固定：`canonical` 是真人，`alias` 是称呼。
+    右侧必须像个称呼（含「老师/总/经理…」或与左侧同姓的单字+称呼），
+    否则 `叫他不要动` 会被抽成 `王泳 -> 不要动`。
+
+    置信度给 `exact`：用户亲口建立的称呼关系，不需要推理。
+    """
+    out: list[AliasClaim] = []
+    taken: list[tuple[int, int]] = []
+    for pattern in _APPELLATION_PATTERNS:
+        for match in pattern.finditer(text):
+            start, end = match.span()
+            # 同一片文字被多条正则命中时只留第一条（`称呼X为Y` 优先级最高）
+            if any(start < e and s2 < end for s2, e in taken):
+                continue
+            canonical = _strip_prefix(match.group(1).strip())
+            alias = _strip_prefix(match.group(2).strip())
+            if not canonical or not alias or alias == canonical:
+                continue
+            if len(canonical) < 2 or len(canonical) > 4:
+                continue
+            # `叫他王老师` 会被切成 `他王` + `老师` —— 代词不能当人名
+            if canonical[0] in _PRONOUN_CHARS:
+                continue
+            if len(alias) < 2 or len(alias) > 5:
+                continue
+            if not _looks_like_appellation(alias):
+                continue
+            taken.append((start, end))
+            out.append(
+                AliasClaim(
+                    alias=alias,
+                    canonical=canonical,
+                    label="exact",
+                    source="user_declared",
+                )
+            )
+    return out
+
+
+def _looks_like_appellation(name: str) -> bool:
+    """长得像称呼吗：带称呼后缀，或「姓 + 老师」这种典型形态。"""
+    if any(sfx in name for sfx in _APPELLATION_SUFFIXES):
+        return True
+    # `王老师` 这种：单姓 + 老师已在上面覆盖，这里兜底短的敬称
+    return len(name) <= 3 and name.endswith(("师", "工", "总"))
 
 #: jieba 是否可用。`None` = 还没探测过。
 _JIEBA_OK: bool | None = None
@@ -1596,7 +1723,12 @@ def _match_types(summary: str, vocab: list[str]) -> list[str]:
     return hits or [FALLBACK_TYPE]
 
 
-def label_by_rules(summary: str, *, vocab: list[str] | None = None) -> LabelResult:
+def label_by_rules(
+    summary: str,
+    *,
+    vocab: list[str] | None = None,
+    source: str = "summary",
+) -> LabelResult:
     """规则层打标：永远给出非空 types（否则事件卡无法落库）。
 
     ## 姓氏声明先于别名抽取
@@ -1619,7 +1751,7 @@ def label_by_rules(summary: str, *, vocab: list[str] | None = None) -> LabelResu
         register_surnames(surnames)
     entities = extract_entities(summary)
     actions = extract_actions(summary, entities=entities)
-    claims, rejects = extract_alias_claims_verbose(summary)
+    claims, rejects = extract_alias_claims_verbose(summary, source=source)
     return LabelResult(
         types=types,
         entities=entities,

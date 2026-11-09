@@ -164,9 +164,14 @@ RETURN count(*)
 #: 起点**不限定 label**：合并两个实体之后，被并掉的那个降级成 `(:Alias)`，
 #: 边从存活的那个出发 —— 它可能是 `:Person`，也可能是 `:Entity`。
 #: 写死 `(p:Person)` 会让「豆包」这种非人实体的别名查不出来。
+#: 别名解析：**双向**（spec 038 A5）。
+#:
+#: 原来只认 `别名 -> 本名`（`a.name IN $names`），于是查「王泳」时
+#: 找不到挂在「王老师」名下的事件 —— 而人的两个称呼本来就该互通。
+#: 现在两个方向都解析，调用方把两侧名字都放进 `$alias_hosts`。
 RESOLVE_ALIAS_CYPHER = """
 MATCH (a:Alias {namespace: $namespace})<-[r:ALIAS_OF]-(p)
-WHERE a.name IN $names
+WHERE a.name IN $names OR p.name IN $names
 RETURN a.name AS alias, p.name AS canonical,
        r.label AS label, r.confidence AS confidence,
        r.source_event_id AS source_event_id

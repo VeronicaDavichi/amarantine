@@ -15,6 +15,7 @@ from typing import Any
 
 import pytest
 
+from memory.services import graph_outbox as GO
 from memory.services.graph_search import (
     _ALL_NAMES_CYPHER,
     _SEARCH_CYPHER,
@@ -234,11 +235,18 @@ def _driver_with_alias(alias: str, canonical: str) -> FakeDriver:
 
 
 def test_alias_hosts_passed_as_separate_param() -> None:
-    """别名主人走独立参数，不跟人名/实体名混。"""
+    """别名**两侧**都算主人（spec 038 A5：查本名也要能召回别名名下的卡）。"""
     drv = _driver_with_alias("糖包", "豆包")
     _search(drv, ["糖包"], [])
     _cypher, params = _main_call(drv)
-    assert params["alias_hosts"] == ["豆包"]
+    assert params["alias_hosts"] == ["豆包", "糖包"]
+
+
+def test_alias_resolution_is_bidirectional_in_cypher() -> None:
+    """Cypher 必须两个方向都匹配，否则查「王泳」找不到「王老师」的卡。"""
+    cypher = " ".join(GO.RESOLVE_ALIAS_CYPHER.split())
+    assert "a.name IN $names" in cypher
+    assert "p.name IN $names" in cypher
 
 
 def test_alias_host_not_in_person_names() -> None:

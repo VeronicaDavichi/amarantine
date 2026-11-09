@@ -1,5 +1,5 @@
 ---
-status: planned
+status: complete
 created: 2026-11-06
 priority: high
 tags:
@@ -9,9 +9,12 @@ tags:
 depends_on:
 - '043'
 created_at: 2026-11-06T08:08:06.427690904Z
-updated_at: 2026-11-06T08:08:06.427690904Z
+updated_at: 2026-11-09T02:54:54.292499639Z
+completed_at: 2026-11-09T02:54:54.292499639Z
+transitions:
+- status: complete
+  at: 2026-11-09T02:54:54.292499639Z
 ---
-
 # 称呼没归一到真人：王泳和王老师是两个节点，别名边还被摘要句式污染
 
 > **Status**: planned · **Priority**: high · **Created**: 2026-11-06

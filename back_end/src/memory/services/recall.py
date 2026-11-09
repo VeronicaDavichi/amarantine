@@ -396,6 +396,29 @@ def recall(
             if eid and eid not in meta:
                 meta[eid] = hit
 
+        # 6.5) 图通道回填元数据（spec 038 A5）
+        #
+        # 图通道只返回 event_id，没有摘要/时间/重要性。原来这里直接把
+        # 「不在 meta 里」的 id 丢掉（第 7 步的过滤），于是**图通道单独命中的卡
+        # 永远召不回来** —— 别名展开（路 7）就是典型受害者：
+        # 查「王泳」时「王老师」那张卡只可能从图里来，一丢就没了。
+        #
+        # 回填上限 `GRAPH_META_LIMIT`：图通道最多 50 个 id，全量拉一次
+        # 也只是几十次本地 REST，但没必要 —— 排在前面的才是要用的。
+        graph_ids = list(channels.get("graph") or [])
+        missing = [eid for eid in graph_ids if eid and eid not in meta]
+        backfilled = 0
+        if missing:
+            try:
+                for eid in missing[:GRAPH_META_LIMIT]:
+                    props = active_store.get_by_event_id(namespace, eid)
+                    if not props:
+                        continue
+                    meta[eid] = {"event_id": eid, **props}
+                    backfilled += 1
+            except Exception as exc:  # noqa: BLE001 - 回填失败只降级
+                logger.warning("图通道元数据回填失败（已降级）: %s", exc)
+
         # 7) 打分：RRF 归一 → 时效 × 重要性
         ranked = [(eid, s) for eid, s in ranked if eid in meta]
         if not ranked:
@@ -415,6 +438,34 @@ def recall(
                 ),
             )
 
+        # exact 别名命中的卡：**强制保留**（spec 038 REQ-2 / A5）
+        #
+        # 别名是用户亲口说的等价关系（`称呼王泳为王老师`），不是模型猜的。
+        # 这类卡常常只从图通道来（摘要里没有查询词），RRF 分天然低，
+        # 会被 `MIN_SCORE` 当「不相关」丢掉 —— 但用户查「王泳」时，
+        # 「王老师」名下的卡正是他要的。按 D7 的硬信号口径，它们是
+        # `forced`，允许突破条数上限（overflow 会如实上报）。
+        exact_alias_ids: set[str] = set()
+        if graph_hits is not None:
+            for hit in getattr(graph_hits, "alias_hits", ()) or ():
+                if getattr(hit, "label", "") == "exact":
+                    # 别名两侧的名字都可能出现在事件边里，保守起见把两侧都算上
+                    exact_alias_ids.add(getattr(hit, "canonical", ""))
+                    exact_alias_ids.add(getattr(hit, "alias", ""))
+        # 把「名字」换成「事件 id」：图通道已经返回了这些卡
+        exact_alias_event_ids: set[str] = set()
+        if exact_alias_ids:
+            for eid in channels.get("graph", []):
+                props = meta.get(eid) or {}
+                names = {
+                    str(props.get("summary") or ""),
+                }
+                if any(n and any(a and a in n for a in exact_alias_ids) for n in names):
+                    exact_alias_event_ids.add(eid)
+            # 退一步：图通道给的 id 本就来自别名展开，无法逐条归因时全部保留
+            if not exact_alias_event_ids:
+                exact_alias_event_ids = set(channels.get("graph", []))
+
         norm = normalize_relevance([s for _, s in ranked])
         scored: list[Candidate] = []
         for (eid, _), rel in zip(ranked, norm):
@@ -428,7 +479,11 @@ def recall(
                 w_imp_base=settings.W_IMP_BASE,
                 half_life_days=settings.RECENCY_HALF_LIFE_DAYS,
             )
-            forced = bool(item.get("pinned")) or bool(item.get("unresolved"))
+            forced = (
+                bool(item.get("pinned"))
+                or bool(item.get("unresolved"))
+                or eid in exact_alias_event_ids
+            )
             scored.append(
                 Candidate(
                     event_id=eid,
