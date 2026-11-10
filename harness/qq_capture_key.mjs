@@ -121,7 +121,7 @@ try {
   console.log(`目标库：${target}`);
 
   // 2) 抓口令
-  const cap = await call("capture_offline_key", { dbPath: target, save: true, maxCandidates: 8000 });
+  const cap = await call("capture_offline_key", { dbPath: target, save: true, maxCandidates: 200000 });
   console.log(JSON.stringify(cap, null, 2).slice(0, 1200));
 
   if (!cap.found) {

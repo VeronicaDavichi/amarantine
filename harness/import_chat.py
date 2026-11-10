@@ -104,13 +104,31 @@ def build_turns(data: dict, *, min_len: int = 4) -> tuple[list[dict], list[dict]
         if len(text) < min_len:
             dropped.append({"ts": ts, "reason": "过短"})
             continue
-        sender = (m.get("sender") or "").strip()
+        # QQ 语料里 sender 可能是数字 QQ 号，统一转成字符串
+        sender = str(m.get("sender") or "").strip()
         turns.append({
             "text": f"{sender}：{text}" if sender else text,
             "role": "user",
             "ts": ts,
         })
     return turns, dropped
+
+
+def failed_keys(db_path: pathlib.Path) -> set[str]:
+    """已经 failed 的 dedupe_key（重试要换后缀，否则服务端幂等返回旧的 failed）。"""
+    import sqlite3
+
+    if not db_path.exists():
+        return set()
+    try:
+        con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        rows = con.execute(
+            "SELECT namespace || '|' || dedupe_key FROM ingest_job WHERE status IN ('failed','error')"
+        ).fetchall()
+        con.close()
+        return {r[0] for r in rows}
+    except Exception:  # noqa: BLE001
+        return set()
 
 
 def done_keys(db_path: pathlib.Path) -> set[str]:
@@ -213,6 +231,11 @@ def main() -> int:
     )
     ap.add_argument("--base-url", default="http://127.0.0.1:8765")
     ap.add_argument("--resume", action="store_true", help="跳过已 done 的窗口")
+    ap.add_argument(
+        "--retry-failed",
+        action="store_true",
+        help="failed 的片换后缀重提（服务端对 failed 也做幂等，不改键不会重跑）",
+    )
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--wait", type=int, default=300, help="每片等待秒数")
     ap.add_argument("--report", default=str(ROOT / "back_end" / "data" / "import_report.json"))
@@ -252,6 +275,7 @@ def main() -> int:
     if not db_path.is_absolute():
         db_path = ROOT / "back_end" / db_path
     already = done_keys(db_path) if args.resume else set()
+    failed = failed_keys(db_path) if args.retry_failed else set()
 
     report: dict = {
         "started_at": datetime.now(timezone.utc).isoformat(),
@@ -275,6 +299,13 @@ def main() -> int:
             key = dedupe_key_for(cid, chunk, idx, prefix=args.prefix)
             if args.suffix:
                 key = f"{key}-{args.suffix}"
+            # failed 的片：换后缀重提（`-r1`、`-r2`…），否则幂等直接返回旧 failed
+            if failed:
+                candidate, n = key, 1
+                while f"{args.namespace}|{candidate}" in failed and n < 10:
+                    candidate = f"{key}-r{n}"
+                    n += 1
+                key = candidate
             if f"{args.namespace}|{key}" in already:
                 print(f"  [{idx}] 已 done，跳过 {key}")
                 totals["skipped"] += 1

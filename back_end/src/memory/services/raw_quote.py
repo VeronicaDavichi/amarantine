@@ -479,6 +479,45 @@ def normalize_turn(raw: Any) -> dict[str, Any] | None:
     }
 
 
+#: embedding 服务的单条上限是 8192 token；中文约 1 字 ≈ 1 token，
+#: 留足余量按 4000 字符切。超过这个长度的「一张卡」一定是 LLM 切分降级
+#: 成整段了（实测 10334 token 被 413 拒掉）。
+MAX_CARD_CHARS = 4000
+
+
+def _split_long_parts(parts: list[str], *, limit: int = MAX_CARD_CHARS) -> list[str]:
+    """把超长事件按**行**再切，避免 embedding 413。
+
+    优先按换行切（语料是 `role: text` 一行一条），单行仍超长时硬切。
+    切出来的每段都是独立事件，时间继承仍然按 4-gram 匹配各自源消息。
+    """
+    out: list[str] = []
+    for part in parts:
+        text = (part or "").strip()
+        if not text:
+            continue
+        if len(text) <= limit:
+            out.append(text)
+            continue
+        buf: list[str] = []
+        size = 0
+        for line in text.split("\n"):
+            piece = line.strip()
+            if not piece:
+                continue
+            while len(piece) > limit:
+                out.append(piece[:limit])
+                piece = piece[limit:]
+            if size + len(piece) + 1 > limit and buf:
+                out.append("\n".join(buf))
+                buf, size = [], 0
+            buf.append(piece)
+            size += len(piece) + 1
+        if buf:
+            out.append("\n".join(buf))
+    return out or [p for p in parts if (p or "").strip()]
+
+
 def _parse_ts(value: str | None) -> datetime | None:
     """把语料里的 `YYYY-MM-DD HH:MM:SS` 解析成**带时区**的 datetime。
 
@@ -552,7 +591,8 @@ def run_ingest(
         logger.warning("ingest 切分失败 %s: %s", job_id, exc)
         return outcome
 
-    summaries = split.parts
+    # spec 036/040：切分降级成整段时可能超 embedding 上限，按行再切
+    summaries = _split_long_parts(split.parts)
     outcome.split_rounds = split.rounds
     outcome.dropped_events = split.dropped
 
