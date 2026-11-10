@@ -62,3 +62,25 @@ def test_time_source_classification(hint: str, ambiguous: str) -> None:
 def test_time_source_falls_back_to_msg_or_import() -> None:
     assert IM.time_source_for(None, "2026-10-30T14:50:00+08:00") == "msg_ts"
     assert IM.time_source_for(None, None) == "imported"
+
+
+def test_parse_ts_accepts_iso_z() -> None:
+    """QQ 语料的时间是 `2026-04-25T11:12:05Z` —— 不认 Z 会全部回落到导入日。
+
+    实测后果：1963/1965 张卡的 `date_start` 都是导入日。
+    """
+    from memory.services.raw_quote import _parse_ts
+
+    parsed = _parse_ts("2026-04-25T11:12:05Z")
+    assert parsed is not None
+    assert parsed.year == 2026 and parsed.month == 4 and parsed.day == 25
+    assert parsed.tzinfo is not None
+
+
+def test_parse_ts_accepts_offset_and_space_forms() -> None:
+    from memory.services.raw_quote import _parse_ts
+
+    assert _parse_ts("2026-04-25T11:12:05+08:00").hour == 11
+    assert _parse_ts("2026-04-25 11:12:05").hour == 11
+    assert _parse_ts("2026-04-25").day == 25
+    assert _parse_ts("") is None

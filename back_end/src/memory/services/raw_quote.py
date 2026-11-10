@@ -535,10 +535,20 @@ def _parse_ts(value: str | None) -> datetime | None:
     """
     if not value:
         return None
+    text = value.strip()
+    # ISO 8601：`2026-04-25T11:12:05Z` / `+08:00` / 带小数秒 —— QQ 语料就是这个
+    iso = text[:-1] + "+00:00" if text.endswith("Z") else text
+    try:
+        parsed = datetime.fromisoformat(iso)
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone(timedelta(hours=8)))
+        return parsed
+    except ValueError:
+        pass
     local = timezone(timedelta(hours=8))
-    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d"):
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
         try:
-            return datetime.strptime(value.strip(), fmt).replace(tzinfo=local)
+            return datetime.strptime(text, fmt).replace(tzinfo=local)
         except ValueError:
             continue
     return None
