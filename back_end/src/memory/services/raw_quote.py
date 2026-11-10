@@ -485,6 +485,14 @@ def normalize_turn(raw: Any) -> dict[str, Any] | None:
 MAX_CARD_CHARS = 4000
 
 
+#: 过度切分阈值：产出事件数 > 输入条数 × 这个倍数就告警。
+#:
+#: 实测（QQ 语料）：30 条短消息被切成 141 个事件（80 入库 + 61 丢弃）。
+#: 这不是 036 的「丢尾部」，而是模型把每条消息都拆碎了 —— 卡太小、
+#: 召回价值低，还会把 embedding 和 LLM 预算吃光。
+OVERSPLIT_RATIO = 3
+
+
 def _split_long_parts(parts: list[str], *, limit: int = MAX_CARD_CHARS) -> list[str]:
     """把超长事件按**行**再切，避免 embedding 413。
 
@@ -595,6 +603,15 @@ def run_ingest(
     summaries = _split_long_parts(split.parts)
     outcome.split_rounds = split.rounds
     outcome.dropped_events = split.dropped
+
+    # 过度切分告警：产出远多于输入时的信号（不改变行为，只留痕）
+    if usable and len(summaries) > max(10, OVERSPLIT_RATIO * len(usable)):
+        msg = (
+            f"切分过度: {len(usable)} 条输入 → {len(summaries)} 个事件"
+            f"（阈值 {OVERSPLIT_RATIO}x）"
+        )
+        logger.warning("ingest %s | job=%s", msg, job_id)
+        outcome.errors.append(msg)
 
     # 两层各记一条：切分层（split_all）说明「丢在哪、丢了多少」，
     # 这里补上「是哪个 job 丢的」—— 排查时只凭其中一条都定位不到责任批次。
