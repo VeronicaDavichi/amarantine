@@ -33,6 +33,7 @@ from __future__ import annotations
 import argparse
 import json
 import pathlib
+import urllib.request
 import sys
 import time
 from datetime import datetime, timezone
@@ -129,6 +130,90 @@ def failed_keys(db_path: pathlib.Path) -> set[str]:
         return {r[0] for r in rows}
     except Exception:  # noqa: BLE001
         return set()
+
+
+def load_memory_lexicon(
+    namespaces: list[str],
+    *,
+    uri: str = "http://127.0.0.1:7474/db/neo4j/tx/commit",
+    user: str = "neo4j",
+    password: str = "password",
+) -> str:
+    """把若干命名空间的**事件摘要 + 实体/人名**拼成一个大字符串。
+
+    为什么不用 `/admin/recall`：召回分数是 RRF 归一化后的**相对值**
+    （top-1 恒为 1.0），拿它判「相关」等于恒真 —— 实测 289 条广告全部被判相关。
+    词面命中没有这个问题：广告里的品牌/作品名要么在记忆里出现过，要么没有。
+    """
+    import base64
+    import urllib.request
+
+    cypher = (
+        "MATCH (e:Event) WHERE e.namespace IN $ns RETURN e.summary AS t "
+        "UNION MATCH (n) WHERE n.namespace IN $ns AND (n:Entity OR n:Person) "
+        "RETURN n.name AS t"
+    )
+    body = json.dumps({"statements": [{"statement": cypher, "parameters": {"ns": namespaces}}]})
+    req = urllib.request.Request(uri, data=body.encode())
+    req.add_header("Authorization", "Basic " + base64.b64encode(f"{user}:{password}".encode()).decode())
+    req.add_header("Content-Type", "application/json")
+    try:
+        data = json.loads(urllib.request.urlopen(req, timeout=60).read().decode())
+        rows = data["results"][0]["data"]
+        return "\n".join(str(r["row"][0] or "") for r in rows)
+    except Exception as exc:  # noqa: BLE001
+        print(f"  ⚠ 读取记忆词库失败（按空处理）: {exc}")
+        return ""
+
+
+def gate_marketing(
+    turns: list[dict],
+    *,
+    lexicon: str,
+    dropped: list[dict],
+) -> tuple[list[dict], dict]:
+    """营销内容 → 词面命中已有记忆才保留。
+
+    判据：营销消息抽出的**术语**（品牌/作品名，已去掉 URL/图片哈希/模板词）
+    只要有一个出现在已有记忆里就保留；一个都没有 = 与用户关心的事无关，丢掉。
+
+    Returns:
+        `(kept_turns, stats)`。
+    """
+    from memory.services.marketing import looks_like_marketing, recall_terms
+
+    stats = {"marketing": 0, "kept": 0, "dropped": 0, "cache_hits": 0}
+    cache: dict[tuple[str, ...], bool] = {}
+    kept: list[dict] = []
+
+    for turn in turns:
+        hit, _detail = looks_like_marketing(turn.get("text") or "")
+        if not hit:
+            kept.append(turn)
+            continue
+        stats["marketing"] += 1
+        terms = tuple(recall_terms(turn.get("text") or ""))
+        if not terms:
+            stats["dropped"] += 1
+            dropped.append({"ts": turn.get("ts"), "reason": "marketing_no_terms"})
+            continue
+        if terms in cache:
+            stats["cache_hits"] += 1
+            related = cache[terms]
+        else:
+            related = any(t in lexicon for t in terms)
+            cache[terms] = related
+        if related:
+            stats["kept"] += 1
+            kept.append(turn)
+        else:
+            stats["dropped"] += 1
+            dropped.append({
+                "ts": turn.get("ts"),
+                "reason": "marketing_unrelated",
+                "terms": list(terms),
+            })
+    return kept, stats
 
 
 def done_keys(db_path: pathlib.Path) -> set[str]:
@@ -232,6 +317,15 @@ def main() -> int:
     ap.add_argument("--base-url", default="http://127.0.0.1:8765")
     ap.add_argument("--resume", action="store_true", help="跳过已 done 的窗口")
     ap.add_argument(
+        "--gate-marketing",
+        action="store_true",
+        help="营销内容先查记忆：召不回来就不存（需要服务在跑）",
+    )
+    ap.add_argument("--gate-threshold", type=float, default=0.35,
+                    help="召回分数门槛，低于它视为「与已有记忆无关」")
+    ap.add_argument("--gate-namespaces", default="",
+                    help="拿哪些记忆域比对（逗号分隔；默认目标域）")
+    ap.add_argument(
         "--retry-failed",
         action="store_true",
         help="failed 的片换后缀重提（服务端对 failed 也做幂等，不改键不会重跑）",
@@ -264,6 +358,14 @@ def main() -> int:
     if not args.dry_run and not token:
         raise SystemExit("✗ 没配 ADMIN_TOKEN")
 
+    args._lexicon = ""
+    if args.gate_marketing:
+        gate_ns = [n.strip() for n in args.gate_namespaces.split(",") if n.strip()]
+        gate_ns = gate_ns or [args.namespace]
+        print(f"加载记忆词库: {gate_ns}")
+        args._lexicon = load_memory_lexicon(gate_ns)
+        print(f"  词库 {len(args._lexicon)} 字符")
+
     idents: list = []
     if args.identity:
         from memory.services.identity import from_json_file
@@ -289,11 +391,19 @@ def main() -> int:
         data = load_corpus(path)
         cid = data.get("cid") or path.stem
         turns, dropped = build_turns(data)
+        gate_stats = None
+        if args.gate_marketing:
+            turns, gate_stats = gate_marketing(turns, lexicon=args._lexicon, dropped=dropped)
+            print(f"  营销闸门: 识别 {gate_stats['marketing']} 条 → "
+                  f"保留 {gate_stats['kept']} / 丢弃 {gate_stats['dropped']} "
+                  f"(缓存命中 {gate_stats['cache_hits']})")
         chunks = chunk_turns(turns, args.window)
         print(f"\n=== {path.name} | cid={cid} | turns={len(turns)} | 片={len(chunks)} | 过滤={len(dropped)}")
 
         entry = {"file": path.name, "cid": cid, "turns": len(turns),
                  "chunks": [], "dropped": dropped[:50], "dropped_total": len(dropped)}
+        if gate_stats is not None:
+            entry["marketing_gate"] = gate_stats
 
         for idx, chunk in enumerate(chunks, 1):
             key = dedupe_key_for(cid, chunk, idx, prefix=args.prefix)
