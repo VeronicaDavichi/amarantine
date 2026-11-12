@@ -1,5 +1,5 @@
 ---
-status: planned
+status: in-progress
 created: 2026-11-12
 priority: high
 tags:
@@ -8,9 +8,11 @@ tags:
 - scope
 - import
 created_at: 2026-11-12T07:32:05.147448496Z
-updated_at: 2026-11-12T07:32:05.147448496Z
+updated_at: 2026-11-12T08:17:31.816452793Z
+transitions:
+- status: in-progress
+  at: 2026-11-12T08:17:31.816452793Z
 ---
-
 # 群名片与按 scope 的别名
 
 > **Status**: planned · **Priority**: high · **Created**: 2026-11-12
@@ -210,11 +212,11 @@ scope  ∈ {global, group:<gid>, friend:<uid>}
 
 ## Plan
 
-- [ ] T1 导出：`list_group_members` → 每群一份 `uid → card` JSON（含 nickname/qq）
-- [ ] T2 导入：sender 解析链（card → senderName → uid → QQ号），报告命中率
-- [ ] T3 图：`DISPLAYED_AS` 写入（scope / source / 时间），幂等
-- [ ] T4 查询：`GET /admin/whois?name=&scope=`，`ambiguous` 全量返回
-- [ ] T5 名册：导入时把群名片当人名送进抽取器（避免 jieba 切开）
+- [x] T1 导出：`list_group_members` → 每群一份 `uid → card` JSON（含 nickname/qq）
+- [x] T2 导入：sender 解析链（card → senderName → uid → QQ号），报告命中率
+- [x] T3 图：`DISPLAYED_AS` 写入（scope / source / 时间），幂等
+- [x] T4 查询：`GET /admin/whois?name=&scope=`，`ambiguous` 全量返回
+- [x] T5 名册：导入时把群名片当人名送进抽取器（避免 jieba 切开）
 - [ ] T6 测试与文档
 
 ## Test
@@ -282,3 +284,39 @@ same_owner  「往汐」+「往汐…复活版」→ 可建 SAME_OWNER
 - 测试：伪装名互相不关联（差 1 字 / 字节相同两种都覆盖）、近似名不合并、审计收集 3 类
 
 **全量 pytest：1472 passed。**
+
+### 2026-11-12 · T1–T4 落地
+
+**已交付**
+
+| 文件 | 内容 |
+|---|---|
+| `harness/export_qq_members.mjs` | `list_group_members` → `group-<gid>.json`（uid/qq/昵称/群名片）；已导出 **106 个群** |
+| `harness/export_qq.mjs` | 消息语料加 `sender_uid` / `sender_name` |
+| `harness/import_chat.py` | `load_group_names()`：uid → 群名片（不可用则回落昵称）；`build_turns` 按 uid 解析；导入后写名字标记 |
+| `name_marker.py` | 五分类 + 整活判定 + 伪装名 + 审计收集（上一轮） |
+| `identity.py` | `ENSURE_DISPLAY_NAME_CYPHER` / `WHOIS_CYPHER` / `WHOIS_SCOPE_CYPHER` / `ensure_display_names()` |
+| `admin_http.py` | `POST /admin/display-names`、`GET /admin/whois?name=&scope=&base=` |
+| `tests/test_display_names.py` | 7 条 |
+
+**真库验证**（`qq-505456846` / `group:485490399`）
+
+```
+成员表 390 人 → 可用显示名 377（排除 12：处罚/空白/伪装）
+写入名字标记：group scope 50 条（群名片）、global 375 条（昵称）
+
+whois 往汐（base=true）@ group:485490399
+  → 2 个账号：u_Z0c…（复活版）/ u_oZv…（主号）
+  → ambiguous=true        ← 正是要的行为
+
+whois 往汐（北瑀家的鱼）复活版（精确）
+  → 1 个账号 u_Z0c…
+```
+
+**语义说明**
+
+- 精确 `whois` 只认字节相同的名字（`往汐（北瑀家的鱼）` ≠ `…复活版`）
+- `base=true` 时按基础名匹配（去括号 + 去小号后缀），才能一次拿到主号 + 复活版
+- 整活名字（≥3 个号同名）**不建关联边**，但 `whois base` 仍会列出全部账号并标 ambiguous
+
+**仍未做**：T6 文档（用户手册）、导入口径的端到端重灌（下一批数据时验证）。

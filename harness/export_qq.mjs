@@ -241,6 +241,9 @@ function toCorpus(messages, { cid, title }) {
       text,
       ts: m.iso ?? (m.timestamp ? new Date(Number(m.timestamp) * 1000).toISOString() : null),
       sender,
+      // spec 047：带上 uid，导入时用群成员表把 uid → 群名片解析出来
+      sender_uid: m.senderUid ?? null,
+      sender_name: m.senderName ?? null,
     });
   }
   return { cid, title, messages: out, _roster: [...roster] };

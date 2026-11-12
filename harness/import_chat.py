@@ -33,6 +33,7 @@ from __future__ import annotations
 import argparse
 import json
 import pathlib
+import re
 import urllib.request
 import sys
 import time
@@ -87,7 +88,52 @@ def load_corpus(path: pathlib.Path) -> dict:
     return data
 
 
-def build_turns(data: dict, *, min_len: int = 4) -> tuple[list[dict], list[dict]]:
+def load_group_names(identity_dir: pathlib.Path, cid: str) -> tuple[dict[str, str], dict]:
+    """读群成员表，返回 `uid → 显示名` 与统计（spec 047）。
+
+    `cid` 形如 `qq-485490399`；成员表文件名 `group-485490399.json`。
+
+    显示名规则：
+    - 群名片可用（不是处罚/空白/伪装/标点）→ 用群名片
+    - 否则回落昵称（同样要过分类，昵称一般干净）
+    - 都没有 → 不映射（调用方回落 QQ 号）
+    """
+    from memory.services.name_marker import classify_card
+
+    m = re.search(r"(\d{5,})", cid or "")
+    if not m or not identity_dir.exists():
+        return {}, {"members": 0, "usable": 0, "excluded": 0}
+    path = identity_dir / f"group-{m.group(1)}.json"
+    if not path.exists():
+        return {}, {"members": 0, "usable": 0, "excluded": 0}
+
+    data = json.loads(path.read_text(encoding="utf-8"))
+    members = data.get("members") or []
+    names: dict[str, str] = {}
+    usable = excluded = 0
+    for mem in members:
+        uid = str(mem.get("uid") or "").strip()
+        if not uid:
+            continue
+        card = mem.get("card") or ""
+        nick = mem.get("nickname") or ""
+        verdict = classify_card(card) if card else None
+        if verdict is not None and verdict.usable:
+            names[uid] = card.strip()
+            usable += 1
+            continue
+        nick_verdict = classify_card(nick) if nick else None
+        if nick_verdict is not None and nick_verdict.usable:
+            names[uid] = nick.strip()
+            usable += 1
+        else:
+            excluded += 1
+    return names, {"members": len(members), "usable": usable, "excluded": excluded}
+
+
+def build_turns(
+    data: dict, *, min_len: int = 4, uid_names: dict[str, str] | None = None
+) -> tuple[list[dict], list[dict]]:
     """语料 → 合法 turn 列表 + 被过滤项（带原因）。"""
     turns: list[dict] = []
     dropped: list[dict] = []
@@ -105,8 +151,16 @@ def build_turns(data: dict, *, min_len: int = 4) -> tuple[list[dict], list[dict]
         if len(text) < min_len:
             dropped.append({"ts": ts, "reason": "过短"})
             continue
-        # QQ 语料里 sender 可能是数字 QQ 号，统一转成字符串
-        sender = str(m.get("sender") or "").strip()
+        # spec 047：优先用 uid 反查群名片；再退回导出时的 sender_name/sender
+        uid = str(m.get("sender_uid") or "").strip()
+        sender = ""
+        if uid and uid_names:
+            sender = uid_names.get(uid, "")
+        if not sender:
+            sender = str(m.get("sender_name") or m.get("sender") or "").strip()
+        # 数字 QQ 号也保留（能看出是同一个人），但不当作名字
+        if sender.isdigit():
+            sender = sender
         turns.append({
             "text": f"{sender}：{text}" if sender else text,
             "role": "user",
@@ -323,6 +377,11 @@ def main() -> int:
     )
     ap.add_argument("--gate-threshold", type=float, default=0.35,
                     help="召回分数门槛，低于它视为「与已有记忆无关」")
+    ap.add_argument(
+        "--identity-dir",
+        default=str(ROOT / "back_end" / "data" / "corpus" / "qq-identities"),
+        help="群成员表目录（spec 047，文件名 group-<gid>.json）",
+    )
     ap.add_argument("--gate-namespaces", default="",
                     help="拿哪些记忆域比对（逗号分隔；默认目标域）")
     ap.add_argument(
@@ -390,7 +449,14 @@ def main() -> int:
     for path in files:
         data = load_corpus(path)
         cid = data.get("cid") or path.stem
-        turns, dropped = build_turns(data)
+        identity_dir = pathlib.Path(args.identity_dir) if args.identity_dir else None
+        uid_names, name_stats = (
+            load_group_names(identity_dir, cid) if identity_dir else ({}, {"members": 0})
+        )
+        if name_stats.get("members"):
+            print(f"  群成员表: {name_stats['members']} 人 → 可用显示名 "
+                  f"{name_stats.get('usable', 0)}（排除 {name_stats.get('excluded', 0)}）")
+        turns, dropped = build_turns(data, uid_names=uid_names)
         gate_stats = None
         if args.gate_marketing:
             turns, gate_stats = gate_marketing(turns, lexicon=args._lexicon, dropped=dropped)
@@ -454,6 +520,33 @@ def main() -> int:
             totals["turns"] += len(chunk)
             totals["events"] += job.get("events_created", 0)
             totals["dropped_events"] += job.get("dropped_events", 0)
+
+        # spec 047：把这个群的名字标记写进图（scope=group:<gid>）
+        if uid_names and not args.dry_run:
+            gid = re.search(r"(\d{5,})", cid or "")
+            if gid:
+                scope = f"group:{gid.group(1)}"
+                records = [
+                    {"uid": uid, "name": name, "source": "group_card"}
+                    for uid, name in uid_names.items()
+                ]
+                written = 0
+                for i in range(0, len(records), 200):
+                    batch = records[i:i + 200]
+                    try:
+                        with httpx.Client(timeout=60.0) as client:
+                            resp = client.post(
+                                f"{args.base_url}/admin/display-names",
+                                json={"namespace": args.namespace, "scope": scope,
+                                      "records": batch},
+                                headers={"Authorization": f"Bearer {token}"},
+                            )
+                        if resp.status_code < 400:
+                            written += int(resp.json().get("written", 0))
+                    except Exception as exc:  # noqa: BLE001
+                        print(f"  ⚠ 名字标记写入失败: {exc}")
+                print(f"  名字标记(r {scope}): {written} 条")
+                entry["display_names"] = {"scope": scope, "written": written}
 
         report["files"].append(entry)
 

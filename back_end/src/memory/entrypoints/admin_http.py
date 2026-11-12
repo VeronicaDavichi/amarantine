@@ -449,6 +449,22 @@ class AccountFamilyVerdictRequest(BaseModel):
     operator: str | None = None
 
 
+class DisplayNameRecord(BaseModel):
+    """一条名字标记（spec 047）。"""
+
+    uid: str
+    name: str
+    source: str = "group_card"
+
+
+class DisplayNamesRequest(BaseModel):
+    """批量写名字标记。"""
+
+    namespace: str | None = None
+    scope: str
+    records: list[DisplayNameRecord] = []
+
+
 class AdminRecallRequest(BaseModel):
     query: str
     namespace: str | None = None
@@ -832,6 +848,61 @@ def create_app(
             )
         return {"term": row["term"], "scope": row["scope"],
                 "gloss": row["gloss"], "status": row["status"]}
+
+    @app.post("/admin/display-names", dependencies=[Depends(require_token)])
+    def admin_display_names(body: DisplayNamesRequest) -> dict[str, Any]:
+        """写「名字标记」（spec 047）：`(:Account)-[:DISPLAYED_AS {scope}]->(:Alias)`。
+
+        昵称/群名片/备注都是同一人的标记，差别只在 scope；同一 uid 多名片共存。
+        """
+        from memory.services.identity import ensure_display_names
+
+        stats = ensure_display_names(
+            namespace=_namespace(body.namespace),
+            scope=body.scope,
+            records=[r.model_dump() for r in body.records],
+            settings=cfg,
+        )
+        return {"scope": body.scope, **stats}
+
+    @app.get("/admin/whois", dependencies=[Depends(require_token)])
+    def admin_whois(name: str, scope: str = "global",
+                    namespace: str | None = None,
+                    base: bool = False) -> dict[str, Any]:
+        """按名字 + scope 反查账号（spec 047）。
+
+        `ambiguous=true` 表示同 scope 下这个名字对应多个 uid，**必须全部返回**。
+
+        `base=true` 时按**基础名**匹配：`往汐` 能同时命中
+        `往汐（北瑀家的鱼）` 与 `往汐（北瑀家的鱼）复活版`（去掉括号与小号后缀）。
+        """
+        from memory.services.identity import WHOIS_CYPHER, WHOIS_SCOPE_CYPHER
+        from memory.services.name_marker import classify_card
+        from neo4j import GraphDatabase
+
+        ns = _namespace(namespace)
+        drv = GraphDatabase.driver(
+            cfg.NEO4J_URI, auth=(cfg.NEO4J_USER, cfg.NEO4J_PASSWORD)
+        )
+        try:
+            with drv.session() as session:
+                if base:
+                    rows = [
+                        dict(r) for r in session.run(
+                            WHOIS_SCOPE_CYPHER, namespace=ns, scope=scope)
+                        if classify_card(str(r["name"])).base == name
+                    ]
+                else:
+                    rows = [dict(r) for r in session.run(
+                        WHOIS_CYPHER, namespace=ns, scope=scope, name=name)]
+        finally:
+            drv.close()
+        return {
+            "name": name, "scope": scope, "namespace": ns, "base": base,
+            "accounts": rows,
+            "ambiguous": len(rows) > 1,
+            "name_missing": len(rows) == 0,
+        }
 
     @app.get("/admin/senses", dependencies=[Depends(require_token)])
     def admin_senses(term: str, scope: str, tier: str = "default") -> dict[str, Any]:

@@ -457,3 +457,85 @@ def from_json_file(path: str) -> list[Identity]:
             )
         )
     return out
+
+# ============================================================ spec 047：名字标记
+
+#: 写 `(:Account)-[:DISPLAYED_AS {scope}]->(:Alias)`
+#:
+#: 名字标记（昵称/群名片/备注）都是**同一个人身上的标记**，差别只在 scope。
+#: 同一 uid 在不同群有不同名片 → 多条边共存，互不覆盖（REQ-4）。
+ENSURE_DISPLAY_NAME_CYPHER = """
+UNWIND $items AS item
+MERGE (a:Account {namespace: $namespace, uid: item.uid})
+ON CREATE SET a.created_at = $now
+SET a.last_seen = $now
+WITH a, item
+MERGE (al:Alias {namespace: $namespace, name: item.name})
+ON CREATE SET al.first_seen = $now
+MERGE (a)-[r:DISPLAYED_AS {scope: $scope}]->(al)
+ON CREATE SET r.created_at = $now
+SET r.source = item.source, r.updated_at = $now
+RETURN count(r) AS n
+"""
+
+#: 按名字 + scope 反查账号（whois）
+WHOIS_CYPHER = """
+MATCH (a:Account {namespace: $namespace})-[r:DISPLAYED_AS {scope: $scope}]->(al:Alias {name: $name})
+RETURN a.uid AS uid, a.nick AS nick, r.source AS source
+ORDER BY a.uid
+"""
+
+
+
+#: 某 scope 下的全部名字标记（`base=true` 的 whois 用，Python 侧按基础名过滤）
+WHOIS_SCOPE_CYPHER = """
+MATCH (a:Account {namespace: $namespace})-[r:DISPLAYED_AS {scope: $scope}]->(al:Alias)
+RETURN a.uid AS uid, al.name AS name, r.source AS source
+ORDER BY a.uid
+"""
+
+def ensure_display_names(
+    *,
+    namespace: str,
+    scope: str,
+    records: list[dict],
+    settings: Any,
+    driver: Any | None = None,
+) -> dict[str, int]:
+    """写名字标记（幂等）。失败只告警 —— 图是派生层。"""
+    items = [
+        {"uid": str(r.get("uid") or "").strip(), "name": str(r.get("name") or "").strip(),
+         "source": str(r.get("source") or "group_card")}
+        for r in records
+        if str(r.get("uid") or "").strip() and str(r.get("name") or "").strip()
+    ]
+    if not items:
+        return {"written": 0, "failed": 0}
+
+    owns = driver is None
+    drv = driver
+    written = 0
+    try:
+        if drv is None:
+            from neo4j import GraphDatabase
+
+            drv = GraphDatabase.driver(
+                settings.NEO4J_URI, auth=(settings.NEO4J_USER, settings.NEO4J_PASSWORD)
+            )
+        with drv.session() as session:
+            res = session.run(
+                ENSURE_DISPLAY_NAME_CYPHER,
+                namespace=namespace, scope=scope, items=items, now=_now(),
+            ).single()
+            written = int(res["n"]) if res else 0
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("写名字标记失败（已降级）| %s", exc)
+        return {"written": 0, "failed": len(items)}
+    finally:
+        if owns and drv is not None:
+            try:
+                drv.close()
+            except Exception:  # noqa: BLE001
+                pass
+    return {"written": written, "failed": 0}
+
