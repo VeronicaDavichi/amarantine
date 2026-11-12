@@ -19,13 +19,25 @@
 - **角色/关系**：机仆 / 妈妈桑 这类称号本身是社交信号
 - **补充名字标记**：头衔里常含名字（`羽生` 对应 `羽生玲央`）
 
-## 拿不全的现实
+## 怎么拿到全量头衔（2026-11-12 更正）
 
-MCP 的 `list_group_members` **不返回头衔**；`group_info.db` 自行解密后
-`page_count=0`（工具内部能读，但不暴露成员头衔列）。
+MCP 的 `list_group_members` 确实**不返回头衔**，但 `group_info.db` 解密后
+`group_member3` 的 **`64023` 列就是群头衔**：
 
-所以目前只能从**系统公告**里解析「谁被授予了什么头衔」——
-历史存量头衔（入群时就有、没公告过的）拿不到。这条限制写进 spec。
+```
+uid                  qq            昵称       64023
+u_6IiO6q6eeK5pHe6d1e 2742830098    铭旌       机仆
+u_RGwwCO6pYflrUiqoU  334176846     Monn       妈妈桑
+u_YSZjagVgPl5ct0jKe  3952356312    素笺       莫比乌斯车的
+```
+
+用 `harness/export_qq_identities.py` 导出（实测 88 个群 / 38056 成员，956 人有头衔）。
+
+**之前写的「page_count=0」是我自己的 bug**：在 WSL 里用 Windows 路径
+（`C:/Users/...` 这种 Windows 写法）打开 SQLite，SQLite 把它当成新库创建了，所以看到 0 张表。
+换成 `/mnt/c/Users/...` 后 45 张表都在。
+
+所以系统公告解析只作为**增量**（知道谁什么时候被授予的），全量头衔以成员表为准。
 """
 
 from __future__ import annotations
