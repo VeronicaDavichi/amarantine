@@ -43,7 +43,7 @@ def _valid_payload() -> dict:
 
 
 def test_field_count_and_names(schema: dict) -> None:
-    assert len(FIELD_NAMES) == 31, f"字段数应为 31，实际 {len(FIELD_NAMES)}"
+    assert len(FIELD_NAMES) == 32, f"字段数应为 32，实际 {len(FIELD_NAMES)}"
     assert set(FIELD_NAMES) == set(schema["properties"]), (
         f"字段集合不一致："
         f"仅在代码={set(FIELD_NAMES) - set(schema['properties'])}，"

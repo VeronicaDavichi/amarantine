@@ -149,6 +149,10 @@ def remember_event(
     date_hint: str | None = None,
     #: 消息发送时间（spec 040）。相对时间（「昨天」）以它为基准换算
     msg_time: datetime | None = None,
+    #: 这张卡属于哪个会话（spec 046）
+    session_id: str | None = None,
+    #: 这张卡解决了哪些旧卡的含糊（spec 046 归并）
+    resolves: list[str] | None = None,
     pinned: bool = False,
     important: bool = False,
     emotion_intensity: float = 0.0,
@@ -297,6 +301,8 @@ def remember_event(
         # spec 040：消息时间与事件时间分开存，来源可追溯（不进 event_id 哈希）
         msg_time=msg_time,
         time_source=time_source,
+        session_id=session_id,
+        resolves=list(resolves or []),
         types=labels.types,
         entities=labels.entities,
         actions=list(getattr(labels, "actions", []) or []),

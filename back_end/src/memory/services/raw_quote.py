@@ -22,7 +22,11 @@ from pathlib import Path
 from typing import Any
 
 from memory.config import Settings
-from memory.services.importer import assign_event_msg_times, relative_time_hint
+from memory.services.importer import (
+    assign_event_dates,
+    assign_event_msg_times,
+    relative_time_hint,
+)
 
 from memory.services.sqlite_conn import open_db
 
@@ -285,6 +289,31 @@ class RawQuoteStore:
             ).fetchone()
         return int(row["n"]) if row is not None else 0
 
+    def recent_for_session(
+        self,
+        namespace: str,
+        session_id: str,
+        *,
+        before_ts: str | None = None,
+        limit: int = 30,
+    ) -> list[dict[str, Any]]:
+        """同会话更早的原文（spec 046 的回溯来源）。
+
+        按 ts 倒序取最近 `limit` 条，再翻回时间正序（提示词里要从旧到新）。
+        `before_ts` 排除本次批次自己的消息 —— 否则会拿未来当上文。
+        """
+        sql = "SELECT text, ts FROM raw_quote WHERE namespace = ? AND session_id = ?"
+        args: list[Any] = [namespace, session_id]
+        if before_ts:
+            sql += " AND ts < ?"
+            args.append(before_ts)
+        sql += " ORDER BY ts DESC LIMIT ?"
+        args.append(int(limit))
+        with self._connect() as conn:
+            rows = [dict(r) for r in conn.execute(sql, args)]
+        rows.reverse()
+        return rows
+
 
 def _row_to_quote(row: sqlite3.Row) -> RawQuote:
     return RawQuote(
@@ -526,6 +555,28 @@ def _split_long_parts(parts: list[str], *, limit: int = MAX_CARD_CHARS) -> list[
     return out or [p for p in parts if (p or "").strip()]
 
 
+#: 建卡时带多少条会话上文（spec 046）
+CONTEXT_TURNS = 30
+#: 模型说「不够」时回溯的上限
+MAX_CONTEXT_TURNS = 120
+
+
+def _min_ts(turns: list[dict[str, Any]]) -> str | None:
+    """本批最早消息时间（作为「上文」的截止点，避免拿未来当上文）。"""
+    stamps = [t.get("ts") for t in turns if t.get("ts")]
+    return min(stamps) if stamps else None
+
+
+def _event_time(event: Any, turns: list[dict[str, Any]], fallback: str | None):
+    """事件时间：优先用 source_indices 指向消息的最早 ts，其次 4-gram 兜底。"""
+    indices = [i for i in (event.source_indices or []) if 1 <= i <= len(turns)]
+    if indices:
+        stamps = [turns[i - 1].get("ts") for i in indices if turns[i - 1].get("ts")]
+        if stamps:
+            return _parse_ts(min(stamps))
+    return _parse_ts(fallback)
+
+
 def _parse_ts(value: str | None) -> datetime | None:
     """把语料里的 `YYYY-MM-DD HH:MM:SS` 解析成**带时区**的 datetime。
 
@@ -558,6 +609,7 @@ def run_ingest(
     *,
     job_id: str,
     namespace: str,
+    session_id: str | None = None,
     turns: list[dict[str, Any]],
     quote_ids: list[str],
     settings: Settings,
@@ -595,26 +647,68 @@ def run_ingest(
         )
         return outcome
 
-    joined = "\n".join(f'{t["role"]}: {t["text"]}' for t in usable)
-    try:
-        split = split_all(joined, settings)
-    except Exception as exc:  # noqa: BLE001 - 批级故障才把整批标 failed
-        outcome.errors.append(f"{type(exc).__name__}: {exc}")
-        job_store.set_status(
-            job_id,
-            status=JOB_FAILED,
-            turns_skipped=outcome.turns_skipped,
-            error=f"切分失败: {exc}",
+    # spec 046：有会话 id 时带上下文切分（指代回溯）；否则保留 036 的二分切分。
+    #
+    # 为什么保留老路径：`/admin/ingest` 之外还有调用方（批量脚本/测试）不传
+    # session_id，它们仍需要 036 的「二分不丢事件」保证。
+    from memory.services.llm_split import (
+        SourcedEvent,
+        split_all,
+        split_with_sources,
+    )
+
+    rounds, dropped = 1, 0
+    if session_id:
+        try:
+            batch_min_ts = _min_ts(usable)
+            context = raw_store.recent_for_session(
+                namespace, session_id, before_ts=batch_min_ts, limit=CONTEXT_TURNS
+            )
+            events = split_with_sources(context, usable, settings)
+            if any(e.needs_more_context for e in events):
+                context = raw_store.recent_for_session(
+                    namespace, session_id, before_ts=batch_min_ts,
+                    limit=MAX_CONTEXT_TURNS,
+                )
+                events = split_with_sources(context, usable, settings)
+        except Exception as exc:  # noqa: BLE001
+            outcome.errors.append(f"{type(exc).__name__}: {exc}")
+            job_store.set_status(
+                job_id, status=JOB_FAILED,
+                turns_skipped=outcome.turns_skipped, error=f"切分失败: {exc}",
+            )
+            logger.warning("ingest 切分失败 %s: %s", job_id, exc)
+            return outcome
+    else:
+        joined = "\n".join(f'{t["role"]}: {t["text"]}' for t in usable)
+        try:
+            split = split_all(joined, settings)
+        except Exception as exc:  # noqa: BLE001 - 批级故障才把整批标 failed
+            outcome.errors.append(f"{type(exc).__name__}: {exc}")
+            job_store.set_status(
+                job_id, status=JOB_FAILED,
+                turns_skipped=outcome.turns_skipped, error=f"切分失败: {exc}",
+            )
+            logger.warning("ingest 切分失败 %s: %s", job_id, exc)
+            return outcome
+        events = [
+            SourcedEvent(summary=p) for p in _split_long_parts(split.parts)
+        ]
+        rounds, dropped = split.rounds, split.dropped
+
+    outcome.split_rounds = rounds
+    outcome.dropped_events = dropped
+    if dropped:
+        logger.warning(
+            "ingest 切分丢弃事件 | job=%s kept=%d dropped=%d rounds=%d",
+            job_id, len(events), dropped, rounds,
         )
-        logger.warning("ingest 切分失败 %s: %s", job_id, exc)
-        return outcome
 
-    # spec 036/040：切分降级成整段时可能超 embedding 上限，按行再切
-    summaries = _split_long_parts(split.parts)
-    outcome.split_rounds = split.rounds
-    outcome.dropped_events = split.dropped
+    # 兜底时间：模型没给 source_indices 时，仍用 4-gram 匹配（spec 040 的老办法）
+    fallback_dates = assign_event_dates([e.summary for e in events], usable)
+    summaries = [e.summary for e in events]
 
-    # 过度切分告警：产出远多于输入时的信号（不改变行为，只留痕）
+    # 过度切分告警：产出远多于输入（QQ 短消息实测 30 条 → 141 事件）
     if usable and len(summaries) > max(10, OVERSPLIT_RATIO * len(usable)):
         msg = (
             f"切分过度: {len(usable)} 条输入 → {len(summaries)} 个事件"
@@ -623,40 +717,16 @@ def run_ingest(
         logger.warning("ingest %s | job=%s", msg, job_id)
         outcome.errors.append(msg)
 
-    # 两层各记一条：切分层（split_all）说明「丢在哪、丢了多少」，
-    # 这里补上「是哪个 job 丢的」—— 排查时只凭其中一条都定位不到责任批次。
-    if split.dropped:
-        logger.warning(
-            "ingest 切分丢弃事件 | job=%s kept=%d dropped=%d rounds=%d",
-            job_id,
-            len(summaries),
-            split.dropped,
-            split.rounds,
-        )
-
-    # spec 040 T7：把事件映射回源消息日期。
-    #
-    # `date_start` 以前一律写成入库日（229 张卡的旧账），时间过滤直接失真。
-    # 判据在 `importer.assign_event_dates`：摘要与 turn 的汉字 4-gram 交集。
-    # **判不出就给 None**（A7），绝不回落到「今天」。
-    # spec 040：消息时间与事件时间分开传。
-    #
-    # - `msg_time`：这条事件来自哪条消息（用于相对时间换算，也单独存）
-    # - `date_hint`：摘要里的相对时间词（`昨天`/`上周`），由服务端按 msg_time 换算
-    #
-    # 原来的写法把「消息日期」当 `date_hint` 传，混淆了两件事：
-    # 10-30 的消息说「昨天」，事件应该是 10-29，不是 10-30。
-    event_msg_times = assign_event_msg_times(summaries, usable)
-
-    for idx, summary in enumerate(summaries):
+    for idx, event in enumerate(events):
         try:
-            raw_ts = event_msg_times[idx] if idx < len(event_msg_times) else None
-            msg_time = _parse_ts(raw_ts)
+            msg_time = _event_time(event, usable, fallback_dates[idx])
             remember_event(
                 namespace=namespace,
-                summary=summary,
-                date_hint=relative_time_hint(summary),
+                summary=event.summary,
+                date_hint=relative_time_hint(event.summary),
                 msg_time=msg_time,
+                session_id=session_id,
+                resolves=[event.merge_into] if event.merge_into else None,
                 settings=settings,
                 raw_quote_ids=list(quote_ids),
             )
@@ -664,8 +734,6 @@ def run_ingest(
         except Exception as exc:  # noqa: BLE001 - 单条失败只跳过
             # **不**把它计进 `turns_skipped`：那一栏记的是「被 do_not_store
             # 拦下的 turn 数」，写卡失败是「摘要没变成卡」，两码事。
-            # 混在一起，`events_created + turns_skipped` 就凑不出可解释的总数，
-            # 沉默损失（errors 里那些）也就看不见了。
             outcome.errors.append(f"第 {idx + 1} 条: {type(exc).__name__}: {exc}")
             logger.warning("ingest 单条写卡失败 %s #%d: %s", job_id, idx + 1, exc)
 

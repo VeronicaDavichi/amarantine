@@ -95,6 +95,8 @@ SCHEMA_PROPERTIES: list[dict[str, Any]] = [
     {"name": "observed_at", "dataType": ["date"]},
     # spec 040：消息时间与事件时间分开存，来源可追溯
     {"name": "msg_time", "dataType": ["date"]},
+    # spec 046：会话 id，供日常模式回溯上文
+    {"name": "session_id", "dataType": ["text"]},
     {"name": "time_source", "dataType": ["text"]},
     # 护栏降级留痕（A33）
     {"name": "anomaly", "dataType": ["text"]},
@@ -229,6 +231,8 @@ def to_properties(
         props["observed_at"] = _rfc3339(card.observed_at)
     if card.msg_time is not None:
         props["msg_time"] = _rfc3339(card.msg_time)
+    if card.session_id:
+        props["session_id"] = card.session_id
     props["time_source"] = card.time_source
     if card.review_verdict is not None:
         props["review_verdict"] = card.review_verdict

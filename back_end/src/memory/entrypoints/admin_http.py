@@ -1967,6 +1967,7 @@ def create_app(
             run_ingest,
             job_id=job.job_id,
             namespace=ns,
+            session_id=body.session_id,
             turns=usable,
             quote_ids=quote_ids,
             settings=cfg,

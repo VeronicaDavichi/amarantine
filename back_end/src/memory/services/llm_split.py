@@ -30,7 +30,7 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from memory.config import Settings
@@ -224,6 +224,148 @@ def split_events(
         事件摘要列表，空输入返回 `[]`。
     """
     return _split_once(text, settings, client=client, timeout_s=timeout_s)[:MAX_EVENTS]
+
+
+
+
+#: 带上下文切分的系统提示。三条约束都是硬要求：
+#: 1. 上文只用于理解指代，**不能为它建卡**（否则回溯内容会变成新事件）
+#: 2. 每条事件必须带本片内的源消息序号（建卡范围因此被锁在原始 30 条内）
+#: 3. 看不懂就直说 `needs_more_context`，系统会拉更长上文重试一次
+_SYSTEM_SOURCED = """你是事件切分器。我会给你两段文本：
+- 【上文】：之前的对话，**只用来理解指代**（「那个」「他」指谁），不要为它建卡
+- 【待切分】：本次要处理的 {n} 条消息
+
+把【待切分】拆成若干条独立事件，每条输出：
+- summary: 事件摘要（能单独成立，不润色不编造）
+- source_indices: 这条事件依据了【待切分】里的第几条（1 开始的序号数组）
+- merge_into: 如果这条与【已有卡片】里的某条是同一件事，填那个 event_id；否则 null
+
+规则：
+- source_indices 只能填 1~{n}，**不许引用【上文】的序号**
+- 如果【上文】仍不足以理解指代，输出 {{"needs_more_context": true}}
+- 只输出 JSON 数组，不要解释
+
+示例：
+[{{"summary": "王泳完成前端页面修改", "source_indices": [2], "merge_into": null}}]"""
+
+
+@dataclass
+class SourcedEvent:
+    """一条带来源的事件（spec 046）。"""
+
+    summary: str
+    source_indices: list[int] = field(default_factory=list)
+    merge_into: str | None = None
+    needs_more_context: bool = False
+
+
+def split_with_sources(
+    context: list[dict],
+    window: list[dict],
+    settings: Settings,
+    *,
+    client: Any | None = None,
+    timeout_s: float | None = None,
+) -> list[SourcedEvent]:
+    """带会话上文的切分，返回带源索引的事件。
+
+    Args:
+        context: 同会话更早的消息（只读，不建卡）。
+        window: 本次要处理的消息（每条 `{text, ts}`）。
+        settings: LLM 配置。
+
+    Returns:
+        事件列表；**至少一条**。LLM 失败/解析失败时降级为「一条消息一个事件」，
+        这样时间和范围仍然精确，只是没有摘要润色。
+
+    Note:
+        越界索引在这里就被丢掉 —— 建卡只能落在本片，是 REQ-3 的硬约束。
+    """
+    window = [w for w in window if (w.get("text") or "").strip()]
+    if not window:
+        return []
+
+    ctx_lines = [
+        f"{i}. {c.get('text', '')}".replace("\n", " ")
+        for i, c in enumerate(context, 1)
+    ]
+    win_lines = [
+        f"{i}. {w.get('text', '')}".replace("\n", " ")
+        for i, w in enumerate(window, 1)
+    ]
+    prompt_parts = []
+    if ctx_lines:
+        prompt_parts.append("【上文，仅供理解指代，不要为它建卡】\n" + "\n".join(ctx_lines))
+    prompt_parts.append("【待切分，只处理这些】\n" + "\n".join(win_lines))
+    prompt = "\n\n".join(prompt_parts)
+
+    # 单条极短文本不值得一次 LLM 调用（与会话模式无关：一条「好的」不用切）
+    _too_short = len(window) == 1 and len((window[0].get("text") or "")) <= 10
+    raw: Any = []
+    if not _too_short and len(prompt) > 20:
+        _est = max(8192, min(16384, len(prompt) * 3))
+        logger.info(
+            "LLM 带上下文切分 | 上文 %d 条 | 本片 %d 条 | max_tokens=%d",
+            len(context), len(window), _est,
+        )
+        try:
+            raw = chat(
+                [{"role": "user", "content": prompt}],
+                settings,
+                system=_SYSTEM_SOURCED.format(n=len(window)),
+                max_tokens=_est,
+                client=client,
+                timeout_s=timeout_s,
+            )
+        except Exception as exc:  # noqa: BLE001 - 降级：一条消息一个事件
+            logger.warning("带上下文切分失败，降级为逐条: %s", exc)
+            raw = []
+
+    events = _parse_sourced(raw, len(window))
+    if not events:
+        # 降级：一条消息一个事件（时间/范围仍精确，只是没有摘要）
+        events = [
+            SourcedEvent(summary=(w.get("text") or "").strip(), source_indices=[i])
+            for i, w in enumerate(window, 1)
+        ]
+    return events
+
+
+def _parse_sourced(raw: Any, window_len: int) -> list[SourcedEvent]:
+    """解析 LLM 输出；越界索引直接丢。"""
+    if isinstance(raw, dict):
+        if raw.get("needs_more_context"):
+            return [SourcedEvent(summary="", needs_more_context=True)]
+        raw = raw.get("events") or []
+    if not isinstance(raw, list):
+        return []
+
+    out: list[SourcedEvent] = []
+    for item in raw:
+        if isinstance(item, str):
+            text = item.strip()
+            if text:
+                out.append(SourcedEvent(summary=text))
+            continue
+        if not isinstance(item, dict):
+            continue
+        if item.get("needs_more_context"):
+            return [SourcedEvent(summary="", needs_more_context=True)]
+        summary = str(item.get("summary") or "").strip()
+        if not summary:
+            continue
+        indices = [
+            int(i) for i in (item.get("source_indices") or [])
+            if isinstance(i, (int, float)) and 1 <= int(i) <= window_len
+        ]
+        merge_to = item.get("merge_into")
+        out.append(SourcedEvent(
+            summary=summary,
+            source_indices=indices,
+            merge_into=str(merge_to).strip() if merge_to else None,
+        ))
+    return out
 
 
 def split_all(

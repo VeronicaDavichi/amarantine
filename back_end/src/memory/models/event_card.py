@@ -122,6 +122,10 @@ class EventCard(BaseModel):
 
     # ---------- 可选（17） ----------
     date_end: date | None = None
+    #: 这张卡属于哪个会话（群 / 私聊）。spec 046：日常模式靠它回溯上文。
+    #:
+    #: **不进 `event_id` 哈希** —— 同一段话从群里搬到私聊，事件本身没变。
+    session_id: str | None = None
     #: 消息的发送时间（spec 040）。**与事件时间不是一回事**：
     #: 10-30 发的消息可能在说「昨天开的会」，事件日是 10-29。
     msg_time: datetime | None = None

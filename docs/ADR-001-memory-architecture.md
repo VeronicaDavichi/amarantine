@@ -1013,6 +1013,7 @@ MCP 的 `initialize` 响应可带 `instructions` 字段，运行时直接投给 
     "supersedes":       { "type": ["string", "null"] },
     "observed_at":      { "type": ["string", "null"], "format": "date-time" },
     "msg_time":         { "type": ["string", "null"], "format": "date-time" },
+    "session_id":       { "type": ["string", "null"] },
     "time_source":      { "type": "string",
                           "enum": ["stated", "relative", "msg_ts", "imported"] },
     "retention":        { "type": "string", "enum": ["normal", "sensitive"] },
