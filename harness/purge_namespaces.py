@@ -30,6 +30,10 @@ PROTECTED = {"work", "personal"}
 
 #: SQLite 里带 namespace 列、需要按 namespace 清理的表。
 SQLITE_TABLES = (
+    # spec 046/047：按 namespace 清理时必须连原文和 job 一起删 ——
+    # 只删向量会留下 ingest_job.done，重灌直接被幂等挡掉（实测踩过）。
+    "raw_quote",
+    "ingest_job",
     "alias_reject",
     "surname_decl",
     "embedding_index_meta",
@@ -294,6 +298,11 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="清理残留测试 namespace")
     ap.add_argument("--apply", action="store_true", help="真删（默认只报告）")
     ap.add_argument(
+        "--namespace",
+        default="",
+        help="只处理这个 namespace（逗号分隔可多个）；默认全部非保护域",
+    )
+    ap.add_argument(
         "--include-protected",
         action="store_true",
         help=f"连保护列表一起处理（{sorted(PROTECTED)}）—— 危险",
@@ -322,8 +331,17 @@ def main() -> int:
         all_ns |= set(detail)
     all_ns.discard(None)
 
-    targets = sorted(all_ns - PROTECTED) if not args.include_protected else sorted(all_ns)
-    skipped = sorted(all_ns & PROTECTED) if not args.include_protected else []
+    picked = {n.strip() for n in args.namespace.split(",") if n.strip()}
+    if picked:
+        unknown = sorted(picked - all_ns)
+        if unknown:
+            print(f"⚠ 指定的 namespace 里这些不存在/已清空: {unknown}")
+        all_ns = sorted(picked & all_ns)
+        targets = sorted(all_ns)
+        skipped = []
+    else:
+        targets = sorted(all_ns - PROTECTED) if not args.include_protected else sorted(all_ns)
+        skipped = sorted(all_ns & PROTECTED) if not args.include_protected else []
 
     print(f"\n共发现 {len(all_ns)} 个 namespace")
     if skipped:

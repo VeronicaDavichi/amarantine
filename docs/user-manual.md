@@ -111,7 +111,8 @@ cd /mnt/e/PycharmProjects/amarantine
 ./harness/dev-linux.sh pytest -q
 ```
 
-全绿应该是 `246 passed`。
+全绿以当前分支为准（spec 047 完成时为 `1479 passed`；数字会随用例增长，
+以命令真实输出为准，不要背数字）。
 
 ### 起 MCP 服务（给 LLM 用）
 
