@@ -237,7 +237,7 @@ _SYSTEM_SOURCED = """你是事件切分器。我会给你两段文本：
 - 【待切分】：本次要处理的 {n} 条消息
 
 把【待切分】拆成若干条独立事件，每条输出：
-- summary: 事件摘要（能单独成立，不润色不编造）
+- summary: 一句话事件描述（**概括，不要照抄原话**；纯图片/表情写成「某人在群里发了图片」）
 - source_indices: 这条事件依据了【待切分】里的第几条（1 开始的序号数组）
 - merge_into: 如果这条与【已有卡片】里的某条是同一件事，填那个 event_id；否则 null
 
@@ -318,9 +318,31 @@ def split_with_sources(
                 client=client,
                 timeout_s=timeout_s,
             )
-        except Exception as exc:  # noqa: BLE001 - 降级：一条消息一个事件
-            logger.warning("带上下文切分失败，降级为逐条: %s", exc)
-            raw = []
+        except Exception as exc:  # noqa: BLE001
+            # 一次重试：60 条消息的提示词常超 60s。截短上文（30→10）更快，
+            # 大部分超时能救回来；再失败才降级为逐条（原文卡）。
+            logger.warning("带上下文切分失败，截短上文重试: %s", exc)
+            short_ctx = context[-10:] if context else []
+            short_prompt = prompt
+            if short_ctx:
+                head = "\n\n".join(
+                    f"{i}. {c.get('text', '')}".replace("\n", " ")
+                    for i, c in enumerate(short_ctx, 1)
+                )
+                short_prompt = f"【上文，仅供理解指代，不要为它建卡】\n{head}\n\n" + \
+                               prompt.split("【待切分")[1].join(["【待切分", ""])
+            try:
+                raw = chat(
+                    [{"role": "user", "content": short_prompt}],
+                    settings,
+                    system=_SYSTEM_SOURCED.format(n=len(window)),
+                    max_tokens=_est,
+                    client=client,
+                    timeout_s=timeout_s,
+                )
+            except Exception as exc2:  # noqa: BLE001 - 仍失败才降级
+                logger.warning("截短上文仍失败，降级为逐条: %s", exc2)
+                raw = []
 
     events = _parse_sourced(raw, len(window))
     if not events:
@@ -333,7 +355,16 @@ def split_with_sources(
 
 
 def _parse_sourced(raw: Any, window_len: int) -> list[SourcedEvent]:
-    """解析 LLM 输出；越界索引直接丢。"""
+    """解析 LLM 输出；越界索引直接丢。
+
+    **`chat()` 返回的是 JSON 字符串**，不是解析好的对象 —— 第一版没解字符串，
+    结果每次都解析失败、静默降级成逐条原文卡（1900/1956 张是原文）。
+    """
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except (TypeError, ValueError):
+            return []
     if isinstance(raw, dict):
         if raw.get("needs_more_context"):
             return [SourcedEvent(summary="", needs_more_context=True)]
