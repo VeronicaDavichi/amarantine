@@ -290,128 +290,42 @@ scope  ∈ {global, group:<gid>, friend:<uid>}
 - 名片里的括号内容（`（北瑀家的鱼）`）是**人写的备注式后缀**，是否拆掉待定（先整体保留）
 - 非 QQ 数据源（钉钉）没有群名片概念，本 spec 只对 QQ 生效
 
-### 2026-11-12 · 术语修正
+### 2026-11-12 · 实施记录（T1–T6 全部落地）
 
-用户指出：**昵称、群名片、备注都是「人名标记」，不是有高下之分的来源**。
-所以设计里不再写「优先级」，改成「标记集合 + 按 scope 匹配」：
-
-- 身份只有一个（uid），标记可以任意多个
-- 差别只在**生效范围**（global / group / friend）
-- 抽取用名册要收**全部标记**，否则群里换一种叫法就对不上
-
-### 2026-11-12 · 名片刻画落地
-
-**已交付**：`src/memory/services/name_marker.py`（`classify_card` / `analyze_group` /
-`strip_parens` / `strip_alt_suffix`）+ `tests/test_name_marker.py`（10 条）。
-
-**用真实群数据验证**（`1019369531`，500 人）：
-
-```
-moderation  26 个号（23+13+2 的处罚名片）→ 全部排除
-impersonation 「刘芮西宝宝」21 个号 → 整活桶
-blank_ws    「　」3 个、「　　　　　」2 个 → 排除
-ambiguous   「秋」「咸鱼」「黑崎一护」各 2 个 → 留痕
-same_owner  「往汐」+「往汐…复活版」→ 可建 SAME_OWNER
-```
-
-**踩到的坑**：括号必须**先剥再删标点** —— 否则 `往汐（北瑀家的鱼）复活版` 会变成
-`往汐北瑀家的鱼`（括号被当标点删掉，括号内文字粘进名字）。
-
-**下一步**：T2 导入用名片（sender 解析链）、T3 写 `DISPLAYED_AS`。
-
-### 2026-11-12 · 伪装名与相似名（第二/三条硬规则）
-
-- 新增 `KIND_SPOOFED`：含双向/零宽控制符 → 不是名字，**彼此之间也不关联**（模板复制）
-- `USABLE_KINDS` 只含 `alt` / `normal`，伪装名进 `collect_excluded()` 审计
-- 不做编辑距离/相似度合并：`往汐` vs `往汐酱` 是两个独立名字
-- 测试：伪装名互相不关联（差 1 字 / 字节相同两种都覆盖）、近似名不合并、审计收集 3 类
-
-**全量 pytest：1472 passed。**
-
-### 2026-11-12 · T1–T4 落地
-
-**已交付**
+**代码**
 
 | 文件 | 内容 |
 |---|---|
-| `harness/export_qq_members.mjs` | `list_group_members` → `group-<gid>.json`（uid/qq/昵称/群名片）；已导出 **106 个群** |
-| `harness/export_qq.mjs` | 消息语料加 `sender_uid` / `sender_name` |
-| `harness/import_chat.py` | `load_group_names()`：uid → 群名片（不可用则回落昵称）；`build_turns` 按 uid 解析；导入后写名字标记 |
-| `name_marker.py` | 五分类 + 整活判定 + 伪装名 + 审计收集（上一轮） |
-| `identity.py` | `ENSURE_DISPLAY_NAME_CYPHER` / `WHOIS_CYPHER` / `WHOIS_SCOPE_CYPHER` / `ensure_display_names()` |
-| `admin_http.py` | `POST /admin/display-names`、`GET /admin/whois?name=&scope=&base=` |
-| `tests/test_display_names.py` | 7 条 |
+| `name_marker.py` | `classify_card`（moderation/blank_ws/blank_punct/alt/normal/spoofed）+ `analyze_group`（整活阈值 3、same_owner、ambiguous）+ `collect_excluded` 审计 |
+| `group_title.py` | 公告解析 `恭喜X获得群主授予的Y头衔`（增量来源） |
+| `identity.py` | `DISPLAYED_AS` 写入（scope/source）、`WHOIS_CYPHER`/`WHOIS_SCOPE_CYPHER` |
+| `admin_http.py` | `POST /admin/display-names`、`GET /admin/whois`（`base=true` 按基础名） |
+| `harness/export_qq_identities.py` | 从解密后的 `group_info.db` 导成员：uid/qq/昵称/群名片/**头衔（64023）** |
+| `harness/export_qq_members.mjs` | MCP 版成员表（无头衔，作兜底） |
+| `harness/import_chat.py` | `load_group_names`（uid→名片，不可用回落昵称）、导入后写名字标记 |
 
-**真库验证**（`qq-505456846` / `group:485490399`）
+**真库验证**
 
 ```
 成员表 390 人 → 可用显示名 377（排除 12：处罚/空白/伪装）
-写入名字标记：group scope 50 条（群名片）、global 375 条（昵称）
-
-whois 往汐（base=true）@ group:485490399
-  → 2 个账号：u_Z0c…（复活版）/ u_oZv…（主号）
-  → ambiguous=true        ← 正是要的行为
-
-whois 往汐（北瑀家的鱼）复活版（精确）
-  → 1 个账号 u_Z0c…
+名字标记：group scope 50 条、global 375 条
+whois 往汐（base=true）→ 2 个账号，ambiguous=true
+头衔导出：88 群 / 38056 成员 / 956 人有头衔
+  485490399：390 人 / 22 头衔（海嗣/妈妈桑/羽生/便携🐟/虚怀寄怀的鱼…）
 ```
 
-**语义说明**
+**两条硬规则（用户补充）**
 
-- 精确 `whois` 只认字节相同的名字（`往汐（北瑀家的鱼）` ≠ `…复活版`）
-- `base=true` 时按基础名匹配（去括号 + 去小号后缀），才能一次拿到主号 + 复活版
-- 整活名字（≥3 个号同名）**不建关联边**，但 `whois base` 仍会列出全部账号并标 ambiguous
+1. 全空白/控制字符 = 整活人，不作名字
+2. 含双向/零宽控制符 = 伪装名，**连彼此之间也不关联**（模板复制）；近似名一律不合并
 
-**仍未做**：T6 文档（用户手册）、导入口径的端到端重灌（下一批数据时验证）。
+**更正一个错误结论**
 
-### 2026-11-12 · 群头衔解析器（用户补充的第三个信号）
+我曾说 `group_info.db` 解密后 `page_count=0` —— 实际是**在 WSL 里用 Windows 路径打开
+SQLite，它把路径当新库创建了**。用 `/mnt/c/...` 打开后 45 张表齐全，`group_member3.64023`
+就是头衔列。教训：跨 WSL/Windows 的路径必须转换，否则会得到「空库」假象。
 
-**已交付**：`src/memory/services/group_title.py`
-（`parse_title_notice` / `collect_title_notices`）+ `tests/test_group_title.py`（4 条）。
+**测试**：`test_name_marker`(18) + `test_group_title`(4) + `test_display_names`(7)
++ `test_export_identities`(2)；全量 **1485 passed**。
 
-**真实文案验证**（群 `485490399`，24 条公告）：
-
-```
-恭喜…智械了别杀我获得群主授予的机仆头衔        → ("…智械了别杀我", "机仆")
-恭喜羽生玲央获得群主授予的羽生头衔             → ("羽生玲央", "羽生")
-恭喜棉棉获得群主授予的妈妈桑头衔               → ("棉棉", "妈妈桑")
-恭喜素笺获得群主授予的莫比乌斯车的头衔         → ("素笺", "莫比乌斯车")
-```
-
-**正则坑**：`…的莫比乌斯车的头衔` —— 结尾的「的」属于「的头衔」，头衔本体是
-`莫比乌斯车`，所以解析后要 `strip("的")`，否则每个头衔都多一个「的」。
-
-**为什么不直接读成员表**：`list_group_members` 不回头衔；自解密 `group_info.db`
-得到 `page_count=0`。所以只做公告解析，限制写进 Notes。
-
-### 2026-11-12 · 更正：群头衔能全量拿到
-
-**之前的结论是错的**：我说 `group_info.db` 解密后 `page_count=0` —— 那是我在 WSL 里
-用 Windows 路径（`C:\Users\...`）打开 SQLite，SQLite 把它当成新库创建了。
-用 `/mnt/c/Users/...` 打开后 **45 张表都在**。
-
-**关键发现**：`group_member3` 的列名是 protobuf 字段号，其中
-
-| 列 | 含义 |
-|---|---|
-| `60001` | 群号 |
-| `1000` | NT uid |
-| `1002` | QQ 号 |
-| `20002` | 昵称 |
-| `64003` | 群名片 |
-| **`64023`** | **群头衔** |
-
-**真实导出**（`harness/export_qq_identities.py`）：
-
-```
-88 个群 / 38056 个成员 / 956 人有头衔
-群 485490399：390 人 / 22 人有头衔
-  505456846 海嗣 · 334176846 妈妈桑 · 1944114167 羽生 · 1687730475 便携🐟
-  3980294709 虚怀寄怀的鱼 · 17688168 如故的鱼 · 2499429803 AEY🐟
-```
-
-**结论**：头衔不需要靠公告「猜」，成员表一次全量导出；公告解析只用来补
-「谁在什么时候被授予了什么」。
-
-**教训**：跨 WSL/Windows 用路径时，Windows 路径必须转 `/mnt/<盘>/...`；
-否则 SQLite/`open()` 会以相对文件名新建文件，得到「空库」假象。
+**未做**：`TITLED` 边写图（头衔目前只导出，还没进 Neo4j）、导入口径的端到端重灌。
