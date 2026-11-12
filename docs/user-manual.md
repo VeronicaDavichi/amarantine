@@ -1530,6 +1530,10 @@ node harness/export_qq.mjs --db "D:/TencentData/Chats/Tencent Files/505456846/nt
 > **别用整库一次导出**（`--all-groups`）：它是「一次查 5000 条再按群分桶」，
 > 2.6 GB 的库里前几个大群会把 5000 条吃光，其余群一条不剩。逐群
 > `--per-group-limit` 才导得全。
+> **默认取最近的 N 条**（2026-11-12 起）：导出按时间倒序拉取、再按正序写盘，
+> 所以语料末尾就是最新消息。要补更早的历史才加 `--oldest`。
+> 示例：`--per-group-limit 500` = 最近 500 条；`--oldest --per-group-limit 500` = 最早 500 条。
+
 
 ### 3. 导入
 

@@ -36,7 +36,7 @@ const { Client } = await import(resolveSdk("client/index.js"));
 const { StdioClientTransport } = await import(resolveSdk("client/stdio.js"));
 
 function parseArgs(argv) {
-  const out = { limit: 5000 };
+  const out = { limit: 5000, oldest: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--list") out.list = true;
@@ -49,6 +49,7 @@ function parseArgs(argv) {
     else if (a === "--out") out.out = argv[++i];
     else if (a === "--limit") out.limit = Number(argv[++i]);
     else if (a === "--per-group-limit") out.perGroupLimit = Number(argv[++i]);
+    else if (a === "--oldest") out.oldest = true;
     else if (a === "--groups") out.groups = argv[++i].split(",").map(Number).filter(Boolean);
     else if (a === "--since") out.since = argv[++i];
     else if (a === "--until") out.until = argv[++i];
@@ -100,7 +101,8 @@ async function main() {
           chat: "group",
           groupQq: g.qq,
           limit: args.perGroupLimit,
-          order: "asc",
+          // 默认取最近 N 条（用户记不得远的）；--oldest 才从最早的开始
+          order: args.oldest ? "asc" : "desc",
         };
         if (args.since) query.since = args.since;
         if (args.until) query.until = args.until;
@@ -140,7 +142,7 @@ async function main() {
         dbPath: args.db,
         chat: "group",
         limit: 5000,
-        order: "asc",
+        order: args.oldest ? "asc" : "desc",
       });
       const buckets = new Map();
       for (const m of res.messages ?? []) {
@@ -180,7 +182,7 @@ async function main() {
     const query = {
       dbPath: args.db,
       limit: args.limit,
-      order: "asc",
+      order: args.oldest ? "asc" : "desc",
       chat: args.c2c ? "c2c" : "group",
     };
     if (args.group) query.groupQq = Number(args.group);
@@ -220,7 +222,13 @@ async function main() {
 function toCorpus(messages, { cid, title }) {
   const out = [];
   const roster = new Set();
-  for (const m of messages) {
+  // 默认按最新优先拉取；写盘前统一按时间正序，导入侧不用关心来源顺序
+  const ordered = [...messages].sort(
+    (a, b) =>
+      Number(a.timestamp ?? 0) - Number(b.timestamp ?? 0) ||
+      String(a.msgId ?? "").localeCompare(String(b.msgId ?? "")),
+  );
+  for (const m of ordered) {
     // mcp-qq 已经把多段合并成 `text` 了；只有它为空时才回头拼 segments
     let text = typeof m.text === "string" ? m.text.trim() : "";
     if (!text) {
