@@ -110,3 +110,38 @@ Validation checks:
 ---
 
 **Remember:** LeanSpec tracks what you're building. Keep specs in sync with your work!
+
+
+---
+
+## 【验证】约定（2026-11-12）
+
+**以 `【验证】` 开头的问题 = 必须去数据库确认，不能靠读代码推断。**
+
+### 数据源
+
+| 库 | 地址 | 用途 |
+|---|---|---|
+| Weaviate | `http://127.0.0.1:8081`（class `MemoryEvent`） | 卡片、时间、摘要、session |
+| Neo4j | HTTP `http://127.0.0.1:7474/db/neo4j/tx/commit` | 图节点与边 |
+| SQLite | `back_end/data/memory.db` | 原文、job、别名拒绝 |
+
+### 回答必须包含
+
+1. **实际执行的查询**（Cypher / GraphQL / SQL 原文）
+2. **返回的真实数据**（行数 + 关键字段；大结果抽样并说明抽样方式）
+3. **结论**：数据是否支持某判断
+
+### 禁止
+
+- 用「代码里是这么写的」代替数据库证据
+- 库连不上时给推测 — **必须直说不可用**，并给出重连命令
+- 把「我记得/上次是」当验证结果
+
+### 环境检查顺序
+
+```bash
+docker ps --format '{{.Names}} {{.Status}}' | grep amarantine   # 容器
+curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8081/v1/.well-known/ready
+```
+
