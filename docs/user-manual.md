@@ -23,8 +23,9 @@
 ### 前置
 
 - **WSL2 Ubuntu 22.04+**（Windows 上请用 WSL 跑，不要在 PowerShell 里跑）
-- Docker（跑三个中间件）
+- Docker（跑中间件：默认 3 个容器，rerank 是可选的第 4 个）
 - `uv`（Python 包管理）
+- **Windows 侧 Node ≥ 18**（只有导 QQ 聊天记录时用，见「QQ 聊天记录导入」）
 
 ### 1. 起中间件
 
@@ -36,11 +37,18 @@ docker compose ps          # 三个都要 healthy
 
 预期看到：
 
-| 服务 | 端口 | 用途 |
-|---|---|---|
-| weaviate | 8081 | 向量 + 关键词检索 |
-| embedding | 8082 | bge-m3 编码 |
-| neo4j | 7474 / 7687 | 实体关系图 |
+| 服务 | 端口 | 用途 | 谁起 |
+|---|---|---|---|
+| weaviate | 8081（gRPC 50061） | 向量 + 关键词检索 | 容器 |
+| embedding | 8082 | bge-m3 编码 | 容器 |
+| neo4j | 7474（HTTP）/ 7687（bolt） | 实体关系图 | 容器 |
+| reranker | 8083 | 精排，**可选** | 容器（`--profile rerank`） |
+| admin HTTP | 8765 | 管理接口 + 浏览器管理台 `/ui` | `admin_http` 进程（WSL） |
+| LLM relay | 3001 | Windows 侧 LLM 中继 | `harness/vpn_relay.py`（Windows） |
+
+> **只有前三个是 `docker compose up -d` 起的。** 8083 要显式加 profile；
+> 8765 是后端进程；3001 是 Windows 侧的 relay（`harness/dev-linux.sh` 会自动探活并按需拉起）。
+> 3000 是**网关端口**、3001 才是 relay，填错的表现是「LLM 超时降级」而不是连接错误。
 
 > 如果 `8080` / `50051` 被占，说明你机器上有别的 Weaviate
 > （常见于 Dify）。本项目已改用 `8081` / `50061`，见 `docker-compose.yml`。
@@ -78,6 +86,16 @@ ADMIN_TOKEN=自己定一个够长的
 
 # 数据库（默认 SQLite，可换 PG）
 DATABASE_URL=sqlite:///./memory.db
+
+# LLM（切分 / 打标 / 别名推断用）
+# 走 relay 时端口是 3001，不是网关的 3000；留空则由 dev-linux.sh 自动填
+LLM_BASE_URL=
+LLM_PROVIDER=anthropic
+LLM_MODEL=deepseek-v4-flash
+LLM_API_KEY=你的 key
+# 代码默认 60000 —— 批量导入时必须调大：一片是「30 条只读上文 + 30 条本片」，
+# 实测单片 20–80 秒，60 秒会让一部分片超时降级成原文卡
+LLM_TIMEOUT_MS=180000
 ```
 
 **生产环境必须改** `NEO4J_PASSWORD` 和 `ADMIN_TOKEN`。
@@ -1420,6 +1438,375 @@ sqlite3 back_end/data/memory.db \
 
 ---
 
+## QQ 聊天记录导入（spec 040 / 046 / 047）
+
+把一个 QQ 群的历史消息灌成记忆，要走四步：**导成员表 → 导消息 → 导库 → 校验**。
+前两步在 Windows、后两步在 WSL，别在同一个 shell 里混着跑。
+
+### 两条链路，两个系统
+
+| 阶段 | 在哪跑 | 为什么 |
+|---|---|---|
+| 导出成员表 / 导出消息 | **Windows**（PowerShell） | 要直读腾讯 QQ 的 SQLCipher 库 `nt_msg.db`，Node 包和库文件都在 Windows 侧 |
+| 导入 / 校验 | **WSL2 Ubuntu** | 服务、`.env`、SQLite 都在 WSL 里 |
+
+产物目录用 `back_end/data/corpus/`：`data/` 和 `harness/corpus/` 都在
+`.gitignore` 里 —— 真实聊天记录带人名、手机号、地址，**不准入库**。
+
+一次性前置：
+
+- 要导哪个账号的库，就**先登录那个账号**。库口令按账号推导，只从登录中的
+  进程里拿得到，没登录的历史账号解不开。
+- Windows 侧要能跑 `node`，并装好 `@powercess/qq-mcp`。不在默认路径时，
+  改 `harness/export_qq.mjs` 顶部的 `PKG` 常量（`export_qq_members.mjs` 同一处）。
+- 成员表**导一次就够**；但群名片被改过之后要重导（见「已知限制」）。
+
+### 1. 导出群成员表
+
+```powershell
+cd E:\PycharmProjects\amarantine
+node harness/export_qq_members.mjs --all --out-dir back_end/data/corpus/qq-identities
+```
+
+每个群一份 `group-<gid>.json`。预期输出：
+
+```
+  ✓ 485490399: 390 人 → back_end/data/corpus/qq-identities/group-485490399.json
+  ✓ 1019369531: 500 人 → back_end/data/corpus/qq-identities/group-1019369531.json
+  ...
+导出 106/106 个群
+```
+
+文件长这样（真实片段）：
+
+```json
+{
+ "groupQq": "485490399",
+ "members": [
+  {"uid": "u_oZvYzRujHn5KleWUi8o--Q", "qq": 3883585327, "nickname": "潮间带", "card": "往汐（北瑀家的鱼）"},
+  {"uid": "u__2CM7A4NCleKM9ZrIm7zvg", "qq": 259538562, "nickname": "虚怀寄怀", "card": ""}
+ ]
+}
+```
+
+| 字段 | 是什么 | 会不会空 |
+|---|---|---|
+| `uid` | 账号的内部主键，跨群、改名都不变 | 不会 |
+| `qq` | QQ 号，人看得懂的那串 | 偶尔空 |
+| `nickname` | 账号昵称（好友看到的名字） | 偶尔空 |
+| `card` | **群名片**（这个群里显示的名字） | **经常空** |
+
+> **为什么必须单独导成员表**：消息导出里**没有群名片**，只有 `uid`。
+> 只导消息的话，实测 1999 条里有 1040 条拿不到 `senderName` —— 别人的名片
+> 在导入时解析不出来，发言人只能是一串数字或 `unknown`。
+
+### 2. 导出消息
+
+```powershell
+node harness/export_qq.mjs --db "D:/TencentData/Chats/Tencent Files/505456846/nt_qq/nt_db/nt_msg.db" `
+  --per-group-limit 1000 --groups 485490399 --out-dir back_end/data/corpus/qq-import
+```
+
+路径里的 `505456846` 是**登录账号的 QQ 号**（数据目录按账号分）。要导别的账号，
+先登录它，再把路径换掉。
+
+预期输出：
+
+```
+群 1 个，每群最多 1000 条
+  ✓ 485490399 大肥鱼乐园: 1000 条
+{ "groups": 1, "kept": 1000, "detail": [...] }
+```
+
+产出 `qq-<gid>.json`，每条消息带 `text` / `ts` / `type` / `sender` / `sender_uid` / `sender_name`：
+
+| 字段 | 说明 |
+|---|---|
+| `sender` | 导出时的回落值：`senderName` → QQ 号 → `unknown` |
+| `sender_uid` | **唯一可靠的锚**，导入时用它反查群名片 |
+| `sender_name` | 源库里没有就是 `null`，别指望它 |
+
+> **别用整库一次导出**（`--all-groups`）：它是「一次查 5000 条再按群分桶」，
+> 2.6 GB 的库里前几个大群会把 5000 条吃光，其余群一条不剩。逐群
+> `--per-group-limit` 才导得全。
+
+### 3. 导入
+
+```bash
+cd /mnt/e/PycharmProjects/amarantine
+./harness/dev-linux.sh python ../harness/import_chat.py \
+  --corpus-dir data/corpus/qq-import \
+  --namespace qq-505456846 --window 30 \
+  --gate-marketing --gate-namespaces njzq-dingtalk \
+  --prefix qq
+```
+
+两点说明：
+
+- `dev-linux.sh` 会把 cwd 切到 `back_end/`，所以语料路径相对它写
+  `data/corpus/qq-import`。
+- **别用裸 `python3`**：依赖在 `.venv-linux` 里，裸解释器会直接
+  `ModuleNotFoundError: No module named 'pydantic'`。
+
+| 参数 | 作用 | 建议值 |
+|---|---|---|
+| `--corpus-dir` | 目录下所有 `*.json` | 导出目录；只导一个群改用 `--corpus <文件>` |
+| `--namespace` | 落到哪个记忆域 | QQ 单独一域（`qq-<群号>`），别混进工作域 |
+| `--window 30` | 每片多少条 | 30（与 046 的回溯窗口对齐） |
+| `--gate-marketing` | 营销闸门 | 群里有广告就开 |
+| `--gate-namespaces` | 拿哪些域的记忆做词面比对 | 你真正在用的域（`work` / `njzq-dingtalk`） |
+| `--prefix` | `dedupe_key` 前缀 | `qq`（默认 `dt`，键会写成 `dt:qq-...`，以后分不清来源） |
+| `--identity-dir` | 成员表目录 | 默认 `back_end/data/corpus/qq-identities`，导到别处才用传 |
+| `--resume` | 跳过已 `done` 的片 | 中断后重跑必备 |
+| `--retry-failed` | `failed` 的片换后缀重提 | 服务端对 `failed` 也做幂等，不改键不会重跑 |
+| `--wait 300` | 每片最多等几秒 | 单片实测 20–80 秒，别调小 |
+| `--report` | 报告路径 | 默认 `back_end/data/import_report.json` |
+| `--selftest` | 灌完自动跑召回自测 | `back_end/data/corpus/selftest_040.json` |
+
+预期输出（真实：`qq-485490399.json`，907 条有效消息。前几行来自干跑，
+`--dry-run` 只切不提交，可以先拿它核对人名解析）：
+
+```
+加载记忆词库: ['njzq-dingtalk']
+  词库 9038 字符
+  群成员表: 390 人 → 可用显示名 377（排除 12）
+  营销闸门: 识别 2 条 → 保留 2 / 丢弃 0 (缓存命中 1)
+
+=== qq-485490399.json | cid=qq-485490399 | turns=907 | 片=31 | 过滤=93
+  [1] 提交 30 条 | qq:qq-485490399:2026-10-23:2026-10-23:c01
+    status=running
+    status=done
+  ...
+  名字标记(scope group:485490399): 50 条
+
+汇总：片 31（跳过 0）| turn 907 | 卡 ~480 | 丢 0
+报告 → /mnt/e/PycharmProjects/amarantine/back_end/data/import_report.json
+```
+
+卡数由模型切分决定（实测密度约 15 张/片），四行里各看一件事：
+
+| 行 | 看什么 | 不对时说明 |
+|---|---|---|
+| `群成员表: 390 人 → 可用显示名 377（排除 12）` | 可用名数量 | 0 → 成员表没找到：`--identity-dir` 不对，或文件名不是 `group-<gid>.json`，或 `cid` 里的群号和文件名对不上 |
+| `营销闸门: 识别 N 条 → 保留 / 丢弃` | 广告判定 | 丢弃 ≈ 识别 → 词库是空的，见下一节 |
+| `turns=907` | 过滤了多少 | `过滤=93` 里含图片/链接/隐私/过短，正常 |
+| `丢 0` | `dropped_events` | >0 说明单行超长或一批太满，改小 `--window` |
+
+> 导入期间**不要**往同一个域并发灌。片与片串行等 `done`，并发提交只会让
+> LLM 排队更久，`--resume` 的语义也会变模糊。
+
+### 4. 校验
+
+四件事过一遍才算灌完。
+
+**(1) 报告**
+
+```bash
+python3 -c "import json;d=json.load(open('back_end/data/import_report.json'));print(d['totals']);print(d['files'][0].get('display_names'))"
+```
+
+`totals` 五个数：`chunks` / `skipped` / `turns` / `events` / `dropped_events`。
+`files[].marketing_gate` 是闸门统计，`files[].display_names.written` 是名字标记写了几条。
+
+**(2) 卡数 + 时间来源**
+
+```bash
+curl -s -X POST http://127.0.0.1:8081/v1/graphql -H "Content-Type: application/json" \
+  -d '{"query":"{ Aggregate { MemoryEvent(where: {path: [\"namespace\"], operator: Equal, valueText: \"qq-505456846\"}) { meta { count } } } }"}'
+# {"data":{"Aggregate":{"MemoryEvent":[{"meta":{"count":1659}}]}}}
+
+curl -s -X POST http://127.0.0.1:8081/v1/graphql -H "Content-Type: application/json" \
+  -d '{"query":"{ Aggregate { MemoryEvent(where: {path: [\"namespace\"], operator: Equal, valueText: \"qq-505456846\"}, groupBy: [\"time_source\"]) { groupedBy { value } meta { count } } } }"}'
+# msg_ts 1656 / relative 3（imported 0）
+```
+
+上面这组是 10 群重灌后的真实值。**`imported` 应该为 0 或接近 0**；
+它占比高说明这批卡的时间只能靠导入时间兜底 —— 要么源消息没有 `ts`，
+要么切分降级成了原文卡（见「排障」）。
+
+**(3) 发言人解析**
+
+```bash
+cd /mnt/e/PycharmProjects/amarantine/back_end
+TOKEN=$(grep '^ADMIN_TOKEN=' .env | cut -d= -f2-)
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "http://127.0.0.1:8765/admin/whois?name=%E5%BE%80%E6%B1%90&scope=group:485490399&base=true&namespace=qq-505456846"
+```
+
+返回 2 个账号且 `ambiguous:true` 就对了（完整返回见下文「名字标记」）。
+
+**(4) 召回自测（可选但推荐）**
+
+```bash
+./harness/dev-linux.sh python ../harness/import_chat.py \
+  --corpus-dir data/corpus/qq-import --namespace qq-505456846 --resume \
+  --selftest ../back_end/data/corpus/selftest_040.json
+```
+
+`--resume` 会跳过已 `done` 的片，所以这条重跑只花自测那几秒。不加它也行 ——
+`dedupe_key` 幂等会返回原 job，只是要多等一遍。
+
+```
+✓ 前端部署在哪台机器 → 材料 1 条
+✓ ESB 查客户信息返回什么字段 → 材料 1 条
+✓ 中登接口用什么报文格式 → 材料 1 条
+✓ 广州营业部合规对接人是谁 → 材料 1 条
+✓ 报表导出积压告警阈值 → 材料 1 条
+  命中率 5/5 = 1.0
+```
+
+判据是「任意材料摘要里出现任意 expect 关键词」—— 测的是**灌进去的查得回来**，
+不测语义正确性。
+
+### 5. 营销闸门：广告先比对，无关就丢
+
+`--gate-marketing` 对识别成营销的消息（广告/补款/图片刷屏）抽出**术语**
+（品牌、作品名，已去掉 URL、图片哈希、模板词），拿去和已有记忆做**词面**比对：
+命中一个就保留，一个都没有就丢弃。统计写进报告 `marketing_gate`。
+
+> **为什么不用 `/admin/recall` 判相关性**：召回分数是 RRF 归一化后的**相对值**，
+> top-1 恒为 1.0 —— 拿它判「相关」等于恒真。实测 289 条广告**全部**被判相关。
+> 词面命中没这个问题：广告里的品牌名要么在记忆里出现过，要么没有。
+
+两个已知坑：
+
+| 坑 | 表现 | 怎么办 |
+|---|---|---|
+| 词库读的是 **Neo4j HTTP 7474**（`neo4j` / `password`），不是 `/admin/recall` | 改过 `NEO4J_PASSWORD` 后词库为空 → **广告全丢** | 让 7474 的账号密码与脚本一致；日志里会出现「读取记忆词库失败（按空处理）」 |
+| 术语抽不出来 | 该条判 `marketing_no_terms` 直接丢 | 纯图/纯表情的广告没有术语，属预期 |
+
+### 6. 指代回溯：30 条上文，最多 120
+
+片首的「那个多少钱」「他说的那个」没有上文，模型只能瞎猜。所以每片建卡时：
+
+1. 带上**同会话**、当前片之前最多 **30 条**消息作为**只读上文**，并明确告知模型「不要为上文建卡」；
+2. 模型返回 `needs_more_context` 时，回溯到最多 **120 条**重试一次；
+3. 模型输出 `source_indices`（本片内的 1-based 序号），`date_start` 取这些消息里**最早**的 `ts`；越界索引丢弃并计数。
+
+失败时的降级顺序：多给的上文超时 → **截短上文（30→10）重试一次** → 仍失败才降级成整段原文卡。
+
+> **单片 30 条实测 20–80 秒**，这就是 `LLM_TIMEOUT_MS` 要写成 `180000` 的原因。
+> 用 60 秒的默认值，一部分片会超时降级，卡上 `time_source` 就会变成 `imported`。
+
+### 7. 名字标记：昵称 / 群名片 / 备注都是「名字」
+
+**身份只有一个（`uid`），名字可以有很多个；差别只在「这个标记在哪个范围生效」。**
+
+| 标记 | 来源 | 默认 scope | 谁看得到 |
+|---|---|---|---|
+| 账号昵称 | `nick` | `global` | 好友 / 资料页 |
+| 群名片 | `group_card` | `group:<gid>` | 该群所有人 |
+| 好友备注 | `remark` | `friend:<uid>` | 只有备注的人自己 |
+| 通讯录真名 | `real_name` | `global` | 平台字段，可能为空 |
+
+**没有优先级，只有生效范围。** 查询发生在哪个 scope，就取那个 scope 的标记：
+本 scope 有 → 用；没有 → 回落 `global`；全都没有 → 用 `uid` 短形式占位并标 `name_missing`。
+
+#### 五分类：名片不是都能当名字用
+
+实测群 `1019369531`（500 人）同名组 10 个，形态完全不同 ——
+**不分类直接按名字关联，会把 21 个人并成 1 个人**：
+
+| 分类 | 长什么样 | 实测号数 | 处理 |
+|---|---|---|---|
+| `moderation` | `合并转发存在广告,禁言15分钟`、`文本存在广告,禁言15分钟` | 23 + 13 | **不是名字**，排除 |
+| `blank_ws` | 全角空格、控制字符组成的空名片（整活人） | 3 + 2 | **不是名字**，排除 |
+| `blank_punct` | `……`、`.` | 2 | 回落昵称 |
+| `alt` | `往汐…复活版`、`小号`、`二号机` | 1 | 同主人候选 |
+| `normal` | `秋`、`咸鱼`、`黑崎一护` | 各 2 | 真实同名 |
+
+另有第 6 类 `spoofed`（伪装名），**不在这五类里**，规则见下一节。
+
+判定顺序固定：处罚关键词 → 全空白/控制字符 → 括号先剥再删标点 → 小号后缀 → 其余 `normal`。
+
+> **括号必须「先剥再删标点」**：否则 `往汐（北瑀家的鱼）复活版` 会变成
+> `往汐北瑀家的鱼`（括号被当标点删掉，括号里的字粘进名字）。
+
+#### 整活阈值 3
+
+| 组规模 | 条件 | 结论 |
+|---|---|---|
+| ≥ 3 | — | `impersonation`（整活），**不建任何关联边** |
+| = 2 | 恰好一个带小号后缀 | `same_owner`，可建同主人边 |
+| = 2 | 都无后缀 | `ambiguous`（同名但无证据），只留痕 |
+
+阈值定 3 的依据：实测整活组 13～23 个号，真实同名多为 2 个号 ——
+定 3 既不误伤「秋×2」，又拦得住大组。
+
+#### 伪装名：一律不作数
+
+含双向控制符（U+202A–202E、U+2066–2069、U+200E–200F）或零宽字符
+（U+200B–200D、U+FEFF、U+2060）的名字，渲染出来像干净名，但字节不同。
+这类名字常是**复制粘贴别人的模板**，两个号即使只差一两个字也可能毫无关系。所以：
+
+- 判成 `spoofed`，**不参与任何关联**（既不跟干净名合并，也不跟其它伪装名合并）；
+- 进审计报告（带 `uid` / `qq` / `card` / `kind` / `reason`），不静默丢弃。
+
+**近似名也不合并**：`往汐` 与 `往汐酱`、`往汐` 与 `往汐。` 都各算两个独立名字。
+判定只用「基础名完全相同」这一个条件 —— **宁可漏关联，不可错合并**。
+
+#### 写与查
+
+导入时会自动把该群的名片写成 `group:<gid>` 那一层（日志里的
+`名字标记(scope group:...)` 就是它）。要补昵称（`global` 层）就手动发一次：
+
+```bash
+curl -s -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"namespace":"qq-505456846","scope":"global","records":[
+        {"uid":"u_oZvYzRujHn5KleWUi8o--Q","name":"潮间带","source":"nick"}]}' \
+  http://127.0.0.1:8765/admin/display-names
+# → {"scope":"global","written":1,"failed":0}
+```
+
+图上落成 `(:Account {namespace, uid})-[显示名边 {scope, source}]->(:Alias {name})`：
+同一个 uid 多名片共存、互不覆盖；名片改名时旧名字不删。
+
+查：
+
+```bash
+# 精确查（字节完全相同）
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "http://127.0.0.1:8765/admin/whois?name=往汐（北瑀家的鱼）&scope=group:485490399&namespace=qq-505456846"
+# → 1 个账号，ambiguous:false
+
+# 按基础名查（去括号 + 去小号后缀）
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "http://127.0.0.1:8765/admin/whois?name=往汐&scope=group:485490399&base=true&namespace=qq-505456846"
+```
+
+真实返回（`base=true`）：
+
+```json
+{"name":"往汐","scope":"group:485490399","namespace":"qq-505456846","base":true,
+ "accounts":[
+   {"uid":"u_Z0cEqOYSuNMwk8uyXXFgtQ","name":"往汐（北瑀家的鱼）复活版","source":"group_card"},
+   {"uid":"u_oZvYzRujHn5KleWUi8o--Q","name":"往汐（北瑀家的鱼）","source":"group_card"}],
+ "ambiguous":true,"name_missing":false}
+```
+
+| 字段 | 含义 |
+|---|---|
+| `accounts` | 全部命中。`ambiguous=true` 时**必须全列**，不替你挑 |
+| `ambiguous` | 同一个名字在同一个 scope 下对应多个 uid |
+| `name_missing` | 一条都没命中 —— 不是「这个人不存在」，是「这个 scope 里没登记过这个名字」 |
+
+> `base=true` 只放宽「去括号 + 去小号后缀」，**不做编辑距离/相似度合并**：
+> 查 `往汐` 不会带出 `往汐酱`。
+
+### 8. 时间从哪来：`time_source`
+
+| 取值 | 什么时候 | 例子 |
+|---|---|---|
+| `msg_ts` | 原话没给时间 → 用消息时间 | 消息 10-30 → 事件 10-30 |
+| `relative` | 原话是相对词 | 「昨天」+ 消息 10-31 → 事件 10-30 |
+| `stated` | 原话给了明确日期 | 「10月28日」 |
+| `imported` | 连消息时间都没有 → 用导入时间 | 无 `ts` 的语料 |
+
+`date_start` 由 `source_indices` 指向的**最早**那条消息的 `ts` 决定。
+校验口径只有一句：**`source_indices` 生效之后，`time_source=imported` 的占比应该接近 0**。
+
+---
+
 ## 五、FAQ
 
 **Q：换 `EMBEDDING_MODEL` 之后写入报错「索引由 X 生成，当前是 Y」？**
@@ -1479,6 +1866,113 @@ MCP 是长驻进程，只在启动时冷一次。
 用不同的 `MEMORY_NAMESPACE`。换 namespace 要重启 MCP 进程（它读环境变量）。
 管理接口支持 `?namespace=` 参数跨域查看。
 
+**Q：导入后发言人全是 `undefined` / `unknown` / 一串数字？**
+
+三种回落，从差到好：`undefined`（导出时字段缺失）→ `unknown`（`senderName`
+和 QQ 号都没有）→ 一串 QQ 数字。根因是同一个：**没把 `sender_uid` 解析成群名片**。
+
+按这个顺序查：
+
+1. 成员表在不在：`back_end/data/corpus/qq-identities/group-<gid>.json`，
+   文件名里的 gid 必须和语料的 `cid` 对得上；
+2. 导入日志里有没有 `群成员表: N 人 → 可用显示名 M`，`M=0` 就是没读到；
+3. 语料里 `sender_uid` 是不是 `null` —— 那说明导出脚本没带这个字段
+   （旧版导出脚本没有它），重导一次即可。
+
+> 名片可用却显示成昵称，是**名片被分类排除了**（处罚标记 / 空白 / 伪装名），
+> 此时回落昵称是正确行为，不是 bug。
+
+**Q：为什么「往汐」能查出两个号？**
+
+因为名片被两个号共用：主号 `3883585327`（昵称潮间带，名片 `往汐（北瑀家的鱼）`）
+和复活版 `2154245492`（昵称琴酒拜松年，名片 `往汐（北瑀家的鱼）复活版`）。
+精确查只命中主号；加 `base=true` 去掉小号后缀后命中两个，并标 `ambiguous:true`。
+
+这是**要的行为**，不是数据脏：它们确实是两个号，系统不替你合并，也不替你做主。
+
+**Q：为什么广告一条都搜不到？**
+
+大概率是被营销闸门丢了，不是没灌进去。证据在两处：报告的
+`marketing_gate.dropped`，以及 `files[].dropped` 里 `reason` 为
+`marketing_unrelated` / `marketing_no_terms` 的条目。
+
+如果 `dropped` 几乎等于 `marketing`（几乎全丢），先看导入日志前两行：
+`词库 N 字符` 很小、或出现「读取记忆词库失败（按空处理）」，说明词库没读到
+（Neo4j 7474 的账号密码与脚本不一致），这时**所有广告都会被判无关**。
+要保留它们：清掉这批 `dedupe_key`（或换一个空 namespace）后不加
+`--gate-marketing` 重跑。
+
+**Q：导入要跑多久？**
+
+LLM 切分是**串行**的，一片 30 条，单片实测 20–80 秒。106 个群 × 每群 1000 条
+≈ 10.6 万条 ≈ 3500 片，按 18 秒/片算约 **18 小时**。
+
+想快只有两条路：少灌（`--per-group-limit` 调小）或分批（按群分几天跑，
+`--resume` 会跳过已完成的片）。**并发提交不会更快** —— 服务端同一时刻只吃
+有限个 LLM 请求，多开的只会一起排队。
+
+**Q：我只想导一个群？**
+
+导出用 `--groups <gid>`（逗号分隔可多个），导入把 `--corpus-dir` 换成
+`--corpus <那一个 json>`：
+
+```powershell
+node harness/export_qq.mjs --db <nt_msg.db> --per-group-limit 1000 `
+  --groups 485490399 --out-dir back_end/data/corpus/qq-import
+```
+
+```bash
+./harness/dev-linux.sh python ../harness/import_chat.py \
+  --corpus data/corpus/qq-import/qq-485490399.json \
+  --namespace qq-505456846 --window 30 --prefix qq
+```
+
+单群同样会读 `--identity-dir` 里的成员表（按 `cid` 找 `group-<gid>.json`）。
+
+**Q：灌错了怎么回滚 / 清空某个 namespace？**
+
+先把三层分清楚，**只有一层是唯一真相**：
+
+| 层 | 删了会怎样 | 能重建吗 |
+|---|---|---|
+| 图（Neo4j） | 实体/关系没了 | ✅ 能从事件卡重建（`rebuild_graph.py`） |
+| 向量（Weaviate 的 `MemoryEvent`） | **事实层，删了就没了** | ❌ 只能重灌 |
+| SQLite（`ingest_job` / `raw_quote`） | 原文和 job 记录没了 | ❌ 只能重灌 |
+
+`harness/purge_namespaces.py` **只适合清测试域**：它清的是**所有**非
+`work` / `personal` 的 namespace，没有「只清一个」的开关。别在有真数据的
+机器上随手 `--apply`。
+
+只清一个域，就手写三条（顺序：图 → 向量 → SQLite）。先取口令：
+
+```bash
+cd /mnt/e/PycharmProjects/amarantine/back_end
+export NEO4J_PASSWORD=$(grep '^NEO4J_PASSWORD=' .env | cut -d= -f2-)
+```
+
+```bash
+# 1) 图（派生层，可重建）
+curl -s -u neo4j:$NEO4J_PASSWORD -H 'Content-Type: application/json' \
+  -d '{"statements":[{"statement":"MATCH (n) WHERE n.namespace = $ns DETACH DELETE n","parameters":{"ns":"qq-505456846"}}]}' \
+  http://127.0.0.1:7474/db/neo4j/tx/commit
+
+# 2) 向量（事实层，删了只能重灌）
+curl -s -X DELETE http://127.0.0.1:8081/v1/batch/objects -H 'Content-Type: application/json' \
+  -d '{"match":{"class":"MemoryEvent","where":{"path":["namespace"],"operator":"Equal","valueText":"qq-505456846"}},"output":"minimal"}'
+
+# 3) SQLite：job 记录 + 原文
+sqlite3 back_end/data/memory.db \
+  "DELETE FROM ingest_job WHERE namespace='qq-505456846';
+   DELETE FROM raw_quote WHERE namespace='qq-505456846';"
+```
+
+> **向量删了必须连 `ingest_job` 一起删。** 只删向量、留着 `done` 的 job，
+> 下一次 `--resume` 会把所有片当「已完成」跳过 —— 卡永远回不来，而且不报错。
+> 这是「回滚」最容易踩的坑。
+>
+> 反过来说，**只想重灌某几片**就别清库：用 `--suffix r2` 换一批 `dedupe_key`
+> 重提即可（`failed` 的片用 `--retry-failed`）。
+
 ---
 
 ## 六、已知限制
@@ -1492,6 +1986,11 @@ MCP 是长驻进程，只在启动时冷一次。
 | 单 namespace 每进程 | 多域要起多进程 | 暂不解决 |
 | 全量扫描 O(n) | 记忆上万条后变慢 | 上万分页 |
 | 图通道 200ms 常超时 | `degraded` 频繁为 true | 可调 |
+| **QQ 全量 106 群 ≈ 18 小时** | LLM 串行切分，单片 20–80 秒；中途要能续跑 | 暂不优化（并发收益被 LLM 排队吃掉）；用 `--resume` 分批 |
+| **群名片随时可能被改** | 管理员可以把名片改成处罚标记；导入按当时快照取名，之后不自动更新 | 重导成员表 + 重跑一次导入（名字标记幂等覆盖） |
+| **不做跨群指代** | 「上次那个群说的」回溯不到 | 设计边界（spec 046 只做同会话） |
+| **伪装名不关联** | 含双向/零宽控制符的名字不参与任何关联 | 设计如此（宁可漏） |
+| **近似名不合并** | `往汐` 与 `往汐酱` 是两个独立名字 | 设计如此（宁可漏） |
 
 ---
 
@@ -1750,3 +2249,4 @@ API 网关限制了模型大小      → （空，停用词拦住）
 | v0.18 | 2026-11-03 | 原文层落地：`POST /admin/ingest`（异步导入 + `dedupe_key` 幂等 + `do_not_store` 拦截）、`GET /admin/ingest/{job_id}`（`202` 的配套查询接口）、`GET /admin/raw/{quote_id}`（原文溯源，软删事件卡后仍可读）；`raw_quote_ids` 第一次真的被填上，召回材料也带出来了 |
 | v0.19 | 2026-11-03 | 浏览器管理台（`/ui`）：零构建单页，复核队列可裁决、事件列表可软删（**手输域名**二次确认）、误删率报告只读（`dry_run` 写死）、点 `raw_quote_ids` 看原文；新增 `GET /admin/events`（分页列表，只读）；`GET /raw` 补 `scanned` / `truncated` / `lookup_ok` 三个诚实字段 |
 | v0.20 | 2026-11-07 | 批量导入不再静默丢尾部（spec 036）：撞单批上限时按行二分重切（最多 3 轮），`ingest_job` 增 `dropped_events` / `split_rounds` 两列并在 `GET /admin/ingest/{job_id}` 返回；仍超限时打 WARNING 并计数，日志带 job 号 |
+| v0.21 | 2026-11-12 | 补 QQ 导入全流程（导成员表 → 导消息 → 导库 → 校验，含真实预期输出）、营销闸门与词库口径、指代回溯（30→120）、群名片五分类与 scope 体系（整活阈值 3、伪装名、近似名不合并）、`/admin/display-names` 与 `/admin/whois`、`time_source` 四取值；安装章节补 8083/8765/3001 端口与 `LLM_TIMEOUT_MS=180000`；补 6 条 QQ FAQ 与 5 条限制 |
