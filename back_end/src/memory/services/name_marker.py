@@ -43,12 +43,27 @@ ALT_SUFFIXES = (
 #: 同名达到这个数量就判定为整活（实测整活组 13~23 人，真实同名多为 2 人）
 IMPERSONATION_MIN = 3
 
+#: 双向控制符：RLO/LRO/PDF/嵌入与隔离符。`AB\u202ECD` 渲染出来像 `ABCD`，
+#: 但字节不同 —— 这是**伪装**，不是同名。
+BIDI_CONTROLS = frozenset(
+    [chr(c) for c in range(0x202A, 0x202F)]
+    + [chr(c) for c in range(0x2066, 0x206A)]
+    + ["\u200e", "\u200f", "\u061c"]
+)
+
+#: 零宽字符：肉眼不可见，同样用于伪装
+ZERO_WIDTH = frozenset(
+    [chr(0x200B), chr(0x200C), chr(0x200D), chr(0xFEFF), chr(0x2060)]
+)
+
 #: 分类结果
 KIND_MODERATION = "moderation"
 KIND_BLANK_WS = "blank_ws"
 KIND_BLANK_PUNCT = "blank_punct"
 KIND_ALT = "alt"
 KIND_NORMAL = "normal"
+#: 伪装名：含双向控制符/零宽字符，渲染相似但字节不同 —— **不是同名**
+KIND_SPOOFED = "spoofed"
 
 #: 可以作为「名字」使用的类别
 USABLE_KINDS = (KIND_ALT, KIND_NORMAL)
@@ -108,6 +123,20 @@ def classify_card(name: str) -> CardVerdict:
     if any(kw in text for kw in MODERATION_KEYWORDS):
         return CardVerdict(KIND_MODERATION, reason="处罚标记")
 
+    # 控制字符分两种：
+    # - **整张名片只有控制/空白** → 整活人（blank_ws），和空白名同处理
+    # - **正常字里夹控制符** → 伪装名（spoofed），base 用原文，永不与干净名同桶
+    has_hidden = any(ch in BIDI_CONTROLS or ch in ZERO_WIDTH for ch in text)
+    visible_no_ctrl = "".join(
+        ch for ch in text
+        if not _is_space(ch) and not _is_control(ch)
+        and ch not in BIDI_CONTROLS and ch not in ZERO_WIDTH
+    )
+    if has_hidden and not visible_no_ctrl:
+        return CardVerdict(KIND_BLANK_WS, reason="全空白/控制字符")
+    if has_hidden:
+        return CardVerdict(KIND_SPOOFED, base=text, reason="含双向/零宽控制字符")
+
     visible = "".join(ch for ch in text if not _is_space(ch) and not _is_control(ch))
     if not visible:
         return CardVerdict(KIND_BLANK_WS, reason="全空白/控制字符")
@@ -136,6 +165,32 @@ class NameBucket:
     reason: str = ""
 
 
+def collect_excluded(members: list[dict]) -> list[dict]:
+    """收集**不能当名字用**的名片（处罚标记 / 空白 / 伪装名），供审计报告。
+
+    为什么单独收集：这些名字被排除出关联，但**不能静默消失** ——
+    运营/排查时需要知道「这个群有 26 个处罚名片、3 个伪装名」。
+    """
+    out: list[dict] = []
+    for m in members:
+        # 名片是「全空白」时不能先 strip 成空串再跳过 —— 那是整活人，要进审计。
+        raw_card = m.get("card")
+        display = raw_card if raw_card not in (None, "") else (m.get("nickname") or "")
+        if display == "":
+            continue
+        verdict = classify_card(display)
+        if verdict.usable:
+            continue
+        out.append({
+            "uid": m.get("uid"),
+            "qq": m.get("qq"),
+            "card": display,
+            "kind": verdict.kind,
+            "reason": verdict.reason,
+        })
+    return out
+
+
 def analyze_group(members: list[dict]) -> list[NameBucket]:
     """把一个群的成员按「基础名」分桶，并给出关联判定。
 
@@ -148,11 +203,17 @@ def analyze_group(members: list[dict]) -> list[NameBucket]:
         - `impersonation`：≥3 个号（整活），**不关联**
         - `same_owner`：2 个号且恰好一个带小号后缀 → 可建 `SAME_OWNER`
         - `ambiguous`：2 个号但都没后缀 → 不关联，只留痕
+
+    Note:
+        **伪装名（含双向/零宽控制符）一律不进桶**，连彼此之间也不关联 ——
+        这类名字常是**复制粘贴别人的模板**，两个号可能只差一两个字却毫无关系。
+        它们由 `collect_excluded` 单独收集，进审计报告而不是静默丢弃。
     """
     buckets: dict[str, NameBucket] = {}
     for m in members:
-        display = (m.get("card") or "").strip() or (m.get("nickname") or "").strip()
-        if not display:
+        raw_card = m.get("card")
+        display = raw_card if raw_card not in (None, "") else (m.get("nickname") or "")
+        if display == "":
             continue
         verdict = classify_card(display)
         if not verdict.usable:
