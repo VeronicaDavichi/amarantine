@@ -145,3 +145,32 @@ docker ps --format '{{.Names}} {{.Status}}' | grep amarantine   # 容器
 curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8081/v1/.well-known/ready
 ```
 
+---
+
+## 时间口径（2026-11-13）
+
+**对用户报时间一律用 UTC+8（北京时间 / QQ 显示口径），需要时再附 UTC。**
+
+### 为什么
+
+`qq-mcp` 返回的 `iso` / `timestamp` 是 **UTC**，而 QQ 客户端显示的是 **UTC+8**：
+
+```
+工具 timestamp 1793696889 → toISOString 2026-11-03T09:08:09Z
+QQ 里同一条显示             2026-11-03 17:08
+```
+
+实测把 UTC 直接当本地时间报，会让用户看到的时间**整体早 8 小时**。
+
+### 规则
+
+- 报「几点/哪天」→ 先 `+8h`，写 `2026-11-03 17:08`
+- 需要精确时附 UTC：`2026-11-03 17:08（UTC 09:08）`
+- 本地服务日志（`admin.log`）本来就是 +08，直接用
+- 涉及 epoch 的时间窗参数仍用 **epoch 秒**（与时区无关）
+
+### 检查
+
+```python
+local = datetime.fromtimestamp(ts, tz=timezone(timedelta(hours=8)))
+```

@@ -43,6 +43,12 @@ function parseArgs(argv) {
 
 const args = parseArgs(process.argv.slice(2));
 
+/** epoch 秒 → UTC+8 可读时间（QQ 显示口径）。 */
+function localTime(epochSec) {
+  return new Date((Number(epochSec) + 8 * 3600) * 1000)
+    .toISOString().slice(0, 16).replace("T", " ");
+}
+
 const { Client } = await import(resolveSdk("client/index.js"));
 const { StdioClientTransport } = await import(resolveSdk("client/stdio.js"));
 const transport = new StdioClientTransport({
@@ -73,8 +79,7 @@ try {
   console.log(`[1] FTS 索引命中: ${hits.length} 条`);
   const times = hits.map((h) => Number(h.timestamp));
   if (times.length) {
-    console.log(`    时间范围: ${new Date(Math.min(...times) * 1000).toISOString()}`
-      + ` → ${new Date(Math.max(...times) * 1000).toISOString()}`);
+    console.log(`    时间范围(UTC+8): ${localTime(Math.min(...times))} → ${localTime(Math.max(...times))}`);
   }
 
   // 第 2 层：消息表（导出取数的来源）
