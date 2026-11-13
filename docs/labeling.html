@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>amarantine 人工标注</title>
+<style>
+  :root {
+    --bg: #0f1115; --panel: #171a21; --line: #2a2f3a;
+    --text: #e6e8ee; --muted: #98a1b2; --accent: #6aa6ff;
+    --ok: #35c37d; --bad: #ff6b6b; --warn: #f0b849;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.6 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+  }
+  header {
+    position: sticky; top: 0; background: rgba(15,17,21,.96); z-index: 10;
+    border-bottom: 1px solid var(--line); padding: 12px 20px;
+    display: flex; gap: 16px; align-items: center; flex-wrap: wrap;
+  }
+  header h1 { font-size: 16px; margin: 0; font-weight: 600; }
+  .tabs { display: flex; gap: 8px; }
+  .tab {
+    padding: 6px 12px; border-radius: 8px; cursor: pointer;
+    border: 1px solid var(--line); color: var(--muted); background: transparent;
+  }
+  .tab.active { border-color: var(--accent); color: var(--text); background: #1b2433; }
+  .spacer { flex: 1; }
+  button {
+    font: inherit; color: var(--text); background: #1e232c; border: 1px solid var(--line);
+    border-radius: 8px; padding: 7px 12px; cursor: pointer;
+  }
+  button:hover { border-color: var(--accent); }
+  button.ok { border-color: var(--ok); }
+  button.bad { border-color: var(--bad); }
+  button.warn { border-color: var(--warn); }
+  main { max-width: 980px; margin: 0 auto; padding: 20px; }
+  .progress { color: var(--muted); font-size: 13px; margin-bottom: 12px; }
+  .bar { height: 6px; background: #1b2029; border-radius: 4px; overflow: hidden; margin-top: 6px; }
+  .bar > i { display: block; height: 100%; background: var(--accent); width: 0; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 18px; }
+  .meta { color: var(--muted); font-size: 13px; display: flex; gap: 12px; flex-wrap: wrap; }
+  .evidence {
+    margin: 14px 0; padding: 14px; background: #11141a; border-left: 3px solid var(--accent);
+    border-radius: 6px; white-space: pre-wrap; word-break: break-word;
+  }
+  .machine { margin: 10px 0 16px; color: var(--muted); }
+  .machine b { color: var(--text); }
+  .actions { display: flex; gap: 10px; flex-wrap: wrap; }
+  .hint { color: var(--muted); font-size: 12px; margin-top: 14px; }
+  .note { width: 100%; margin-top: 14px; background: #11141a; color: var(--text);
+          border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
+  .done { color: var(--ok); }
+  .tag { font-size: 12px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line); }
+  .tag.hit { border-color: var(--warn); color: var(--warn); }
+  .tag.miss { border-color: var(--muted); color: var(--muted); }
+  .empty { color: var(--muted); text-align: center; padding: 60px 0; }
+  footer { color: var(--muted); font-size: 12px; text-align: center; padding: 24px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>amarantine 人工标注</h1>
+  <div class="tabs" id="tabs"></div>
+  <div class="spacer"></div>
+  <span class="progress" id="progress"></span>
+  <button id="export">导出 JSON</button>
+  <button id="reset">清空本组</button>
+</header>
+
+<main>
+  <div class="progress" id="bar-wrap" style="display:none">
+    <div class="bar"><i id="bar"></i></div>
+  </div>
+  <div id="app"></div>
+</main>
+
+<footer>数据来自 <code>docs/labeling-data.js</code> · 标注保存在浏览器 localStorage，换浏览器不会同步</footer>
+
+<script src="labeling-data.js"></script>
+<script>
+(function () {
+  const DATA = window.LABEL_DATA || { statements: [], behaviors: [], senses: [] };
+  const GROUPS = [
+    { key: "statements", name: "关系陈述", kind: "statement",
+      options: [["ok", "正确（确实表达了职责/关系）"], ["bad", "错误（不是关系句/抽错）"], ["warn", "不确定"]] },
+    { key: "behaviors", name: "关系行为", kind: "behavior",
+      options: [["ok", "稳定关系（≥2 次、像长期）"], ["bad", "偶发/不构成关系"], ["warn", "不确定"]] },
+    { key: "senses", name: "指称义项", kind: "sense",
+      options: [["ok", "正确（确实指这个意思）"], ["bad", "错误（指别的/误绑）"], ["warn", "不确定"]] },
+  ];
+  const STORE = "amarantine-label-v1";
+  let state = loadState();
+  let gi = 0, idx = 0;
+
+  function loadState() {
+    try { return JSON.parse(localStorage.getItem(STORE) || "{}"); }
+    catch (e) { return {}; }
+  }
+  function saveState() {
+    localStorage.setItem(STORE, JSON.stringify(state));
+    localStorage.setItem(STORE + "-at", new Date().toISOString());
+  }
+  function labelOf(id) { return state[id] || null; }
+  function items() { return DATA[GROUPS[gi].key] || []; }
+
+  function renderTabs() {
+    const el = document.getElementById("tabs");
+    el.innerHTML = "";
+    GROUPS.forEach((g, i) => {
+      const list = DATA[g.key] || [];
+      const done = list.filter(x => labelOf(x.id)).length;
+      const b = document.createElement("div");
+      b.className = "tab" + (i === gi ? " active" : "");
+      b.textContent = `${g.name} ${done}/${list.length}`;
+      b.onclick = () => { gi = i; idx = firstUnlabeled(); render(); };
+      el.appendChild(b);
+    });
+  }
+  function firstUnlabeled() {
+    const list = items();
+    const i = list.findIndex(x => !labelOf(x.id));
+    return i < 0 ? 0 : i;
+  }
+  function progress() {
+    const list = items();
+    const done = list.filter(x => labelOf(x.id)).length;
+    document.getElementById("progress").textContent =
+      `${GROUPS[gi].name} ${done}/${list.length}`;
+    const wrap = document.getElementById("bar-wrap");
+    wrap.style.display = list.length ? "block" : "none";
+    document.getElementById("bar").style.width =
+      list.length ? (done / list.length * 100) + "%" : "0";
+  }
+  function setLabel(id, key) {
+    const cur = state[id] || {};
+    cur.label = key;
+    cur.at = new Date().toISOString();
+    state[id] = cur;
+    saveState();
+    next();
+  }
+  function next() {
+    const list = items();
+    const after = list.findIndex((x, i) => i > idx && !labelOf(x.id));
+    if (after >= 0) idx = after;
+    else if (list.length) { idx = (idx + 1) % list.length; }
+    render();
+  }
+  function render() {
+    renderTabs();
+    progress();
+    const list = items();
+    const app = document.getElementById("app");
+    if (!list.length) { app.innerHTML = '<div class="empty">这一组没有数据</div>'; return; }
+    idx = Math.max(0, Math.min(idx, list.length - 1));
+    const item = list[idx];
+    const g = GROUPS[gi];
+    const lb = labelOf(item.id);
+    const idNum = `${idx + 1} / ${list.length}`;
+
+    let head = `<div class="card">
+      <div class="meta"><span>${idNum}</span><span>${item.id}</span>`;
+    if (item.source === "rule_hit") head += `<span class="tag hit">规则抽取</span>`;
+    if (item.source === "rule_miss") head += `<span class="tag miss">规则未抽</span>`;
+    if (item.kind === "behavior") head += `<span>证据 ${item.evidence_count || 0} 条</span>`;
+    head += `</div>`;
+
+    let body = "";
+    if (item.kind === "statement") {
+      body += `<div class="evidence">${esc(item.evidence)}</div>`;
+      body += `<div class="machine">规则结果：` +
+        (item.machine && item.machine.extracted
+          ? `<b>${esc(item.machine.head)}</b> --${esc(item.machine.predicate)}--> <b>${esc(item.machine.tail)}</b>`
+          : `<b>未抽取</b>（规则漏掉）`) + `</div>`;
+    } else if (item.kind === "behavior") {
+      body += `<div class="machine"><b>${esc(item.person)}</b> --${esc(item.verb)}--> <b>${esc(item.target)}</b></div>`;
+      (item.evidence || []).forEach(t => body += `<div class="evidence">${esc(t)}</div>`);
+    } else {
+      body += `<div class="machine">词：<b>${esc(item.term)}</b> → 机器解释：<b>${esc(item.gloss)}</b>（score ${item.score}）</div>`;
+      (item.evidence || []).forEach(t => body += `<div class="evidence">${esc(t)}</div>`);
+    }
+
+    let actions = `<div class="actions">`;
+    g.options.forEach(([key, text]) => {
+      const active = lb && lb.label === key ? " " + (key === "ok" ? "ok" : key === "bad" ? "bad" : "warn") : "";
+      actions += `<button class="act${active}" data-key="${key}">${text}</button>`;
+    });
+    actions += `</div>`;
+    if (lb) actions += `<div class="hint done">当前标注：${labelOfText(g, lb.label)}</div>`;
+    actions += `<input class="note" id="note" placeholder="备注（可选，比如「正确谓词应是 MAINTAINS」）" value="${esc((lb && lb.note) || "")}">`;
+    actions += `<div class="hint">快捷键：1 正确 · 2 错误 · 3 不确定 · ←/→ 上一条/下一条 · 备注失焦自动保存</div>`;
+
+    app.innerHTML = head + body + actions + `</div>`;
+    app.querySelectorAll(".act").forEach(b => {
+      b.onclick = () => {
+        const note = document.getElementById("note").value.trim();
+        if (note) { state[item.id] = state[item.id] || {}; state[item.id].note = note; }
+        setLabel(item.id, b.dataset.key);
+      };
+    });
+    const note = document.getElementById("note");
+    note.onchange = () => {
+      state[item.id] = state[item.id] || {};
+      state[item.id].note = note.value.trim();
+      saveState();
+    };
+  }
+  function labelOfText(g, key) {
+    const o = g.options.find(x => x[0] === key);
+    return o ? o[1] : key;
+  }
+  function esc(s) {
+    return String(s == null ? "" : s).replace(/[&<>"]/g, c =>
+      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  }
+
+  function buildExport() {
+    const out = {
+      exported_at: new Date().toISOString(),
+      generated_at: DATA.generated_at || "",
+      labels: state,
+      summary: {}
+    };
+    GROUPS.forEach(g => {
+      const list = DATA[g.key] || [];
+      const done = list.filter(x => labelOf(x.id)).length;
+      out.summary[g.key] = { total: list.length, labeled: done };
+    });
+    return out;
+  }
+  // 控制台也能拿：amarantineExport()
+  window.amarantineExport = buildExport;
+
+  document.getElementById("export").onclick = () => {
+    const out = buildExport();
+    const blob = new Blob([JSON.stringify(out, null, 1)], { type: "application/json" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `labeling-${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  };
+  document.getElementById("reset").onclick = () => {
+    if (!confirm("清空这一组的标注？（只清当前标签页）")) return;
+    (DATA[GROUPS[gi].key] || []).forEach(x => delete state[x.id]);
+    saveState();
+    render();
+  };
+  document.addEventListener("keydown", e => {
+    if (e.target && e.target.tagName === "INPUT") return;
+    if (e.key === "1") document.querySelector('.act[data-key="ok"]')?.click();
+    if (e.key === "2") document.querySelector('.act[data-key="bad"]')?.click();
+    if (e.key === "3") document.querySelector('.act[data-key="warn"]')?.click();
+    if (e.key === "ArrowRight") { idx = (idx + 1) % items().length; render(); }
+    if (e.key === "ArrowLeft") { idx = (idx - 1 + items().length) % items().length; render(); }
+  });
+
+  idx = firstUnlabeled();
+  render();
+})();
+</script>
+</body>
+</html>
