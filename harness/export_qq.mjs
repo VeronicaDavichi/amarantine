@@ -36,7 +36,7 @@ const { Client } = await import(resolveSdk("client/index.js"));
 const { StdioClientTransport } = await import(resolveSdk("client/stdio.js"));
 
 function parseArgs(argv) {
-  const out = { limit: 5000, oldest: false };
+  const out = { limit: 5000, oldest: false, days: 30 };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--list") out.list = true;
@@ -50,6 +50,9 @@ function parseArgs(argv) {
     else if (a === "--limit") out.limit = Number(argv[++i]);
     else if (a === "--per-group-limit") out.perGroupLimit = Number(argv[++i]);
     else if (a === "--oldest") out.oldest = true;
+    else if (a === "--days") out.days = Number(argv[++i]);
+    else if (a === "--since") out.since = argv[++i];
+    else if (a === "--until") out.until = argv[++i];
     else if (a === "--groups") out.groups = argv[++i].split(",").map(Number).filter(Boolean);
     else if (a === "--since") out.since = argv[++i];
     else if (a === "--until") out.until = argv[++i];
@@ -60,6 +63,19 @@ function parseArgs(argv) {
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
+
+/** ISO 或 epoch → epoch 秒；`--days` 默认「最近 N 天」。 */
+function toEpoch(value) {
+  if (value === undefined || value === null || value === "") return undefined;
+  const n = Number(value);
+  if (Number.isFinite(n) && n > 100000000) return Math.floor(n);
+  const t = Date.parse(String(value));
+  return Number.isNaN(t) ? undefined : Math.floor(t / 1000);
+}
+
+const untilEpoch = toEpoch(args.until) ?? Math.floor(Date.now() / 1000);
+const sinceEpoch = toEpoch(args.since) ?? untilEpoch - args.days * 86400;
+console.log(`时间窗: ${new Date(sinceEpoch * 1000).toISOString()} → ${new Date(untilEpoch * 1000).toISOString()}`);
   if (!args.db) throw new Error("--db <nt_msg.db> 必填");
 
   const transport = new StdioClientTransport({
@@ -96,25 +112,46 @@ async function main() {
       mkdirSync(args.outDir, { recursive: true });
       const summary = [];
       for (const g of groups) {
-        const query = {
-          dbPath: args.db,
-          chat: "group",
-          groupQq: g.qq,
-          limit: args.perGroupLimit,
-          // 默认取最近 N 条（用户记不得远的）；--oldest 才从最早的开始
-          order: args.oldest ? "asc" : "desc",
-        };
-        if (args.since) query.since = args.since;
-        if (args.until) query.until = args.until;
-        let res;
+        // 分页拉取：MCP 每次最多 ~2000 行，大群必须按时间往回翻。
+        //
+        // 踩过的坑：`group_msg_table` 有 107,983 行时，纯 limit 只拿到
+        // rowid 最新的 2000 行，rowid 靠前但时间在窗口内的消息会整个漏掉
+        // （实测「候潮」75 条一条没导进来）。
+        let collected = [];
+        let cursorUntil = untilEpoch;
+        const PAGE = 2000;
         try {
-          res = await call("query_chat_messages", query);
+          for (let guard = 0; guard < 50 && collected.length < args.perGroupLimit; guard++) {
+            const page = await call("query_chat_messages", {
+              dbPath: args.db, chat: "group", groupQq: g.qq,
+              limit: PAGE, since: sinceEpoch, until: cursorUntil,
+              order: args.oldest ? "asc" : "desc",
+            });
+            const batch = page.messages ?? page.rows ?? [];
+            if (!batch.length) break;
+            collected = collected.concat(batch);
+            const stamps = batch.map((m) => Number(m.timestamp)).filter(Number.isFinite);
+            if (!stamps.length) break;
+            const edge = args.oldest ? Math.max(...stamps) : Math.min(...stamps);
+            if (args.oldest || edge <= sinceEpoch || edge >= cursorUntil) break;
+            cursorUntil = edge - 1;
+          }
         } catch (err) {
           summary.push({ groupQq: g.qq, title: g.name, error: String(err.message).slice(0, 120) });
           console.log(`  ✗ ${g.qq} ${g.name}: ${String(err.message).slice(0, 80)}`);
           continue;
         }
-        const messages = res.messages ?? res.rows ?? [];
+        // 分页边界会重叠 1 条，按 msgId 去重
+        const seen = new Set();
+        const messages = [];
+        for (const m of collected) {
+          const id = String(m.msgId ?? "");
+          if (id && seen.has(id)) continue;
+          if (id) seen.add(id);
+          messages.push(m);
+        }
+        messages.sort((a, b) => Number(b.timestamp) - Number(a.timestamp));
+        messages.length = Math.min(messages.length, args.perGroupLimit);
         const corpus = toCorpus(messages, { cid: `qq-${g.qq}`, title: g.name ?? `QQ群 ${g.qq}` });
         const file = `${args.outDir}/qq-${g.qq}.json`;
         writeFileSync(file, JSON.stringify(corpus, null, 2), "utf8");
@@ -142,6 +179,8 @@ async function main() {
         dbPath: args.db,
         chat: "group",
         limit: 5000,
+        since: sinceEpoch,
+        until: untilEpoch,
         order: args.oldest ? "asc" : "desc",
       });
       const buckets = new Map();
@@ -182,6 +221,8 @@ async function main() {
     const query = {
       dbPath: args.db,
       limit: args.limit,
+      since: sinceEpoch,
+      until: untilEpoch,
       order: args.oldest ? "asc" : "desc",
       chat: args.c2c ? "c2c" : "group",
     };
