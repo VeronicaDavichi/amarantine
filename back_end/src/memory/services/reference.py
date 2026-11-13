@@ -154,14 +154,42 @@ def _clean_surface(text: str) -> str:
     return name
 
 
+#: 引号内整段锁住：`《人是猫》` 不能被切成 `人 / 是 / 猫`
+#: （实测把「人」当定义主语，抽出 `人 → 猫》完整版`）。
+_QUOTE_PAIR_RE = re.compile(
+    r"《[^》]{1,60}》|「[^」]{1,60}」|『[^』]{1,60}』|“[^”]{1,60}”|\"[^\"]{1,60}\""
+)
+
+
 def _tokenize(text: str) -> list[tuple[str, str]]:
-    """分词 → [(word, flag)]。词边界比裸正则可靠得多。"""
+    """分词 → [(word, flag)]。词边界比裸正则可靠得多。
+
+    **引号/书名号整段先锁起来**：先替换成占位符再分词，分词后还原成一个 token。
+    不然 `《那些年》` 会被拆成 `那些` + `年`，`《人是猫》` 会被当成 `人 是 猫`。
+    """
+    src = text or ""
+    held: list[str] = []
+
+    def _hold(m: re.Match) -> str:
+        # 单个 PUA 字符占位：jieba 会把 `\uE0000\uE001` 拆成三个 token，
+        # 但单字符它只切一刀。
+        held.append(m.group(0))
+        return chr(0xE000 + len(held) - 1)
+
+    masked = _QUOTE_PAIR_RE.sub(_hold, src)
     try:
         import jieba.posseg as pseg
 
-        return [(w.word, w.flag) for w in pseg.cut(text or "")]
+        tokens = [(w.word, w.flag) for w in pseg.cut(masked)]
     except Exception:  # noqa: BLE001 - 分词不可用时退化为按空白切
-        return [(w, "x") for w in re.split(r"\s+", text or "") if w]
+        tokens = [(w, "x") for w in re.split(r"\s+", masked) if w]
+    out: list[tuple[str, str]] = []
+    for word, flag in tokens:
+        if len(word) == 1 and 0xE000 <= ord(word) <= 0xE0FF:
+            out.append((held[ord(word) - 0xE000], "nz"))
+        else:
+            out.append((word, flag))
+    return out
 
 
 def extract_signals(text: str, *, quote_id: str | None = None, ts: str | None = None) -> list[Signal]:
