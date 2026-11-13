@@ -99,10 +99,29 @@ docker-compose.yml
 ### 质量
 
 ```bash
-cd back_end && uv run pytest -q        # 1262 passed
-python3 ../harness/check_spec.py       # spec 骨架一致（43 个）
+cd back_end && uv run pytest -q        # 1502 passed
+python3 ../harness/check_spec.py       # spec 骨架一致（48 个）
 python3 ../harness/check_guide.py      # 文档与代码一致
 ```
+
+### 外部依赖
+
+| 依赖 | 用途 | 是否必需 |
+|---|---|---|
+| LLM（OpenAI 兼容网关） | 事件切分、标签、摘要 | **必需**（不可用时降级，质量下降） |
+| [nbnhhsh](https://github.com/itorr/nbnhhsh)（`lab.magiconch.com`，Apache-2.0） | 把拼音首字母缩写猜成全称（`lysk → 恋与深空`） | **可选，默认关** |
+
+**nbnhhsh 的使用方式**
+
+- 开关：`ABBR_NBNHHHSH_ENABLED=false`（默认）。
+  开启后，解析缩写时会先查本地缓存，未命中才 `POST /api/nbnhhsh/guess`
+  （只发缩写字符串，如 `{"text":"lysk"}`，不含聊天内容）。
+- 关掉后仍可用 `back_end/config/abbr_local.json` 的本地词典（`nn=暖暖` 这类
+  nbnhhsh 未收录的词），功能不消失、只是长尾覆盖变少。
+- **它没有公开的整包词库**：仓库里只有油猴脚本（7 个文件），API 也只有 `guess`
+  这一个端点。因此本项目把每次查询结果缓存到 `back_end/data/abbr_cache.db`，
+  再配合本地词典逐步积累，而不是「扒一份完整词库」。
+- 引用该项目的名字与链接仅作来源标注；其许可证为 Apache-2.0。
 
 ### 已知限制
 

@@ -207,3 +207,21 @@ nn   → 倪妮 / 纳尼 / 嗯嗯 / 农农 / 男娜    ← 没有「暖暖」
 开启时发请求、默认读配置、关网时本地词典仍能解析 `nn=暖暖`。
 
 全量 **1502 passed**。
+
+### 2026-11-13 · 词库调查：nbnhhsh 没有公开整包词库
+
+用户问「原项目有没有当前词库，有的话扒下来」。调查结果：
+
+```
+仓库 itorr/nbnhhsh 只有 7 个文件：LICENSE / README / index.html /
+document.css / nbnhhsh.user.js / nbnhhsh.meta.js / sponsor.png
+油猴脚本里只用了一个端点：POST /api/nbnhhsh/guess
+试探 /all /dict /list /words /hot /export /full 全部 404/无响应
+作者其它仓库也没有词库
+```
+
+**结论**：词库只在服务端，**没有公开整包**。所以：
+
+- 不"扒词库"，改为**查询缓存 + 本地词典**逐步积累（`data/abbr_cache.db` + `config/abbr_local.json`）
+- README 增加「外部依赖」章节：标注 nbnhhsh（Apache-2.0）、可选开关、只发缩写字符串、
+  以及「它没有整包词库」这一事实
