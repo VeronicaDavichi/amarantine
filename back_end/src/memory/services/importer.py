@@ -56,6 +56,42 @@ def _extension(content: dict[str, Any]) -> dict[str, Any]:
         return {}
 
 
+
+#: 合并转发（QQ XML）：`action="viewMultiMsg"`，正文在 XML 里，
+#: 直接入库会是几百字符的标签垃圾。抽 brief/title/summary 做可读标记。
+_FORWARD_XML_RE = re.compile(r'action\s*=\s*"viewMultiMsg"', re.I)
+_BRIEF_RE = re.compile(r'brief\s*=\s*"([^"]{1,60})"')
+_TITLE_RE = re.compile(r"<title[^>]*>([^<]{1,120})</title>", re.I)
+_SUMMARY_RE = re.compile(r"<summary[^>]*>([^<]{1,300})</summary>", re.I)
+
+
+def parse_merged_forward(text: str) -> str | None:
+    """把合并转发的 XML 变成可读标记；不是合并转发返回 None。
+
+    Args:
+        text: 消息正文，可能是 XML。
+
+    Returns:
+        `[合并转发] [聊天记录]：摘要…`；解析不出摘要时只保留 brief/title。
+
+    Note:
+        **不能像以前那样丢弃** —— 合并转发里常是整段对话（转发的聊天记录），
+        是正儿八经的内容；但也不该把 XML 原样存进库。
+    """
+    body = (text or "").strip()
+    if not body or "<?xml" not in body and "<msg" not in body:
+        return None
+    if not _FORWARD_XML_RE.search(body):
+        return None
+    brief = _BRIEF_RE.search(body)
+    title = _TITLE_RE.search(body)
+    summary = _SUMMARY_RE.search(body)
+    # title 比 brief 有信息量（brief 通常只是「[聊天记录]」）
+    label = (title.group(1) if title else "") or (brief.group(1) if brief else "") or "[聊天记录]"
+    tail = summary.group(1).strip() if summary else ""
+    return f"[合并转发] {label}" + (f"：{tail}" if tail else "")
+
+
 def normalize_message(raw: dict[str, Any]) -> tuple[str | None, str]:
     """把一条源消息归一成文本。
 
@@ -66,6 +102,10 @@ def normalize_message(raw: dict[str, Any]) -> tuple[str | None, str]:
     地址类信息（GitLab / Jira）会一个字都进不了库（本 spec 的坑 #1）。
     """
     content = _json(raw.get("content")) if "content" in raw else _json(raw)
+    # spec 040：合并转发先解析（它的正文是 XML，ctype 也是 1）
+    merged = parse_merged_forward(str(content.get("text") or raw.get("text") or ""))
+    if merged:
+        return merged, "merged_forward"
     ctype = raw.get("contentType") or content.get("contentType")
     if ctype is None:
         ctype = 1
