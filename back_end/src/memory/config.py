@@ -113,6 +113,10 @@ class Settings(BaseSettings):
     #: 关掉后只用 `config/abbr_local.json` 的本地词典，功能仍在、只是覆盖面小。
     ABBR_NBNHHHSH_ENABLED: bool = False
 
+    #: 召回时是否用 SAME_SENSE 边做双向扩展（spec 048 T5）。
+    #: 只查本地图，不联网；默认开。
+    ABBR_EXPAND_ENABLED: bool = True
+
     ENTITY_RULE_ENABLED: bool = True
 
     #: 后缀白名单：短名是长名前缀、且多出的部分在此表内 -> 判同一实体。

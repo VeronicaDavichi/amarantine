@@ -124,6 +124,22 @@ def recall(
     if not query or not query.strip():
         raise ValueError("query 不能为空")
 
+    # spec 048 T5：用 SAME_SENSE 别名对双向扩展**检索用** query。
+    #
+    # 只扩展 `search_query`：时间意图解析仍用原文（别名不带时间词，扩了也没用），
+    # 而 embedding / BM25 / 实体抽取都应该看到两种写法 —— 否则
+    # 「查恋与深空召回不到 lysk 那张卡」。
+    search_query = query
+    _expansions: list[str] = []
+    if getattr(settings, "ABBR_EXPAND_ENABLED", False):
+        try:
+            from memory.services.abbr import expand_query, load_alias_pairs
+
+            _pairs = load_alias_pairs(namespace)
+            search_query, _expansions = expand_query(query, _pairs)
+        except Exception as exc:  # noqa: BLE001 - 扩展失败不影响召回
+            logger.warning("查询扩展失败（忽略）: %s", exc)
+
     # 单调时钟：测量时长必须用它，`time.time()` 会被系统时钟调整影响。
     # 取在函数最开头 —— 抛 `RecallUnavailableError` 时也要能在 finally 里算到耗时。
     t0 = time.monotonic()
@@ -160,6 +176,51 @@ def recall(
     active_store = store or WeaviateStore(settings)
     candidates_limit = settings.RECALL_CANDIDATES
 
+    def _merge_expanded(result: RecallResult) -> RecallResult:
+        """用扩展后的 query 再跑一次召回，按 event_id 合并（取高分）。
+
+        为什么不直接替换 query：实测 `恋与深空` 换成 `恋与深空 lysk` 后，
+        原本 5 张全称卡全掉出结果，只剩 1 张缩写卡 —— 语义偏移不是相加。
+        二次召回 + 合并才是「两种写法都能召回」。
+        """
+        if not _expansions or not result.materials:
+            return result
+        elapsed = (time.monotonic() - t0) * 1000
+        remain = budget - elapsed
+        if remain < 200:  # 预算不够就算了，扩展不是必需
+            return result
+        try:
+            sec_settings = settings.model_copy(update={"ABBR_EXPAND_ENABLED": False})
+        except Exception:  # noqa: BLE001 - pydantic v1 兜底
+            sec_settings = settings
+        try:
+            sec = recall(
+                search_query,
+                namespace=namespace,
+                settings=sec_settings,
+                now=moment,
+                today=base_day,
+                store=store,
+                embedder=embedder,
+                graph_searcher=graph_searcher,
+                counter=None,
+                budget_ms=int(remain),
+                trace_store=None,
+                rerank_client=rerank_client,
+            )
+        except Exception as exc:  # noqa: BLE001 - 扩展失败不影响主结果
+            logger.warning("扩展召回失败（忽略）: %s", exc)
+            return result
+        merged = {m["event_id"]: m for m in result.materials}
+        for m in sec.materials:
+            cur = merged.get(m["event_id"])
+            if cur is None or (m.get("score") or 0) > (cur.get("score") or 0):
+                merged[m["event_id"]] = m
+        ordered = sorted(merged.values(), key=lambda m: -(m.get("score") or 0))
+        result.materials = ordered[: settings.RECALL_TOP_K_MAX]
+        result.trace["abbr_expanded"] = list(_expansions)
+        return result
+
     def _finish(result: RecallResult) -> RecallResult:
         """填耗时并落 trace —— 四个 return 路径全部经过这里。
 
@@ -167,6 +228,7 @@ def recall(
         （全超时 / 无候选 / 空结果 / 正常），漏一个那条路径的
         `elapsed_ms` 就永远是 0，而 0 看起来像「很快」而不是「没测」。
         """
+        result = _merge_expanded(result)
         result.elapsed_ms = (time.monotonic() - t0) * 1000
         result.channel_ms = dict(channel_ms)
         return _with_trace(result, trace_store=trace_store, namespace=namespace, query=query)

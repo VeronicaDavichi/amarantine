@@ -114,7 +114,7 @@ POST https://lab.magiconch.com/api/nbnhhsh/guess
 - [x] T2 语料 token 扫描与候选生成
 - [x] T3 共现消歧打分 + 单测
 - [x] T4 `SAME_SENSE` 写入与查询
-- [ ] T5 召回层双向扩展
+- [x] T5 召回层双向扩展
 - [x] T6 文档
 
 ## Test
@@ -123,8 +123,8 @@ POST https://lab.magiconch.com/api/nbnhhsh/guess
 - [ ] A2 `mz` 在同一语料里解析为「母猪」而非「母子/明侦」
 - [ ] A3 `nn` 因本地词典（暖暖）才能命中；无词典时标 ambiguous
 - [ ] A4 API 不可达 → 不报错、不阻断，读缓存/跳过
-- [ ] A5 多义缩写不建边，只记候选与 `ambiguous`
-- [ ] A6 全量 pytest 无回归
+- [x] A5 多义缩写不建边，只记候选与 `ambiguous`
+- [x] A6 全量 pytest 无回归
 
 ## Notes
 
@@ -225,3 +225,33 @@ document.css / nbnhhsh.user.js / nbnhhsh.meta.js / sponsor.png
 - 不"扒词库"，改为**查询缓存 + 本地词典**逐步积累（`data/abbr_cache.db` + `config/abbr_local.json`）
 - README 增加「外部依赖」章节：标注 nbnhhsh（Apache-2.0）、可选开关、只发缩写字符串、
   以及「它没有整包词库」这一事实
+
+### 2026-11-13 · T5 召回双向扩展（二次召回 + 合并）
+
+**第一版是错的**：直接拿扩展串替换 query（`恋与深空` → `恋与深空 lysk`），
+实测原 query 的 5 张全称卡**全部掉出结果**，只剩 1 张缩写卡 ——
+语义偏移不是相加，是替换。
+
+**第二版**（已落地）：原 query 照旧跑，扩展 query 再跑一次，按 `event_id` 合并取高分。
+
+```python
+# recall.recall 的 _finish 里
+result = _merge_expanded(result)   # 只在该次查询命中别名时执行
+```
+
+**实测对比（qq-505456846，query = 恋与深空）**
+
+```
+ABBR_EXPAND_ENABLED=False → 5 条（全是全称卡）
+ABBR_EXPAND_ENABLED=True  → 6 条（5 条全称 + 1 条 lysk 缩写卡）
+```
+
+**保护**
+
+- 扩展召回预算不足 200ms 时跳过（扩展不是必需）
+- 二次召回强制 `ABBR_EXPAND_ENABLED=False`，不会递归
+- 失败只告警，不影响主结果
+- `trace.abbr_expanded` 记录本次扩展了哪些词
+
+**测试**：`tests/test_abbr_expand.py`（8 条，含 recall 集成与图降级）。
+全量 **1510 passed**。

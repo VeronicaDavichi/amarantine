@@ -266,3 +266,77 @@ def resolve_abbr(
         "ambiguous": ambiguous,
         "source": "nbnhhsh+local" if key in local else "nbnhhsh",
     }
+
+# ============================================================ 查询扩展（T5）
+
+SAME_SENSE_PAIRS_CYPHER = """
+MATCH (a:Alias {namespace: $namespace})-[r:SAME_SENSE]->(b:Alias)
+RETURN a.name AS abbr, b.name AS full
+"""
+
+
+def load_alias_pairs(namespace: str, *, driver: Any | None = None) -> list[tuple[str, str]]:
+    """读该 namespace 下的缩写↔全称对；失败返回空表（不阻断召回）。"""
+    owns = driver is None
+    drv = driver
+    try:
+        if drv is None:
+            try:
+                from memory.config import load_settings
+                from neo4j import GraphDatabase
+
+                cfg = load_settings()
+                drv = GraphDatabase.driver(
+                    cfg.NEO4J_URI, auth=(cfg.NEO4J_USER, cfg.NEO4J_PASSWORD))
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("读别名对失败（跳过扩展）: %s", exc)
+                return []
+        with drv.session() as session:
+            rows = list(session.run(SAME_SENSE_PAIRS_CYPHER, namespace=namespace))
+        return [(str(r["abbr"]), str(r["full"])) for r in rows]
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("读别名对异常（跳过扩展）: %s", exc)
+        return []
+    finally:
+        if owns and drv is not None:
+            try:
+                drv.close()
+            except Exception:  # noqa: BLE001
+                pass
+
+
+def expand_query(query: str, pairs: list[tuple[str, str]]) -> tuple[str, list[str]]:
+    """把查询里出现的缩写/全称双向展开。
+
+    Args:
+        query: 原始查询。
+        pairs: `[(abbr, full)]`。
+
+    Returns:
+        `(expanded_query, expansions)`；没有命中就原样返回。
+
+    Note:
+        只做**词面命中**：缩写按拉丁字母边界判断（`lysk` 命中 `lysk周边`，
+        但 `skyes` 不命中）；中文全称按子串判断。
+    """
+    text = query or ""
+    lower = text.lower()
+    added: list[str] = []
+    for abbr, full in pairs:
+        a = abbr.lower()
+        if not a or not full:
+            continue
+        if re.search(rf"(?<![a-z0-9]){re.escape(a)}(?![a-z0-9])", lower):
+            if full not in text:
+                added.append(full)
+        elif full in text:
+            if not re.search(rf"(?<![a-z0-9]){re.escape(a)}(?![a-z0-9])", lower):
+                added.append(abbr)
+    if not added:
+        return text, []
+    # 去重保序
+    unique: list[str] = []
+    for item in added:
+        if item not in unique and item != text:
+            unique.append(item)
+    return f"{text} {' '.join(unique)}".strip(), unique
