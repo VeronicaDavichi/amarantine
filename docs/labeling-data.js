@@ -1261,5 +1261,95 @@ window.LABEL_DATA = {
    "source": "behavior"
   }
  ],
- "senses": []
+ "senses": [
+  {
+   "kind": "sense",
+   "id": "sense-1",
+   "term": "dd",
+   "gloss": "凉橙家养的鱼的名字",
+   "score": 3,
+   "evidence": [
+    "凉橙向托确认dd是她家的鱼并发表情",
+    "诶嘿称token欠费，询问如何让DSH接入workbuddy以节省开销"
+   ],
+   "scope": "qq-505456846",
+   "source": "llm"
+  },
+  {
+   "kind": "sense",
+   "id": "sense-2",
+   "term": "deepdeep",
+   "gloss": "群友deepdeep的昵称",
+   "score": 3,
+   "evidence": [
+    "幽幽子用欢迎语迎接新人deepdeep",
+    "deepdeep回应并反驳「所有人都是大肥鱼假扮的」的说法"
+   ],
+   "scope": "qq-505456846",
+   "source": "llm"
+  },
+  {
+   "kind": "sense",
+   "id": "sense-3",
+   "term": "向日葵",
+   "gloss": "一款远程桌面控制软件",
+   "score": 3,
+   "evidence": [
+    "乌角鲨建议改用向日葵远程桌面，并称本机扔出来更便宜",
+    "往汐反驳说向日葵当长期跑图不划算，一卡全白搭"
+   ],
+   "scope": "qq-505456846",
+   "source": "llm"
+  },
+  {
+   "kind": "sense",
+   "id": "sense-4",
+   "term": "岔号",
+   "gloss": "接龙编号错位不一致的现象",
+   "score": 3,
+   "evidence": [
+    "往汐认下第七号，表示编号不重要、有茶就行，并认为两版接龙岔号是常事"
+   ],
+   "scope": "qq-505456846",
+   "source": "llm"
+  },
+  {
+   "kind": "sense",
+   "id": "sense-5",
+   "term": "托夸鱼",
+   "gloss": "群内某位成员的昵称",
+   "score": 3,
+   "evidence": [
+    "托夸鱼是话唠很可爱，鱼反驳说是你们太安静"
+   ],
+   "scope": "qq-505456846",
+   "source": "llm"
+  },
+  {
+   "kind": "sense",
+   "id": "sense-6",
+   "term": "文峰",
+   "gloss": "指群外人物梁文峰",
+   "score": 3,
+   "evidence": [
+    "莫蒂斯缇追问梁叔叔是谁，B站峥空白回答是梁文峰，莫蒂斯缇调侃没来砸所以涨停",
+    "B站峥空白问是不是肥鱼，莫蒂斯缇澄清梁文峰不是群里的肥鱼，托称梁文峰是外行"
+   ],
+   "scope": "qq-505456846",
+   "source": "llm"
+  },
+  {
+   "kind": "sense",
+   "id": "sense-7",
+   "term": "机器人",
+   "gloss": "群里的群相册自动发图机器人",
+   "score": 3,
+   "evidence": [
+    "群友感叹群冷清，讨论安排机器人或整活",
+    "群相册机器人推送《白丝萝莉》相册图，玛薇卡追问是不是本人"
+   ],
+   "scope": "qq-505456846",
+   "source": "llm"
+  }
+ ]
 };

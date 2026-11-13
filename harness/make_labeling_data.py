@@ -28,7 +28,11 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "back_end" / "src"))
 
 from memory.services.labeler import extract_entities  # noqa: E402
-from memory.services.reference import build_candidates, extract_signals  # noqa: E402
+from memory.services.reference import (  # noqa: E402
+    build_candidates,
+    extract_signals,
+    suggest_gloss_llm,
+)
 from memory.services.relations import extract_statements  # noqa: E402
 
 NEO4J = "http://127.0.0.1:7474/db/neo4j/tx/commit"
@@ -205,6 +209,48 @@ def build_behaviors(limit: int = 10) -> list[dict]:
     return items
 
 
+def build_senses_llm(limit: int = 20, *, max_terms: int = 40) -> list[dict]:
+    """用 LLM 判断候选词在群里指什么（规则版 gloss 正确率只有 20%）。"""
+    from memory.config import load_settings
+
+    settings = load_settings()
+    rows = cy(f"MATCH (e:Event {{namespace:'{NS_QQ}'}}) RETURN e.summary LIMIT 3000")
+    summaries = [(r.get("row") or [""])[0] or "" for r in rows]
+    # 只取**定义句**信号：@/称呼只说明「有人在叫这个名字」，不说明它指什么。
+    # 实测不过滤时 10 条里 9 条是「群友昵称」这种废话。
+    sigs = [s for text in summaries for s in extract_signals(text) if s.kind == "define"]
+    cands = sorted(build_candidates(sigs, scope=NS_QQ),
+                   key=lambda c: -getattr(c, "score", 0))
+
+    items: list[dict] = []
+    seen: set[str] = set()
+    for c in cands[:max_terms]:
+        term = str(getattr(c, "term", "") or "")
+        if not term or term in seen:
+            continue
+        seen.add(term)
+        contexts = [t for t in summaries if term in t][:5]
+        if not contexts:
+            continue
+        gloss = suggest_gloss_llm(term, contexts, settings)
+        print(f"    LLM gloss: {term} → {gloss}")
+        if not gloss:
+            continue
+        items.append({
+            "kind": "sense",
+            "id": f"sense-{len(items)+1}",
+            "term": term,
+            "gloss": gloss,
+            "score": getattr(c, "score", 0),
+            "evidence": contexts[:2],
+            "scope": NS_QQ,
+            "source": "llm",
+        })
+        if len(items) >= limit:
+            break
+    return items
+
+
 def build_senses(limit: int = 20) -> list[dict]:
     rows = cy(f"MATCH (e:Event {{namespace:'{NS_QQ}'}}) RETURN e.summary LIMIT 3000")
     summaries = [(r.get("row") or [""])[0] or "" for r in rows]
@@ -244,6 +290,10 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", default=str(ROOT / "docs" / "labeling-data.js"))
     ap.add_argument(
+        "--senses-llm", action="store_true",
+        help="用 LLM 抽 gloss（规则版正确率 20%%，不推荐）",
+    )
+    ap.add_argument(
         "--senses", type=int, default=0,
         help="义项条数；默认 0 —— 规则版 gloss 基本全是碎片（实测正确率 20%%），"
              "等改成 LLM 抽取再开",
@@ -263,7 +313,10 @@ def main() -> int:
         "entity_pool": entity_pool(),
         "statements": build_statements(),
         "behaviors": build_behaviors(),
-        "senses": build_senses() if args.senses > 0 else [],
+        "senses": (
+            build_senses_llm(args.senses) if getattr(args, "senses_llm", False)
+            else (build_senses() if args.senses > 0 else [])
+        ),
     }
     out = pathlib.Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)

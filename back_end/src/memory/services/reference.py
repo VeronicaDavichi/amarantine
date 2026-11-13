@@ -30,6 +30,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 from dataclasses import dataclass, field
@@ -576,3 +577,65 @@ ON CREATE SET r.created_at = $now
 SET r.evidence = coalesce(r.evidence, [])
 RETURN count(r) AS n
 """
+
+# ============================================================ LLM gloss（spec 041 重做）
+
+_GLOSS_PROMPT = """你在读一个中文群聊。下面给出一个词和它出现的几条消息。
+
+判断：这个词在**群里**是不是被当作某个特定对象的称呼/行话？
+- 是 → 用一句**完整的短语**说明它指什么（≤20 字），不要照抄句子
+- 不是（只是普通名词/语气词/半句话） → 输出 null
+- 拿不准 → 输出 null
+
+只输出 JSON：{{"term": "…", "gloss": "…" 或 null}}
+
+词：{term}
+
+消息：
+{contexts}"""
+
+
+def suggest_gloss_llm(
+    term: str,
+    contexts: list[str],
+    settings: Any,
+    *,
+    client: Any | None = None,
+) -> str | None:
+    """让 LLM 判断一个词在群里是否指特定对象，返回解释或 None。
+
+    Note:
+        规则版把「X 是 Y」当定义，实测 20 条里 16 条是句子碎片
+        （`前提 → 口语过关且能`）。LLM 能看到整段上下文，能判断
+        「这只是普通名词」还是「群里真的这么叫」。
+    """
+    text = (term or "").strip()
+    if not text or not contexts:
+        return None
+    from memory.services.llm import chat
+
+    prompt = _GLOSS_PROMPT.format(
+        term=text,
+        contexts="\n".join(f"- {c[:120]}" for c in contexts[:5]),
+    )
+    try:
+        raw = chat(
+            [{"role": "user", "content": prompt}],
+            settings,
+            system="你是中文社群语义分析器，只输出 JSON。",
+            # 该模型先输出 thinking，256 会被吃光（实测大量「没有返回文本」）
+            max_tokens=2048,
+            client=client,
+        )
+    except Exception as exc:  # noqa: BLE001 - 外部依赖，失败返回 None
+        logger.warning("LLM gloss 失败 %s: %s", text, exc)
+        return None
+    try:
+        data = json.loads(raw) if isinstance(raw, str) else raw
+    except Exception:  # noqa: BLE001
+        return None
+    gloss = (data or {}).get("gloss")
+    if not gloss or not isinstance(gloss, str):
+        return None
+    gloss = gloss.strip()
+    return gloss if 2 <= len(gloss) <= 30 else None
