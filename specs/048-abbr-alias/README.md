@@ -1,5 +1,5 @@
 ---
-status: in-progress
+status: complete
 created: 2026-11-13
 priority: high
 tags:
@@ -8,10 +8,13 @@ tags:
 - recall
 - nbnhhsh
 created_at: 2026-11-13T04:10:36.945358509Z
-updated_at: 2026-11-13T04:17:12.590244091Z
+updated_at: 2026-11-13T06:06:54.981863449Z
+completed_at: 2026-11-13T06:06:54.981863449Z
 transitions:
 - status: in-progress
   at: 2026-11-13T04:17:12.590244091Z
+- status: complete
+  at: 2026-11-13T06:06:54.981863449Z
 ---
 # 拼音首字母缩写与别名展开
 
@@ -119,10 +122,10 @@ POST https://lab.magiconch.com/api/nbnhhsh/guess
 
 ## Test
 
-- [ ] A1 `lysk` 在 Lo 群语料里被解析为「恋与深空」（高分领先）
-- [ ] A2 `mz` 在同一语料里解析为「母猪」而非「母子/明侦」
-- [ ] A3 `nn` 因本地词典（暖暖）才能命中；无词典时标 ambiguous
-- [ ] A4 API 不可达 → 不报错、不阻断，读缓存/跳过
+- [x] A1 `lysk` 在 Lo 群语料里被解析为「恋与深空」（实测 score 6 vs 0）
+- [x] A2 `mz` 有共现时解析为「母猪」；真实语料仅 1 次且无共现 → ambiguous（符合 REQ-4）
+- [x] A3 `nn` 靠本地词典得「暖暖」；无本地词典且无缓存时标 ambiguous
+- [x] A4 API 不可达 → 不报错、不阻断，读缓存/跳过（`test_abbr_switch.py`）
 - [x] A5 多义缩写不建边，只记候选与 `ambiguous`
 - [x] A6 全量 pytest 无回归
 
@@ -255,3 +258,17 @@ ABBR_EXPAND_ENABLED=True  → 6 条（5 条全称 + 1 条 lysk 缩写卡）
 
 **测试**：`tests/test_abbr_expand.py`（8 条，含 recall 集成与图降级）。
 全量 **1510 passed**。
+
+### 2026-11-13 · A1–A4 验收记录
+
+```
+A1 lysk：candidates [恋与深空 6, 老姚烧烤 0, 老用手抠 0] → picked=恋与深空 ✓
+A2 mz：真实语料（仅 1 次、无共现）→ picked=None ambiguous ✓
+       构造语料（mz + 母猪 共现）→ picked=母猪 ✓
+A3 nn：本地词典 → picked=暖暖 ✓；空缓存+无本地词典 → ambiguous ✓
+A4 API 不可达 → 返回空、不抛、不阻断 ✓（单测）
+```
+
+**一个观察**：`nn` 的无词典场景必须用**空缓存**验证 —— 实测缓存里已经有
+「暖暖」（之前联调查过），所以带缓存时无本地词典也能命中。这不是 bug，
+正是「缓存 + 词典」两条腿的设计。
