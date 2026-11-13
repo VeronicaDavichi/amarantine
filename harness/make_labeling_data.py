@@ -122,8 +122,8 @@ def _roster_hits(text: str) -> list[str]:
             if not cand or cand in _ROSTER_STOP:
                 continue
             if cand.isascii():
-                # 拉丁名要 ≥3 且词边界，否则 `al` 会命中 `Valhalla`
-                if len(cand) < 3:
+                # 拉丁名 ≥2 且**词边界**：`kk` 要能选，但 `al` 不能命中 `Valhalla`
+                if len(cand) < 2:
                     continue
                 if not re.search(rf"(?<![A-Za-z0-9]){re.escape(cand)}(?![A-Za-z0-9])", text):
                     continue

@@ -1334,6 +1334,10 @@ window.LABEL_DATA = {
      "kind": "place"
     },
     {
+     "name": "kk",
+     "kind": "roster"
+    },
+    {
      "name": "玩偶",
      "kind": "roster"
     },
@@ -1385,6 +1389,10 @@ window.LABEL_DATA = {
      "kind": "topic"
     },
     {
+     "name": "kk",
+     "kind": "roster"
+    },
+    {
      "name": "玩偶",
      "kind": "roster"
     },
@@ -1424,6 +1432,10 @@ window.LABEL_DATA = {
      "kind": "topic"
     },
     {
+     "name": "kk",
+     "kind": "roster"
+    },
+    {
      "name": "咒术",
      "kind": "noun"
     },
@@ -1461,6 +1473,10 @@ window.LABEL_DATA = {
     {
      "name": "哥哥",
      "kind": "place"
+    },
+    {
+     "name": "kk",
+     "kind": "roster"
     },
     {
      "name": "咖啡",
