@@ -298,3 +298,38 @@ daocloud 卡在 r2 blob、1ms.run 卡在同一层，重试 8 轮都没拉全。�
 2. 临时把 `.wslconfig` 改成 `networkingMode=mirrored` 并 `wsl --shutdown`：
    mirrored 共享 localhost，relay 用 `127.0.0.1:3001` 即可（注意 mirrored
    镜像不到 VPN 网卡，仍要靠 relay）
+
+## QQ 导入：MCP 每次只回约 2000 行（2026-11-13 实测）
+
+**现象**：大肥鱼乐园（`485490399`）`group_msg_table` 有 **107,983 行**，
+`query_chat_messages` 传 `limit: 2000` 只返回 rowid 最新的 2000 行。
+有些消息 **rowid 靠前、但时间在窗口内**（例如 11-06 的「候潮」75 条），
+纯 limit 取数会整段漏掉 —— 表现为「FTS 搜得到、导入后原文表没有」。
+
+**证据**：
+
+```
+FTS 命中「候潮」75 条
+group_msg_table 里 75/75 都在（按 msgId 直查）
+但 query_chat_messages 最近 1999 条里 0 条
+候潮 rowid ~7705025e18，最新 1999 行 rowid ≥ 7779667e18
+```
+
+**正确做法**：按时间窗取数，而不是只给 limit。
+
+```bash
+# epoch 秒或 ISO 均可
+node harness/export_qq.mjs --db <nt_msg.db> --groups 485490399 \
+  --since 1793965000 --until 1793967000 --per-group-limit 2000 --out-dir ...
+```
+
+`export_qq.mjs` 已支持 `--since/--until/--days`，并按时间往回翻页；
+但**窗口内消息仍不能超过 2000 条**，大群要切小窗口（例如按天）。
+
+**另一个坑**：LLM 中继（Windows `harness/vpn_relay.py`，WSL 端口 3001）会静默死掉，
+表现为 `LLM 请求失败: Connection timed out` → 切分降级成逐条原文卡。
+重灌前先探活：
+
+```bash
+timeout 3 bash -c ':</dev/tcp/172.20.192.1/3001' && echo ok
+```
