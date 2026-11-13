@@ -106,12 +106,25 @@
     { key: "behaviors", name: "关系行为", kind: "relation" },
     { key: "senses", name: "指称义项", kind: "sense" },
   ];
-  const STORE = "amarantine-label-v2";
+  const STORE = "amarantine-label-v3";
   let state = load();
   let gi = 0, idx = 0;
 
   function load() {
-    try { return JSON.parse(localStorage.getItem(STORE) || "{}"); } catch (e) { return {}; }
+    try {
+      const cur = JSON.parse(localStorage.getItem(STORE) || "{}");
+      if (Object.keys(cur).length) return cur;
+      // v2 → v3 迁移：陈述组 id 没变，把旧标注带过来；行为/义项因去重换过 id，不迁移
+      const old = JSON.parse(localStorage.getItem("amarantine-label-v2") || "{}");
+      const migrated = {};
+      Object.keys(old).forEach(k => {
+        if (k.startsWith("stmt-")) migrated[k] = old[k];
+      });
+      if (Object.keys(migrated).length) {
+        localStorage.setItem(STORE, JSON.stringify(migrated));
+      }
+      return migrated;
+    } catch (e) { return {}; }
   }
   function save() {
     localStorage.setItem(STORE, JSON.stringify(state));
@@ -136,7 +149,7 @@
   function renderTabs() {
     const el = document.getElementById("tabs");
     el.innerHTML = "";
-    GROUPS.forEach((g, i) => {
+    GROUPS.filter(g => (DATA[g.key] || []).length > 0).forEach((g, i) => {
       const list = DATA[g.key] || [];
       const done = list.filter(x => {
         const s = labelOf(x.id);
@@ -145,7 +158,7 @@
       const b = document.createElement("div");
       b.className = "tab" + (i === gi ? " active" : "");
       b.textContent = `${g.name} ${done}/${list.length}`;
-      b.onclick = () => { gi = i; idx = firstUnlabeled(); render(); };
+      b.onclick = () => { gi = GROUPS.indexOf(g); idx = firstUnlabeled(); render(); };
       el.appendChild(b);
     });
   }

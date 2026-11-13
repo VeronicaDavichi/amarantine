@@ -174,18 +174,29 @@ def build_behaviors(limit: int = 10) -> list[dict]:
     data = cy(
         f"MATCH (p:Person {{namespace:'{NS_QQ}'}})<-[:INVOLVES]-(e:Event)-[:ACTION]->(a:Action) "
         f"MATCH (e)-[:MENTIONS]->(m) "
-        f"RETURN p.name, a.verb, m.name, e.event_id, e.summary LIMIT 5000")
+        f"RETURN p.name, a.verb, m.name, e.event_id, e.summary, e.date_start LIMIT 5000")
+
+    # 按 (日期, 动词) 合并同类事件：
+    # 实测 `kk 发布 A/B/C/D` 4 条、`阿强/阿珍 讨论 广东` 2 条，其实是同一批动作，
+    # 不合并会让评测集里 20 条有一半是同源，指标失真。
     groups: dict[tuple, list[dict]] = {}
     for row in data:
-        name, verb, target, eid, summary = (row.get("row") or [None] * 5)
-        key = (name or "", verb or "", target or "")
-        groups.setdefault(key, []).append({"event_id": eid, "evidence": summary})
+        name, verb, target, eid, summary, day = (row.get("row") or [None] * 6)
+        key = (str(day or "")[:10], verb or "")
+        groups.setdefault(key, []).append({
+            "person": name or "", "verb": verb or "", "target": target or "",
+            "event_id": eid, "evidence": summary, "date": str(day or "")[:10],
+        })
     items = []
-    for (person, verb, target), evs in sorted(groups.items(), key=lambda x: -len(x[1]))[:limit]:
+    for (_day, _verb), evs in sorted(groups.items(), key=lambda x: -len(x[1]))[:limit]:
+        rep = evs[0]
         items.append({
             "kind": "behavior",
             "id": f"beh-{len(items)+1}",
-            "person": person, "verb": verb, "target": target,
+            "person": rep["person"], "verb": rep["verb"], "target": rep["target"],
+            "date": rep["date"],
+            "merged_count": len(evs),
+            "merged_people": sorted({e["person"] for e in evs})[:5],
             "evidence_count": len(evs),
             "evidence": [e["evidence"] for e in evs[:3]],
             "entities": entities_of(" ".join(str(e["evidence"] or "") for e in evs[:3])),
@@ -199,8 +210,17 @@ def build_senses(limit: int = 20) -> list[dict]:
     summaries = [(r.get("row") or [""])[0] or "" for r in rows]
     sigs = [s for text in summaries for s in extract_signals(text)]
     cands = build_candidates(sigs, scope=NS_QQ)
-    items = []
+    # 同一 term 只留一条（评测里 `人` 出现 4 次、`内容` 2 次，全是同源碎片）
+    best: dict[str, object] = {}
     for c in cands:
+        term = str(getattr(c, "term", "") or "")
+        if not term:
+            continue
+        cur = best.get(term)
+        if cur is None or getattr(c, "score", 0) > getattr(cur, "score", 0):
+            best[term] = c
+    items = []
+    for c in best.values():
         gloss = getattr(c, "gloss", None)
         if not gloss or len(str(gloss)) < 2:
             continue
@@ -223,6 +243,11 @@ def build_senses(limit: int = 20) -> list[dict]:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", default=str(ROOT / "docs" / "labeling-data.js"))
+    ap.add_argument(
+        "--senses", type=int, default=0,
+        help="义项条数；默认 0 —— 规则版 gloss 基本全是碎片（实测正确率 20%%），"
+             "等改成 LLM 抽取再开",
+    )
     args = ap.parse_args()
 
     data = {
@@ -238,7 +263,7 @@ def main() -> int:
         "entity_pool": entity_pool(),
         "statements": build_statements(),
         "behaviors": build_behaviors(),
-        "senses": build_senses(),
+        "senses": build_senses() if args.senses > 0 else [],
     }
     out = pathlib.Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)

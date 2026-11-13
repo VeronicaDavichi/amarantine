@@ -225,9 +225,17 @@ def extract_signals(text: str, *, quote_id: str | None = None, ts: str | None = 
                 out.append(Signal(_clean_surface(word), W_AT, "speak",
                                   quote_id=quote_id, ts=ts))
         # 3) w 是/就是/指 X
+        #
+        # **书名号/引号里的「X 是 Y」不是定义**：实测 `《人是猫》完整版`
+        # 被切成 `《 人 是 猫 》 完整版`，于是抽出 `人 → 猫》完整版` 这种垃圾义项
+        # （评测时 20 条义项里 16 条是这类碎片）。
         if _is_noun(idx) and idx + 1 < len(words) and words[idx + 1] in _DEFINE_LEADS:
             gloss = "".join(words[idx + 2: idx + 6]).strip()
-            if len(gloss) >= 2:
+            prev = words[idx - 1] if idx > 0 else ""
+            in_title = prev in ("《", "「", "『", "“", "\"") or any(
+                ch in gloss for ch in ("》", "」", "』", "”", "\""))
+            fragment = (not gloss) or gloss[0] in "，。；、！？" or gloss[-1] in "，、；："
+            if _gloss_ok(gloss) and not in_title and not fragment:
                 out.append(Signal(_clean_surface(word), W_DEFINE, "define", gloss=gloss,
                                   quote_id=quote_id, ts=ts))
         # 4) 反向：吃w / w新鲜
@@ -351,6 +359,21 @@ CLAIM_MODES = ("assert", "question", "deny")
 
 #: 断言句式后缀词（分词后判断）
 _ASSERT_LEADS = ("是", "就是", "指", "指的是", "是指")
+
+#: gloss 里出现这些字符 → 是句子碎片，不是解释（实测 `分词器 → 什么，猜测可能`）
+_GLOSS_BAD = set("，。；！？、,.;!?：:（）()")
+#: gloss 以这些词开头 → 是口语碎片，不是定义
+_GLOSS_BAD_PREFIX = ("什么", "怎么", "谁", "哪", "还是", "因为", "可以", "例如")
+
+
+def _gloss_ok(gloss: str) -> bool:
+    """判断一个 gloss 是否像「完整的解释」。"""
+    text = (gloss or "").strip()
+    if not (2 <= len(text) <= 24):
+        return False
+    if any(ch in _GLOSS_BAD for ch in text):
+        return False
+    return not text.startswith(_GLOSS_BAD_PREFIX)
 _QUESTION_TAILS = ("吗", "吧", "？", "?", "呢")
 #: gloss 里出现这些词说明是疑问句（`密码是多少`），不是定义
 _QUESTION_WORDS = ("什么", "多少", "怎么", "哪", "是否", "何时", "为何")
