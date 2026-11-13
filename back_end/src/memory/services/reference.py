@@ -157,8 +157,16 @@ def _clean_surface(text: str) -> str:
 #: 引号内整段锁住：`《人是猫》` 不能被切成 `人 / 是 / 猫`
 #: （实测把「人」当定义主语，抽出 `人 → 猫》完整版`）。
 _QUOTE_PAIR_RE = re.compile(
-    r"《[^》]{1,60}》|「[^」]{1,60}」|『[^』]{1,60}』|“[^”]{1,60}”|\"[^\"]{1,60}\""
+    # 简中/繁中/日式/英式/书名号/方头括号都算：短句也要锁（`「好」` 不能拆）
+    r"《[^》]{1,60}》|〈[^〉]{1,60}〉|「[^」]{1,60}」|『[^』]{1,60}』"
+    r"|﹁[^﹂]{1,60}﹂|﹃[^﹄]{1,60}﹄|【[^】]{1,60}】"
+    r"|“[^”]{1,60}”|‘[^’]{1,60}’|«[^»]{1,60}»|‹[^›]{1,60}›"
+    r"|\"[^\"]{1,60}\"|'[^']{1,60}'"
 )
+
+#: 前后有空格的短词：聊天记录里常见 ` lysk `、` dd `、` 666 `，
+#: 这些词 jiema 常常切错或标错词性，锁成单个 token 更稳。
+_SPACED_TOKEN_RE = re.compile(r"(?<=\s)([^\s\uE000-\uE0FF]{1,24})(?=\s)")
 
 
 def _tokenize(text: str) -> list[tuple[str, str]]:
@@ -177,6 +185,8 @@ def _tokenize(text: str) -> list[tuple[str, str]]:
         return chr(0xE000 + len(held) - 1)
 
     masked = _QUOTE_PAIR_RE.sub(_hold, src)
+    # 再锁「前后都有空格的短词」：占位符之外的才处理
+    masked = _SPACED_TOKEN_RE.sub(_hold, masked)
     try:
         import jieba.posseg as pseg
 
