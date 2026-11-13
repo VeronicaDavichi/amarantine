@@ -27,6 +27,7 @@ import urllib.request
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "back_end" / "src"))
 
+from memory.services.labeler import extract_entities  # noqa: E402
 from memory.services.reference import build_candidates, extract_signals  # noqa: E402
 from memory.services.relations import extract_statements  # noqa: E402
 
@@ -49,6 +50,73 @@ def cy(statement: str) -> list[list]:
 def sentences(text: str) -> list[str]:
     parts = re.split(r"[。！？\n]", text or "")
     return [p.strip() for p in parts if 20 <= len(p.strip()) <= 160]
+
+
+
+
+IDENTITY_DIR = ROOT / "back_end" / "data" / "corpus" / "qq-identities"
+
+
+def identity_names() -> list[str]:
+    """从群成员表读昵称/群名片（去掉括号后缀），作为实体池的一部分。
+
+    为什么必须加：`extract_entities` 不认名册，`克劳德` 这类群友名字
+    在纯文本抽取里会漏掉 —— 实测「本句抽到的实体」只有一个 `头一号`。
+    """
+    names: set[str] = set()
+    if not IDENTITY_DIR.exists():
+        return []
+    for f in IDENTITY_DIR.glob("group-*.json"):
+        try:
+            members = json.loads(f.read_text(encoding="utf-8")).get("members") or []
+        except Exception:
+            continue
+        for m in members:
+            for raw in (m.get("nickname"), m.get("card")):
+                name = str(raw or "").strip()
+                name = re.sub(r"[（(][^）)]*[）)]", "", name).strip()
+                if 2 <= len(name) <= 12 and not name.isdigit():
+                    names.add(name)
+    return sorted(names)
+
+
+def entity_pool(limit: int = 600) -> list[str]:
+    """全局实体池：图里出现过的 Entity/Person 名字，供下拉框兜底。"""
+    rows = cy(
+        "MATCH (n) WHERE n.namespace IN ['%s','%s'] AND (n:Entity OR n:Person) "
+        "RETURN DISTINCT n.name LIMIT %d" % (NS_QQ, NS_DING, limit))
+    names = []
+    for r in rows:
+        name = (r.get("row") or [None])[0]
+        if name:
+            names.append(str(name))
+    merged = set(names) | set(identity_names())
+    return sorted(merged)[:limit]
+
+
+_ROSTER_CACHE: list[str] | None = None
+
+
+def entities_of(text: str) -> list[dict]:
+    """抽出一条证据里的实体（name + kind），给页面做下拉选项。
+
+    两条来源：`extract_entities`（jieba 词性）+ **名册子串匹配**。
+    后者补的是 `克劳德` 这类群友名 —— 没有名册时 jieba 只认得出「头一号」。
+    """
+    global _ROSTER_CACHE
+    out: list[dict] = []
+    try:
+        for e in extract_entities(text):
+            if e.name and e.name not in [x["name"] for x in out]:
+                out.append({"name": e.name, "kind": e.kind})
+    except Exception:
+        pass
+    if _ROSTER_CACHE is None:
+        _ROSTER_CACHE = identity_names()
+    for name in _ROSTER_CACHE:
+        if name in text and name not in [x["name"] for x in out]:
+            out.append({"name": name, "kind": "roster"})
+    return out[:20]
 
 
 def build_statements(limit: int = 20) -> list[dict]:
@@ -78,6 +146,7 @@ def build_statements(limit: int = 20) -> list[dict]:
             "kind": "statement",
             "id": f"stmt-pos-{len(items)+1}",
             "evidence": s,
+            "entities": entities_of(s),
             "machine": {"head": c.head, "predicate": c.predicate, "tail": c.tail,
                         "extracted": True},
             "source": "rule_hit",
@@ -92,6 +161,7 @@ def build_statements(limit: int = 20) -> list[dict]:
             "kind": "statement",
             "id": f"stmt-neg-{len(items)+1}",
             "evidence": s,
+            "entities": entities_of(s),
             "machine": {"head": None, "predicate": None, "tail": None, "extracted": False},
             "source": "rule_miss",
         })
@@ -118,6 +188,7 @@ def build_behaviors(limit: int = 10) -> list[dict]:
             "person": person, "verb": verb, "target": target,
             "evidence_count": len(evs),
             "evidence": [e["evidence"] for e in evs[:3]],
+            "entities": entities_of(" ".join(str(e["evidence"] or "") for e in evs[:3])),
             "source": "behavior",
         })
     return items
@@ -164,6 +235,7 @@ def main() -> int:
             "sense": "判断这个词在群里是否真的指这个意思；"
                      "上下文不足以判断时选「不确定」。",
         },
+        "entity_pool": entity_pool(),
         "statements": build_statements(),
         "behaviors": build_behaviors(),
         "senses": build_senses(),
