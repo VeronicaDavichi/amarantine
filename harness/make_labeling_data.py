@@ -101,26 +101,87 @@ def entity_pool(limit: int = 600) -> list[str]:
 _ROSTER_CACHE: list[str] | None = None
 
 
-def entities_of(text: str) -> list[dict]:
-    """抽出一条证据里的实体（name + kind），给页面做下拉选项。
+#: 名册里这些「名字」其实是口头词，不能当实体（实测 `有没有`/`没有` 被当人）
+_ROSTER_STOP = {"有没有", "没有", "什么", "这个", "那个", "可以", "不是", "就是",
+                "一个", "自己", "现在", "时候", "问题", "东西", "事情"}
 
-    两条来源：`extract_entities`（jieba 词性）+ **名册子串匹配**。
-    后者补的是 `克劳德` 这类群友名 —— 没有名册时 jieba 只认得出「头一号」。
+
+def _clean_roster_name(raw: str) -> str:
+    """名册名去掉 emoji/符号/括号内容，只留 CJK/字母/数字。"""
+    text = re.sub(r"[（(][^）)]*[）)]", "", str(raw or "")).strip()
+    text = re.sub(r"[^\u4e00-\u9fa5A-Za-z0-9]", "", text).strip()
+    return text
+
+
+def _roster_hits(text: str) -> list[str]:
+    """名册匹配：整名优先，其次「去掉 emoji 后的主干」（`便携式🦆🍗` → `便携式`）。"""
+    hits: list[str] = []
+    for raw in _ROSTER_CACHE or []:
+        clean = _clean_roster_name(raw)
+        for cand in (raw, clean):
+            if not cand or cand in _ROSTER_STOP:
+                continue
+            if cand.isascii():
+                # 拉丁名要 ≥3 且词边界，否则 `al` 会命中 `Valhalla`
+                if len(cand) < 3:
+                    continue
+                if not re.search(rf"(?<![A-Za-z0-9]){re.escape(cand)}(?![A-Za-z0-9])", text):
+                    continue
+            else:
+                if len(cand) < 2 or cand not in text:
+                    continue
+            if cand not in hits:
+                hits.append(cand)
+                break
+            if cand == clean:
+                break
+    return hits
+
+
+def entities_of(text: str) -> list[dict]:
+    """抽出一条证据里可选的实体（name + kind），给页面做下拉选项。
+
+    三个来源：
+
+    1. `extract_entities`（人名/专名）
+    2. **名册**（`克劳德`、`便携式` 这类 jieba 认不出的群友）
+    3. **jieba 普通名词**（`服务器`、`产品`、`老师` —— 关系目标常常是普通名词，
+       之前完全没进候选，导致用户只能手填）
     """
     global _ROSTER_CACHE
     out: list[dict] = []
+    seen: set[str] = set()
+
+    def add(name: str, kind: str) -> None:
+        name = (name or "").strip()
+        if not name or name in seen or len(name) > 12 or name.isdigit():
+            return
+        if name in ("的", "了", "是", "在", "和", "与", "这", "那", "我", "你", "他", "她"):
+            return
+        seen.add(name)
+        out.append({"name": name, "kind": kind})
+
     try:
         for e in extract_entities(text):
-            if e.name and e.name not in [x["name"] for x in out]:
-                out.append({"name": e.name, "kind": e.kind})
+            add(e.name, e.kind)
     except Exception:
         pass
+
     if _ROSTER_CACHE is None:
         _ROSTER_CACHE = identity_names()
-    for name in _ROSTER_CACHE:
-        if name in text and name not in [x["name"] for x in out]:
-            out.append({"name": name, "kind": "roster"})
-    return out[:20]
+    for name in _roster_hits(text):
+        add(name, "roster")
+
+    # 普通名词：jieba 的 n/nz/vn（关系目标多半是这类词）
+    try:
+        import jieba.posseg as pseg
+
+        for w in pseg.cut(text):
+            if w.flag in ("n", "nz", "vn", "nt") and 2 <= len(w.word) <= 10:
+                add(w.word, "noun")
+    except Exception:
+        pass
+    return out[:24]
 
 
 def build_statements(limit: int = 20) -> list[dict]:

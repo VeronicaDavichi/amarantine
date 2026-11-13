@@ -628,6 +628,18 @@ window.LABEL_DATA = {
     {
      "name": "尘霜",
      "kind": "roster"
+    },
+    {
+     "name": "鲸鱼",
+     "kind": "noun"
+    },
+    {
+     "name": "住户",
+     "kind": "noun"
+    },
+    {
+     "name": "门牌号",
+     "kind": "noun"
     }
    ],
    "machine": {
@@ -646,6 +658,18 @@ window.LABEL_DATA = {
     {
      "name": "AI",
      "kind": "topic"
+    },
+    {
+     "name": "身份",
+     "kind": "noun"
+    },
+    {
+     "name": "内容",
+     "kind": "noun"
+    },
+    {
+     "name": "记忆",
+     "kind": "noun"
     }
    ],
    "machine": {
@@ -668,6 +692,18 @@ window.LABEL_DATA = {
     {
      "name": "老师一起",
      "kind": "topic"
+    },
+    {
+     "name": "分支机构",
+     "kind": "noun"
+    },
+    {
+     "name": "老师",
+     "kind": "noun"
+    },
+    {
+     "name": "事情",
+     "kind": "noun"
     }
    ],
    "machine": {
@@ -686,6 +722,14 @@ window.LABEL_DATA = {
     {
      "name": "棉棉",
      "kind": "roster"
+    },
+    {
+     "name": "攻击力",
+     "kind": "noun"
+    },
+    {
+     "name": "角色",
+     "kind": "noun"
     }
    ],
    "machine": {
@@ -704,6 +748,18 @@ window.LABEL_DATA = {
     {
      "name": "对方家",
      "kind": "topic"
+    },
+    {
+     "name": "角鲨",
+     "kind": "noun"
+    },
+    {
+     "name": "群里",
+     "kind": "noun"
+    },
+    {
+     "name": "对方",
+     "kind": "noun"
     }
    ],
    "machine": {
@@ -726,6 +782,30 @@ window.LABEL_DATA = {
     {
      "name": "有空一起",
      "kind": "topic"
+    },
+    {
+     "name": "老师",
+     "kind": "noun"
+    },
+    {
+     "name": "有空",
+     "kind": "noun"
+    },
+    {
+     "name": "交流",
+     "kind": "noun"
+    },
+    {
+     "name": "智能",
+     "kind": "noun"
+    },
+    {
+     "name": "方案",
+     "kind": "noun"
+    },
+    {
+     "name": "预计",
+     "kind": "noun"
     }
    ],
    "machine": {
@@ -746,8 +826,32 @@ window.LABEL_DATA = {
      "kind": "topic"
     },
     {
-     "name": "al",
+     "name": "便携式",
      "kind": "roster"
+    },
+    {
+     "name": "服务器",
+     "kind": "noun"
+    },
+    {
+     "name": "含义",
+     "kind": "noun"
+    },
+    {
+     "name": "鱼儿",
+     "kind": "noun"
+    },
+    {
+     "name": "经营",
+     "kind": "noun"
+    },
+    {
+     "name": "生活",
+     "kind": "noun"
+    },
+    {
+     "name": "空间",
+     "kind": "noun"
     }
    ],
    "machine": {
@@ -774,6 +878,10 @@ window.LABEL_DATA = {
     {
      "name": "MCP",
      "kind": "topic"
+    },
+    {
+     "name": "数据",
+     "kind": "noun"
     }
    ],
    "machine": {
@@ -802,12 +910,16 @@ window.LABEL_DATA = {
      "kind": "topic"
     },
     {
-     "name": "有没有",
-     "kind": "roster"
+     "name": "老师",
+     "kind": "noun"
     },
     {
-     "name": "没有",
-     "kind": "roster"
+     "name": "产品",
+     "kind": "noun"
+    },
+    {
+     "name": "效果",
+     "kind": "noun"
     }
    ],
    "machine": {
@@ -822,7 +934,36 @@ window.LABEL_DATA = {
    "kind": "statement",
    "id": "stmt-neg-10",
    "evidence": "群友讨论把鱼都放一起会怎样，戏称会赛博吵架、污染文本库、左脚踩右脚",
-   "entities": [],
+   "entities": [
+    {
+     "name": "群友",
+     "kind": "noun"
+    },
+    {
+     "name": "戏称",
+     "kind": "noun"
+    },
+    {
+     "name": "会赛",
+     "kind": "noun"
+    },
+    {
+     "name": "污染",
+     "kind": "noun"
+    },
+    {
+     "name": "文本库",
+     "kind": "noun"
+    },
+    {
+     "name": "左脚",
+     "kind": "noun"
+    },
+    {
+     "name": "右脚",
+     "kind": "noun"
+    }
+   ],
    "machine": {
     "head": null,
     "predicate": null,
@@ -878,20 +1019,24 @@ window.LABEL_DATA = {
      "kind": "topic"
     },
     {
-     "name": "Ver",
-     "kind": "roster"
-    },
-    {
-     "name": "hi",
-     "kind": "roster"
-    },
-    {
-     "name": "oni",
-     "kind": "roster"
-    },
-    {
      "name": "战斗",
      "kind": "roster"
+    },
+    {
+     "name": "角色",
+     "kind": "noun"
+    },
+    {
+     "name": "钢琴",
+     "kind": "noun"
+    },
+    {
+     "name": "夜曲",
+     "kind": "noun"
+    },
+    {
+     "name": "风格",
+     "kind": "noun"
     }
    ],
    "source": "behavior"
@@ -937,12 +1082,32 @@ window.LABEL_DATA = {
      "kind": "topic"
     },
     {
+     "name": "名字",
+     "kind": "roster"
+    },
+    {
      "name": "王逗比–SX",
      "kind": "roster"
     },
     {
      "name": "逗比",
      "kind": "roster"
+    },
+    {
+     "name": "群里",
+     "kind": "noun"
+    },
+    {
+     "name": "聊天记录",
+     "kind": "noun"
+    },
+    {
+     "name": "蟑螂",
+     "kind": "noun"
+    },
+    {
+     "name": "体面",
+     "kind": "noun"
     }
    ],
    "source": "behavior"
@@ -982,10 +1147,6 @@ window.LABEL_DATA = {
      "kind": "topic"
     },
     {
-     "name": "al",
-     "kind": "roster"
-    },
-    {
      "name": "九条",
      "kind": "roster"
     },
@@ -996,6 +1157,10 @@ window.LABEL_DATA = {
     {
      "name": "羽生玲央",
      "kind": "roster"
+    },
+    {
+     "name": "记下",
+     "kind": "noun"
     }
    ],
    "source": "behavior"
@@ -1031,16 +1196,24 @@ window.LABEL_DATA = {
      "kind": "topic"
     },
     {
-     "name": "什么",
-     "kind": "roster"
-    },
-    {
      "name": "淮茶",
      "kind": "roster"
     },
     {
      "name": "羽生玲央",
      "kind": "roster"
+    },
+    {
+     "name": "训练",
+     "kind": "noun"
+    },
+    {
+     "name": "音色",
+     "kind": "noun"
+    },
+    {
+     "name": "软件",
+     "kind": "noun"
     }
    ],
    "source": "behavior"
@@ -1077,6 +1250,22 @@ window.LABEL_DATA = {
     {
      "name": "守门而坐贾偏宜",
      "kind": "roster"
+    },
+    {
+     "name": "守门",
+     "kind": "noun"
+    },
+    {
+     "name": "长款",
+     "kind": "noun"
+    },
+    {
+     "name": "粉色",
+     "kind": "noun"
+    },
+    {
+     "name": "开衫",
+     "kind": "noun"
     }
    ],
    "source": "behavior"
@@ -1106,24 +1295,16 @@ window.LABEL_DATA = {
      "kind": "topic"
     },
     {
-     "name": "Fe",
-     "kind": "roster"
-    },
-    {
      "name": "Ferry.安辞",
      "kind": "roster"
     },
     {
-     "name": "rr",
-     "kind": "roster"
+     "name": "群里",
+     "kind": "noun"
     },
     {
-     "name": "ry",
-     "kind": "roster"
-    },
-    {
-     "name": "y.",
-     "kind": "roster"
+     "name": "聊天记录",
+     "kind": "noun"
     }
    ],
    "source": "behavior"
@@ -1153,12 +1334,28 @@ window.LABEL_DATA = {
      "kind": "place"
     },
     {
-     "name": "kk",
+     "name": "玩偶",
      "kind": "roster"
     },
     {
-     "name": "玩偶",
-     "kind": "roster"
+     "name": "人格",
+     "kind": "noun"
+    },
+    {
+     "name": "蒸汽",
+     "kind": "noun"
+    },
+    {
+     "name": "朋克",
+     "kind": "noun"
+    },
+    {
+     "name": "挂件",
+     "kind": "noun"
+    },
+    {
+     "name": "消息",
+     "kind": "noun"
     }
    ],
    "source": "behavior"
@@ -1188,12 +1385,16 @@ window.LABEL_DATA = {
      "kind": "topic"
     },
     {
-     "name": "kk",
+     "name": "玩偶",
      "kind": "roster"
     },
     {
-     "name": "玩偶",
-     "kind": "roster"
+     "name": "咒术",
+     "kind": "noun"
+    },
+    {
+     "name": "消息",
+     "kind": "noun"
     }
    ],
    "source": "behavior"
@@ -1223,8 +1424,16 @@ window.LABEL_DATA = {
      "kind": "topic"
     },
     {
-     "name": "kk",
-     "kind": "roster"
+     "name": "咒术",
+     "kind": "noun"
+    },
+    {
+     "name": "事变",
+     "kind": "noun"
+    },
+    {
+     "name": "消息",
+     "kind": "noun"
     }
    ],
    "source": "behavior"
@@ -1254,8 +1463,20 @@ window.LABEL_DATA = {
      "kind": "place"
     },
     {
-     "name": "kk",
+     "name": "咖啡",
      "kind": "roster"
+    },
+    {
+     "name": "公主",
+     "kind": "noun"
+    },
+    {
+     "name": "和服",
+     "kind": "noun"
+    },
+    {
+     "name": "消息",
+     "kind": "noun"
     }
    ],
    "source": "behavior"
@@ -1266,7 +1487,7 @@ window.LABEL_DATA = {
    "kind": "sense",
    "id": "sense-1",
    "term": "dd",
-   "gloss": "凉橙家养的鱼的名字",
+   "gloss": "指凉橙家养的鱼",
    "score": 3,
    "evidence": [
     "凉橙向托确认dd是她家的鱼并发表情",
@@ -1279,7 +1500,7 @@ window.LABEL_DATA = {
    "kind": "sense",
    "id": "sense-2",
    "term": "deepdeep",
-   "gloss": "群友deepdeep的昵称",
+   "gloss": "群内一位成员的昵称",
    "score": 3,
    "evidence": [
     "幽幽子用欢迎语迎接新人deepdeep",
@@ -1291,8 +1512,21 @@ window.LABEL_DATA = {
   {
    "kind": "sense",
    "id": "sense-3",
+   "term": "卡",
+   "gloss": "指卡片类周边商品",
+   "score": 3,
+   "evidence": [
+    "kk发布新品速递并介绍坂本闪卡上架与价格",
+    "重发布暗杀教室花札风透卡卡片补盒通知"
+   ],
+   "scope": "qq-505456846",
+   "source": "llm"
+  },
+  {
+   "kind": "sense",
+   "id": "sense-4",
    "term": "向日葵",
-   "gloss": "一款远程桌面控制软件",
+   "gloss": "指向日葵远程桌面软件",
    "score": 3,
    "evidence": [
     "乌角鲨建议改用向日葵远程桌面，并称本机扔出来更便宜",
@@ -1303,9 +1537,9 @@ window.LABEL_DATA = {
   },
   {
    "kind": "sense",
-   "id": "sense-4",
+   "id": "sense-5",
    "term": "岔号",
-   "gloss": "接龙编号错位不一致的现象",
+   "gloss": "接龙时编号错开对不上",
    "score": 3,
    "evidence": [
     "往汐认下第七号，表示编号不重要、有茶就行，并认为两版接龙岔号是常事"
@@ -1315,9 +1549,9 @@ window.LABEL_DATA = {
   },
   {
    "kind": "sense",
-   "id": "sense-5",
+   "id": "sense-6",
    "term": "托夸鱼",
-   "gloss": "群内某位成员的昵称",
+   "gloss": "指群里昵称为托夸鱼的成员",
    "score": 3,
    "evidence": [
     "托夸鱼是话唠很可爱，鱼反驳说是你们太安静"
@@ -1327,9 +1561,9 @@ window.LABEL_DATA = {
   },
   {
    "kind": "sense",
-   "id": "sense-6",
+   "id": "sense-7",
    "term": "文峰",
-   "gloss": "指群外人物梁文峰",
+   "gloss": "指梁文峰，被称外行的非群友",
    "score": 3,
    "evidence": [
     "莫蒂斯缇追问梁叔叔是谁，B站峥空白回答是梁文峰，莫蒂斯缇调侃没来砸所以涨停",
@@ -1340,9 +1574,9 @@ window.LABEL_DATA = {
   },
   {
    "kind": "sense",
-   "id": "sense-7",
+   "id": "sense-8",
    "term": "机器人",
-   "gloss": "群里的群相册自动发图机器人",
+   "gloss": "群内自动推送相册图片的机器人账号",
    "score": 3,
    "evidence": [
     "群友感叹群冷清，讨论安排机器人或整活",
