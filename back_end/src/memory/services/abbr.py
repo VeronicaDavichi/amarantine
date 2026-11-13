@@ -110,15 +110,39 @@ class AbbrCache:
             )
 
 
-def guess_abbr(term: str, *, cache: AbbrCache | None = None, timeout: float = 8.0) -> list[str]:
-    """查 nbnhhsh 候选；缓存优先，失败返回空表（不抛）。"""
+def nbnhhsh_enabled() -> bool:
+    """外部 API 是否启用（默认关，见 `ABBR_NBNHHHSH_ENABLED`）。"""
+    try:
+        from memory.config import load_settings
+
+        return bool(getattr(load_settings(), "ABBR_NBNHHHSH_ENABLED", False))
+    except Exception:  # noqa: BLE001 - 配置读不到就当关闭
+        return False
+
+
+def guess_abbr(
+    term: str,
+    *,
+    cache: AbbrCache | None = None,
+    timeout: float = 8.0,
+    enabled: bool | None = None,
+) -> list[str]:
+    """查 nbnhhsh 候选；缓存优先，失败返回空表（不抛）。
+
+    Args:
+        enabled: `None` = 读配置；`False` = 完全不发外部请求（只读缓存）。
+    """
     key = (term or "").strip().lower()
     if not key:
         return []
+    if enabled is None:
+        enabled = nbnhhsh_enabled()
     cache = cache or AbbrCache()
     cached = cache.get(key)
     if cached is not None:
         return cached
+    if not enabled:
+        return []
     try:
         import httpx
 
@@ -208,6 +232,7 @@ def resolve_abbr(
     local: dict[str, list[str]] | None = None,
     ratio: float = 2.0,
     min_score: int = 2,
+    enabled: bool | None = None,
 ) -> dict[str, Any]:
     """解析一个缩写：候选 → 打分 → 是否可连。
 
@@ -217,7 +242,7 @@ def resolve_abbr(
     """
     key = (abbr or "").strip().lower()
     local = local if local is not None else load_local_dict()
-    cands = list(guess_abbr(key, cache=cache))
+    cands = list(guess_abbr(key, cache=cache, enabled=enabled))
     for extra in local.get(key, []):
         if extra not in cands:
             cands.append(extra)

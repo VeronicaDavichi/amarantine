@@ -78,8 +78,8 @@ def test_guess_abbr_uses_cache(monkeypatch, cache) -> None:
 
     import httpx
     monkeypatch.setattr(httpx.Client, "post", fake_post)
-    a = A.guess_abbr("lysk", cache=cache)
-    b = A.guess_abbr("lysk", cache=cache)
+    a = A.guess_abbr("lysk", cache=cache, enabled=True)
+    b = A.guess_abbr("lysk", cache=cache, enabled=True)
     assert a == ["恋与深空"] == b
     assert calls == ["lysk"]  # 第二次走缓存
 
@@ -91,7 +91,7 @@ def test_guess_abbr_failure_returns_empty(monkeypatch, cache) -> None:
         raise httpx.ConnectError("no net")
 
     monkeypatch.setattr(httpx.Client, "post", boom)
-    assert A.guess_abbr("whatever", cache=cache) == []
+    assert A.guess_abbr("whatever", cache=cache, enabled=True) == []
 
 
 def test_load_local_dict_reads_config() -> None:

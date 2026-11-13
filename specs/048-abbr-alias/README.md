@@ -57,7 +57,8 @@ POST https://lab.magiconch.com/api/nbnhhsh/guess
 - **REQ-3** **WHEN** 最高分明显领先（≥2 倍且 ≥2 次共现）**THEN** SHALL 建
   `(:Alias "lysk")-[:SAME_SENSE {source:"nbnhhsh", confidence}]->(:Alias "恋与深空")`。
 - **REQ-4** **WHEN** 无法区分 **THEN** SHALL 标 `ambiguous`，**不建边**，只记录候选。
-- **REQ-5** **WHEN** API 不可达 **THEN** SHALL 用缓存/跳过，**不得阻断导入**。
+- **REQ-5** **WHEN** API 不可达 **THEN** SHALL 用缓存/跳过，**不得阻断导入**；
+  并 SHALL 提供 `ABBR_NBNHHHSH_ENABLED` 开关（**默认关**，只走本地词典）。
 - **REQ-6** **WHEN** 检索 **THEN** SHALL 双向扩展：查全称附带缩写，查缩写反查全称；
   多义缩写只提示、不合并。
 
@@ -181,3 +182,28 @@ nn   → 倪妮 / 纳尼 / 嗯嗯 / 农农 / 男娜    ← 没有「暖暖」
    改完后 `sm` 正确变成 ambiguous。
 
 **未做**：T5 召回层双向扩展（查「恋与深空」自动带 `lysk`）。
+
+### 2026-11-13 · 外网开关（用户要求）
+
+**用户规则**：外网通的时候可用，不通就别用；让用户能配置。
+
+**实现**
+
+| 位置 | 内容 |
+|---|---|
+| `config.py` | `ABBR_NBNHHHSH_ENABLED: bool = False`（默认关） |
+| `.env.example` | 同名配置 + 注释：关闭后仍用 `config/abbr_local.json` |
+| `abbr.guess_abbr(enabled=...)` | `None` 读配置；`False` 完全不发请求（缓存仍可读） |
+| `harness/resolve_abbr.py` | `--no-nbnhhsh` / `--enable-nbnhhsh` 临时覆盖 |
+
+**行为**
+
+```
+开关关：不联网 → 只用本地词典 + 已有缓存 → 结果更少但确定
+开关开：先查缓存 → 未命中才请求 nbnhhsh → 失败静默降级
+```
+
+**测试**：`tests/test_abbr_switch.py`（5 条）——关闭时不发请求、缓存可读、
+开启时发请求、默认读配置、关网时本地词典仍能解析 `nn=暖暖`。
+
+全量 **1502 passed**。

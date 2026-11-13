@@ -107,6 +107,12 @@ class Settings(BaseSettings):
     # 所以 ② 级改成确定性规则层，向量方案作废（ENTITY_ALIAS_SIM 保留待重评）。
 
     #: 规则层总开关。关掉 = 完全回退到「只有 ③ LLM」的旧行为。
+    #: 是否允许调用 nbnhhsh 公开 API 猜缩写（spec 048）。
+    #:
+    #: **默认关** —— 它依赖外网，公司网/VPN 断开时会拖慢导入。
+    #: 关掉后只用 `config/abbr_local.json` 的本地词典，功能仍在、只是覆盖面小。
+    ABBR_NBNHHHSH_ENABLED: bool = False
+
     ENTITY_RULE_ENABLED: bool = True
 
     #: 后缀白名单：短名是长名前缀、且多出的部分在此表内 -> 判同一实体。

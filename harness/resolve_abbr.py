@@ -66,6 +66,14 @@ def main() -> int:
     ap.add_argument("--namespace", default="qq-505456846")
     ap.add_argument("--min-freq", type=int, default=1)
     ap.add_argument("--apply", action="store_true", help="写 SAME_SENSE 边")
+    ap.add_argument(
+        "--no-nbnhhsh", action="store_true",
+        help="只用本地词典，不调外网 API（外网不通时用）",
+    )
+    ap.add_argument(
+        "--enable-nbnhhsh", action="store_true",
+        help="本次强制启用外网 API（覆盖配置）",
+    )
     args = ap.parse_args()
 
     texts = load_texts(args.session, args.namespace)
@@ -81,7 +89,12 @@ def main() -> int:
     for token, freq in counter.most_common(40):
         if freq < args.min_freq:
             continue
-        got = A.resolve_abbr(token, texts, cache=cache, local=local)
+        enabled = None
+        if args.no_nbnhhsh:
+            enabled = False
+        elif args.enable_nbnhhsh:
+            enabled = True
+        got = A.resolve_abbr(token, texts, cache=cache, local=local, enabled=enabled)
         if not got["candidates"]:
             continue
         results.append((token, freq, got))
