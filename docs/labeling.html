@@ -49,7 +49,12 @@
   .intensity button[data-level="3"].sel{border-color:var(--l3)}
   .intensity button[data-level="4"].sel{border-color:var(--l4)}
   .hint{color:var(--muted);font-size:12px;margin-top:8px}
-  .note{width:100%;margin-top:10px}
+  .note{width:100%;margin-top:10px;background:#11141a;color:var(--text);
+        border:1px solid var(--line);border-radius:8px;padding:8px 10px;font:inherit}
+  .note:focus{outline:none;border-color:var(--accent)}
+  .note::placeholder{color:var(--muted)}
+  .nav{display:flex;gap:10px;margin-top:14px}
+  .nav button{min-width:120px}
   .missing{color:var(--warn)}
   .done{color:var(--ok)}
   .tag{font-size:12px;padding:2px 8px;border-radius:999px;border:1px solid var(--line)}
@@ -233,14 +238,28 @@
       if (lb.label) body += `<div class="hint done">已标：${lb.label}</div>`;
     }
 
-    body += `<input class="note" id="note" placeholder="备注（可选）" value="${esc(lb.note || "")}">`;
-    body += `<div class="hint">快捷键：${g.kind === "relation" ? "0–4 选强度 · " : "1 正确 · 2 错误 · 3 不确定 · "}←/→ 翻页 · 备注自动保存</div>`;
+    body += `<input type="text" class="note" id="note" placeholder="备注（可选）" value="${esc(lb.note || "")}">`;
+    body += `<div class="nav">
+      <button id="prev">← 上一页</button>
+      <button id="next">下一页 →</button>
+    </div>`;
+    body += `<div class="hint">快捷键：${g.kind === "relation" ? "0–4 选强度" : "1 正确 · 2 错误 · 3 不确定"} · 备注失焦自动保存</div>`;
 
     app.innerHTML = head + body + `</div>`;
     wire(item, g);
   }
 
   function wire(item, g) {
+    document.getElementById("prev").onclick = () => {
+      const list = items();
+      idx = (idx - 1 + list.length) % list.length;
+      render();
+    };
+    document.getElementById("next").onclick = () => {
+      const list = items();
+      idx = (idx + 1) % list.length;
+      render();
+    };
     const note = document.getElementById("note");
     note.onchange = () => {
       state[item.id] = state[item.id] || {};
@@ -347,8 +366,7 @@
       const map = { "1": "ok", "2": "bad", "3": "warn" };
       if (map[e.key]) document.querySelector(`.sense[data-key="${map[e.key]}"]`)?.click();
     }
-    if (e.key === "ArrowRight") { idx = (idx + 1) % items().length; render(); }
-    if (e.key === "ArrowLeft") { idx = (idx - 1 + items().length) % items().length; render(); }
+    // 翻页只走按钮：实测左右键容易在填备注时误触
   });
 
   idx = firstUnlabeled();
