@@ -55,6 +55,7 @@
   .note::placeholder{color:var(--muted)}
   .nav{display:flex;gap:10px;margin-top:14px}
   .nav button{min-width:120px}
+  #jsontext{resize:vertical}
   .missing{color:var(--warn)}
   .done{color:var(--ok)}
   .tag{font-size:12px;padding:2px 8px;border-radius:999px;border:1px solid var(--line)}
@@ -69,13 +70,22 @@
   <h1>amarantine 人工标注</h1>
   <div class="tabs" id="tabs"></div>
   <div class="spacer"></div>
-  <button id="export">导出 JSON</button>
+  <button id="showjson">显示 JSON（可复制）</button>
+  <button id="export">下载 JSON</button>
   <button id="reset">清空本组</button>
 </header>
 <main>
   <div class="progress" id="progress"></div>
   <div class="bar"><i id="bar"></i></div>
   <div id="app"></div>
+  <div id="jsonbox" style="display:none;margin-top:16px">
+    <div class="progress">全选（Ctrl+A）→ 复制（Ctrl+C），或者点下面的「复制到剪贴板」</div>
+    <textarea id="jsontext" class="note" style="height:220px;font-family:Consolas,monospace;font-size:12px"></textarea>
+    <div class="nav">
+      <button id="copyjson">复制到剪贴板</button>
+      <button id="hidejson">收起</button>
+    </div>
+  </div>
 </main>
 <footer>数据来自 <code>docs/labeling-data.js</code> · 标注保存在浏览器 localStorage（换浏览器不同步）</footer>
 
@@ -341,6 +351,34 @@
     return out;
   }
   window.amarantineExport = buildExport;
+
+  document.getElementById("showjson").onclick = () => {
+    const box = document.getElementById("jsonbox");
+    const ta = document.getElementById("jsontext");
+    ta.value = JSON.stringify(buildExport(), null, 1);
+    box.style.display = "block";
+    ta.focus();
+    ta.select();
+  };
+  document.getElementById("hidejson").onclick = () => {
+    document.getElementById("jsonbox").style.display = "none";
+  };
+  document.getElementById("copyjson").onclick = async () => {
+    const ta = document.getElementById("jsontext");
+    ta.focus();
+    ta.select();
+    try {
+      await navigator.clipboard.writeText(ta.value);
+      alert("已复制到剪贴板，直接粘贴即可");
+      return;
+    } catch (e) { /* 剪贴板 API 可能被 file:// 禁用，走兜底 */ }
+    try {
+      document.execCommand("copy");
+      alert("已复制到剪贴板，直接粘贴即可");
+    } catch (e) {
+      alert("自动复制失败：请按 Ctrl+A 全选，再按 Ctrl+C 复制");
+    }
+  };
 
   document.getElementById("export").onclick = () => {
     const blob = new Blob([JSON.stringify(buildExport(), null, 1)], { type: "application/json" });
