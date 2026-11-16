@@ -333,3 +333,28 @@ node harness/export_qq.mjs --db <nt_msg.db> --groups 485490399 \
 ```bash
 timeout 3 bash -c ':</dev/tcp/172.20.192.1/3001' && echo ok
 ```
+
+## WSL 空闲会自动关闭 → 容器停（不是故障）
+
+**现象**：隔一段时间不用，再跑脚本会报
+
+```
+ConnectionRefusedError: [Errno 111] Connection refused（连 7474 / 8081）
+docker ps 显示容器 "Up N seconds" 然后又消失
+```
+
+**原因**：WSL2 实例在空闲后被回收，Docker 容器随之 stop。这是 WSL 的正常行为，
+不是容器崩了、也不是代码问题。
+
+**一键唤醒**：
+
+```bash
+bash harness/wake.sh            # 起 4 个容器 + 探活（最多 90s）
+bash harness/wake.sh --relay    # 顺便检查 Windows 侧 LLM 中继 3001
+```
+
+需要跑 LLM 的脚本（`build_relations --use-llm`、`make_labeling_data --senses-llm`、
+`import_chat`）**先 wake，再跑**，否则会看到大量的
+`LLM 请求失败: Connection timed out` 或 `[Errno 111]`。
+
+**经验值**：空闲约 30~60 分钟就会回收；一天里反复遇到 3 次以上是常态。
