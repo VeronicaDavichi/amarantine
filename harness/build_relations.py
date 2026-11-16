@@ -36,7 +36,7 @@ from memory.services.relations import (  # noqa: E402
     DEFAULT_THRESHOLD,
     DEFAULT_WINDOW_DAYS,
     aggregate_behaviors,
-    extract_statements,
+    extract_statements_combined,
     merge_claims,
 )
 
@@ -127,6 +127,10 @@ RETURN count(r) AS n
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="关系谓词落库（spec 039）")
+    ap.add_argument(
+        "--use-llm", action="store_true",
+        help="用 LLM 抽陈述（改造 A：规则 exact + LLM probable + 实体约束）",
+    )
     ap.add_argument("--namespace", required=True)
     ap.add_argument("--apply", action="store_true", help="真写（默认 dry-run）")
     ap.add_argument("--threshold", type=int, default=DEFAULT_THRESHOLD)
@@ -153,10 +157,33 @@ def main() -> int:
 
             if args.statements:
                 summaries = [dict(r) for r in session.run(SUMMARIES_CYPHER, namespace=args.namespace)]
+                # 名册：图里已有的 Person 名字，补 jieba 认不出的群友
+                roster = [r["name"] for r in session.run(
+                    "MATCH (p:Person {namespace: $namespace}) RETURN p.name AS name",
+                    namespace=args.namespace) if r.get("name")]
                 st: list = []
-                for row in summaries:
-                    st.extend(extract_statements(row.get("summary") or ""))
-                print(f"陈述通道 → {len(st)} 条边（扫 {len(summaries)} 张卡）")
+                rejected_all: list[dict] = []
+                texts = [row.get("summary") or "" for row in summaries]
+                for i, summary in enumerate(texts):
+                    # 上下文 = 前 2 条摘要（理解指代用；不从里面抽关系）
+                    ctx = [t for t in texts[max(0, i - 2): i] if t]
+                    claims_i, rejected = extract_statements_combined(
+                        summary, settings, context=ctx, roster=roster,
+                        use_llm=args.use_llm)
+                    rejected_all.extend(rejected)
+                    for claim in claims_i:
+                        st.append(claim)
+                        print(f"  陈述[{claim.source}]: {claim.head} "
+                              f"-[{claim.predicate}]-> {claim.tail}")
+                    if args.use_llm and (i + 1) % 20 == 0:
+                        print(f"    进度 {i + 1}/{len(texts)}")
+                print(f"陈述通道 → {len(st)} 条边（扫 {len(summaries)} 张卡，"
+                      f"LLM={'开' if args.use_llm else '关'}）")
+                if args.use_llm:
+                    print(f"  实体约束拒绝 {len(rejected_all)} 条")
+                    for r in rejected_all[:10]:
+                        print(f"    ✗ {r.get('head')} → {r.get('tail')} "
+                              f"({r.get('reason')})")
                 claims = merge_claims(claims + st)
 
             for c in claims[:20]:

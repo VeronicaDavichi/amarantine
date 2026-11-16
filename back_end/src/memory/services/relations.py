@@ -19,8 +19,12 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from datetime import date, timedelta
+from typing import Any
+
+logger = logging.getLogger("memory.relations")
 
 #: 谓词表 v2。**删掉了 `REPORTS_TO`** —— `汇报/上级/领导/主管` 在语料里 0 命中，
 #: 按「没有证据就先不定义」的规矩移除，将来有证据再加。
@@ -205,11 +209,26 @@ def _looks_like_name(text: str) -> bool:
     return not any(ch in _NAME_STOP_CHARS for ch in name)
 
 
-def extract_statements(text: str) -> list[RelationClaim]:
+def extract_statements(
+    text: str,
+    *,
+    candidates: list[str] | None = None,
+    rejected: list[dict] | None = None,
+) -> list[RelationClaim]:
     """从文本抽关系陈述（规则版，`label=exact`）。
 
     **只抽明确句式**：`X 负责 Y` / `X 维护 Y` / `X 和 Y 一起` / `X 依赖 Y`。
     宁可漏 —— 把叙述句误判成职责声明，比少一条边难修得多。
+
+    Args:
+        text: 证据句。
+        candidates: 传入则启用**实体约束**（改造 A）：尾值必须是候选实体之一，
+            否则丢弃并记进 `rejected`。不传则保持旧行为（只做名字形状检查）。
+        rejected: 收集被实体约束挡掉的项（含 reason），便于报告。
+
+    Note:
+        实测不加约束时，`克劳德负责写门牌号` 的尾值是「写门牌号」（动作）。
+        实体约束能挡住这类，代价是也会挡掉一部分正确但分词没覆盖的词。
     """
     import re
 
@@ -223,6 +242,18 @@ def extract_statements(text: str) -> list[RelationClaim]:
                 continue
             if not _looks_like_name(head) or not _looks_like_name(tail):
                 continue
+            if candidates is not None:
+                # 尾值必须落在候选实体里（或其子串），这是改造 A 的核心约束
+                if not (tail in candidates or any(tail in c for c in candidates)):
+                    if rejected is not None:
+                        rejected.append({"head": head, "tail": tail,
+                                         "reason": f"尾 {tail!r} 不是候选实体"})
+                    continue
+                if not (head in candidates or any(head in c or c in head for c in candidates)):
+                    if rejected is not None:
+                        rejected.append({"head": head, "tail": tail,
+                                         "reason": f"头 {head!r} 不是候选实体"})
+                    continue
             out.append(
                 RelationClaim(
                     head=head,
@@ -276,3 +307,299 @@ def _as_date(value: object) -> date | None:
         except ValueError:
             return None
     return None
+
+# ============================================================ LLM 陈述通道（改造 A）
+
+#: 强度 → 谓词。与标注页的 0–4 完全对齐：
+#: 0 无关系 / 1 极低·依赖 / 2 有关系·协作 / 3 较大·维护 / 4 强相关·负责
+INTENSITY_TO_PREDICATE: dict[int, str] = {
+    1: "DEPENDS_ON",
+    2: "COLLABORATES_WITH",
+    3: "MAINTAINS",
+    4: "OWNS",
+}
+
+#: 谓词 → 强度（反向查询用）
+PREDICATE_TO_INTENSITY: dict[str, int] = {v: k for k, v in INTENSITY_TO_PREDICATE.items()}
+
+_LLM_PROMPT = """你在读中文群聊。下面给出一句话，以及从这句话里抽出的**候选实体**。
+
+任务：从候选实体里挑出**存在稳定关系**的配对，并给强度。
+
+强度五档：
+0 = 无关系
+1 = 极低：A 依赖 B（B 不可用 A 就工作不了）
+2 = 有关系：A 和 B 一起做事 / 协作
+3 = 较大：A 长期维护、部署、对接 B
+4 = 强相关：A 拥有、负责、建设、发起 B
+
+判断要点：
+- **允许合理推断**：叙述句里能看出谁负责什么，就算（「便携式解释服务器是什么」
+  → 便携式对服务器有 4 级关系）
+- head 和 tail **只能从候选实体里挑**，不要新造词
+- 不要输出「一起」「说话」「知道」这类只是同处一句、没有职责含义的配对
+- 强度 0 不要输出
+- 一句话可能有多条，都要列；一条都没有就输出 []
+
+候选实体：{candidates}
+
+上下文（仅供理解指代，不要从里面抽关系）：
+{context}
+
+句子：
+{text}
+
+每条都必须给出 **evidence**：原文里能支撑这个配对的**连续片段**，
+必须包含把它们连起来的关系词（负责/维护/对接/依赖/一起/协作/部署/拥有…）。
+
+只输出 JSON 数组。格式：
+[{{"head":"便携式","tail":"服务器","intensity":4,"evidence":"便携式负责服务器"}}]"""
+
+
+#: 关系抽不到时最常见的「伪实体」：动作词/泛称，直接排除
+_RELATION_STOP = frozenset({
+    "大家", "有人", "对方", "自己", "群里", "群友", "东西", "事情", "问题",
+    "时候", "现在", "以后", "这样", "那样", "什么", "怎么", "为什么",
+})
+
+#: 证据片段里必须出现的关系动词（否则只是「同处一句」，不是关系）
+RELATION_CUES = (
+    "负责", "牵头", "主管", "分管", "管着", "维护", "运维", "对接", "部署", "发布",
+    "更新", "回滚", "重启", "依赖", "调用", "基于", "依托", "一起", "共同", "协作",
+    "合作", "配合", "协助", "帮忙", "拥有", "建设", "搭建", "开发", "实现", "新增",
+    "修复", "修改", "发起", "组织", "提供", "使用", "需要",
+)
+
+#: 这些词性算「实体候选」（jieba flag）
+_ENTITY_FLAGS = frozenset({"n", "nz", "vn", "nt", "nr", "ns", "eng"})
+
+
+def candidate_entities(text: str, *, roster: list[str] | None = None) -> list[str]:
+    """收集一句话里可以当关系头/尾的候选实体。
+
+    三个来源：jieba 词性（n/nz/vn/nt/nr/ns/eng）、名册子串、拉丁/中文专名。
+
+    Note:
+        实体约束是这次改造的**核心**：规则版把「写门牌号」当尾值，
+        就是因为没有这个约束。宁可漏掉一条，也不要建一条动作边。
+    """
+    out: list[str] = []
+
+    def add(name: str) -> None:
+        name = (name or "").strip()
+        if not name or name in out:
+            return
+        if len(name) < 2 or len(name) > _NAME_MAX_LEN:
+            return
+        if name in _RELATION_STOP or name in _NAME_STOP_CHARS:
+            return
+        if name[0] in _NAME_BAD_PREFIX:
+            return
+        out.append(name)
+
+    try:
+        import jieba.posseg as pseg
+
+        for w in pseg.cut(text or ""):
+            if w.flag in _ENTITY_FLAGS and len(w.word) >= 2:
+                add(w.word)
+    except Exception:  # noqa: BLE001 - 分词不可用就只靠名册
+        pass
+
+    # 名册名先去 emoji/符号/括号：`便携式🦆🍗` → `便携式`，否则永远匹配不上
+    import re as _re
+
+    body = text or ""
+    for raw in roster or []:
+        cleaned = _re.sub(r"[^\u4e00-\u9fa5A-Za-z0-9]", "", str(raw or ""))
+        for cand in (str(raw or ""), cleaned):
+            if cand and cand in body:
+                add(cand)
+                break
+    return out
+
+
+def validate_relation(
+    head: str,
+    tail: str,
+    intensity: int,
+    *,
+    candidates: list[str],
+    text: str,
+    evidence: str = "",
+) -> tuple[bool, str]:
+    """检查一条 LLM 抽出来的关系是否成立（实体约束）。
+
+    Returns:
+        `(ok, reason)`；`reason` 说明被拒原因，便于报告。
+    """
+    h = (head or "").strip()
+    t = (tail or "").strip()
+    if intensity not in INTENSITY_TO_PREDICATE:
+        return False, f"intensity={intensity} 不在 1~4"
+    if not h or not t:
+        return False, "头或尾为空"
+    if h == t:
+        return False, "头尾相同"
+    body = text or ""
+    if h not in body:
+        return False, f"头 {h!r} 不在原文"
+    if t not in body:
+        return False, f"尾 {t!r} 不在原文"
+    # 尾值必须在候选实体里（或其子串，容忍 `老师` ⊂ `老师五点`）
+    if t not in candidates and not any(t in c for c in candidates):
+        return False, f"尾 {t!r} 不是候选实体"
+    if h not in candidates and not any(h in c or c in h for c in candidates):
+        return False, f"头 {h!r} 不是候选实体"
+    # 证据跨度：必须有把两者连起来的关系词，否则只是「同处一句」
+    ev = (evidence or "").strip()
+    if not ev:
+        return False, "缺少 evidence"
+    if ev not in body:
+        return False, f"evidence 不在原文: {ev[:30]!r}"
+    if h not in ev or t not in ev:
+        return False, f"evidence 没覆盖头尾: {ev[:30]!r}"
+    if not any(cue in ev for cue in RELATION_CUES):
+        return False, f"evidence 里没有关系词: {ev[:30]!r}"
+    return True, ""
+
+
+def extract_statements_llm(
+    text: str,
+    settings: Any,
+    *,
+    context: list[str] | None = None,
+    roster: list[str] | None = None,
+    client: Any | None = None,
+) -> tuple[list[RelationClaim], list[dict]]:
+    """用 LLM 从一句话里抽关系陈述（改造 A）。
+
+    Args:
+        text: 证据句（事件卡摘要）。
+        settings: LLM 配置。
+        context: 同会话的邻近摘要（只读，用来理解指代）。
+        roster: 名册名字（补 jieba 认不出的群友）。
+
+    Returns:
+        `(claims, rejected)`。`rejected` 记录被实体约束挡掉的项，供报告。
+
+    Note:
+        与规则版并行跑：规则命中 → `label=exact`；仅 LLM 命中 → `label=probable`
+        （保住「exact 不被 probable 降级」这条不变量）。
+    """
+    import json as _json
+
+    body = (text or "").strip()
+    if not body:
+        return [], []
+    candidates = candidate_entities(body, roster=roster)
+    ctx = "\n".join(f"- {c[:100]}" for c in (context or [])[:5]) or "（无）"
+    prompt = _LLM_PROMPT.format(
+        candidates=_json.dumps(candidates, ensure_ascii=False),
+        context=ctx,
+        text=body[:400],
+    )
+
+    from memory.services.llm import chat
+
+    # 该模型**先输出 thinking**：额度给小了正文会被吃光，报「没有返回文本」。
+    # 实测 2048 在 3/10 条上失败；按输入长度给足，并失败重试一次更大的额度。
+    est = max(4096, min(12288, len(prompt) * 2))
+    raw: Any = None
+    last_exc: Exception | None = None
+    for attempt, tokens in enumerate((est, min(16384, est * 2))):
+        try:
+            raw = chat(
+                [{"role": "user", "content": prompt}],
+                settings,
+                system="你是中文社群关系抽取器，只输出 JSON 数组。",
+                max_tokens=tokens,
+                client=client,
+            )
+            last_exc = None
+            break
+        except Exception as exc:  # noqa: BLE001 - 外部依赖
+            last_exc = exc
+            logger.warning("LLM 关系抽取失败（第 %d 次, max_tokens=%d）: %s",
+                           attempt + 1, tokens, exc)
+    if last_exc is not None:
+        return [], [{"reason": f"llm_error: {last_exc}", "text": body[:60]}]
+
+    try:
+        data = _json.loads(raw) if isinstance(raw, str) else raw
+    except Exception:  # noqa: BLE001
+        return [], [{"reason": "llm_not_json", "text": body[:60]}]
+    if isinstance(data, dict):
+        data = data.get("relations") or []
+    if not isinstance(data, list):
+        return [], [{"reason": "llm_not_list", "text": body[:60]}]
+
+    claims: list[RelationClaim] = []
+    rejected: list[dict] = []
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        try:
+            intensity = int(item.get("intensity") or 0)
+        except (TypeError, ValueError):
+            intensity = 0
+        head = str(item.get("head") or "").strip()
+        tail = str(item.get("tail") or "").strip()
+        ok, reason = validate_relation(
+            head, tail, intensity, candidates=candidates, text=body,
+            evidence=str(item.get("evidence") or ""))
+        if not ok:
+            rejected.append({"head": head, "tail": tail,
+                             "intensity": intensity, "reason": reason})
+            continue
+        claims.append(RelationClaim(
+            head=head,
+            predicate=INTENSITY_TO_PREDICATE[intensity],
+            tail=tail,
+            label="probable",
+            confidence={1: 0.5, 2: 0.6, 3: 0.7, 4: 0.8}[intensity],
+            evidence=(),
+            source="llm",
+        ))
+    return claims, rejected
+
+def extract_statements_combined(
+    text: str,
+    settings: Any,
+    *,
+    context: list[str] | None = None,
+    roster: list[str] | None = None,
+    use_llm: bool = True,
+    client: Any | None = None,
+) -> tuple[list[RelationClaim], list[dict]]:
+    """规则 + LLM 双通道抽取（改造 A 的入口）。
+
+    合并规则：
+    - 规则命中 → `label=exact`（人工确认过的高置信句式）
+    - 仅 LLM 命中 → `label=probable`
+    - 同一 (head, predicate, tail) 取 exact（保住「exact 不被降级」不变量）
+
+    Returns:
+        `(claims, rejected)`。
+    """
+    body = (text or "").strip()
+    if not body:
+        return [], []
+    candidates = candidate_entities(body, roster=roster)
+    rejected: list[dict] = []
+
+    rule_claims = extract_statements(body, candidates=candidates, rejected=rejected)
+    if not use_llm:
+        return rule_claims, rejected
+
+    llm_claims, llm_rejected = extract_statements_llm(
+        body, settings, context=context, roster=roster, client=client)
+    rejected.extend(llm_rejected)
+
+    by_key: dict[tuple[str, str, str], RelationClaim] = {}
+    for claim in rule_claims + llm_claims:
+        key = claim.key()
+        cur = by_key.get(key)
+        if cur is None or (cur.label != "exact" and claim.label == "exact"):
+            by_key[key] = claim
+    return list(by_key.values()), rejected
