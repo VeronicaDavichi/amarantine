@@ -1237,6 +1237,208 @@ window.LABEL_DATA = {
    "source": "weak_cue"
   }
  ],
+ "claims": [
+  {
+   "kind": "claim",
+   "id": "claim-1",
+   "evidence": "Dream设想本地部署交给大肥鱼一键出视频，说目标就是这样",
+   "head": "大肥鱼",
+   "predicate": "OWNS",
+   "intensity": 4,
+   "tail": "部署",
+   "source": "llm"
+  },
+  {
+   "kind": "claim",
+   "id": "claim-2",
+   "evidence": "新机子瓦一兔子说昨天跟同事吵架、已发给主管，表示不想干了",
+   "head": "兔子",
+   "predicate": "COLLABORATES_WITH",
+   "intensity": 2,
+   "tail": "主管",
+   "source": "llm"
+  },
+  {
+   "kind": "claim",
+   "id": "claim-3",
+   "evidence": "远望打算本地部署小模型来做对话bot",
+   "head": "远望",
+   "predicate": "MAINTAINS",
+   "intensity": 3,
+   "tail": "模型",
+   "source": "llm"
+  },
+  {
+   "kind": "claim",
+   "id": "claim-4",
+   "evidence": "小鲸鱼称自家是头一号住户，克劳德负责写门牌号并把尘霜记为第二号",
+   "head": "克劳德",
+   "predicate": "OWNS",
+   "intensity": 4,
+   "tail": "门牌号",
+   "source": "llm"
+  },
+  {
+   "kind": "claim",
+   "id": "claim-5",
+   "evidence": "星落落称朋友用5090本地部署训练半个月，东堂散华调侃，土豆期待成品并询问进度",
+   "head": "朋友",
+   "predicate": "COLLABORATES_WITH",
+   "intensity": 2,
+   "tail": "训练",
+   "source": "llm"
+  },
+  {
+   "kind": "claim",
+   "id": "claim-6",
+   "evidence": "王勇表示下午看看能不能部署一版本",
+   "head": "王勇",
+   "predicate": "COLLABORATES_WITH",
+   "intensity": 2,
+   "tail": "部署",
+   "source": "llm"
+  },
+  {
+   "kind": "claim",
+   "id": "claim-7",
+   "evidence": "西伯利亚大土豆分享自己崩溃后清理缓存并重启修复的经验",
+   "head": "西伯利亚大土豆",
+   "predicate": "OWNS",
+   "intensity": 4,
+   "tail": "经验",
+   "source": "llm"
+  },
+  {
+   "kind": "claim",
+   "id": "claim-8",
+   "evidence": "任泽昂要求@498545782王老师先更新测试环境前端",
+   "head": "王老师",
+   "predicate": "MAINTAINS",
+   "intensity": 3,
+   "tail": "测试环境",
+   "source": "llm"
+  },
+  {
+   "kind": "claim",
+   "id": "claim-9",
+   "evidence": "朱倩表示可能需要一个区间的数据，除了账户类型、金额、数量、种类",
+   "head": "朱倩",
+   "predicate": "DEPENDS_ON",
+   "intensity": 1,
+   "tail": "数据",
+   "source": "llm"
+  },
+  {
+   "kind": "claim",
+   "id": "claim-10",
+   "evidence": "安澜发布标题为“代号：侯潮”的视频",
+   "head": "安澜",
+   "predicate": "OWNS",
+   "intensity": 4,
+   "tail": "视频",
+   "source": "llm"
+  },
+  {
+   "kind": "claim",
+   "id": "claim-11",
+   "evidence": "王婕提供Oracle JDBC连接地址 jdbc:oracle:thin:@//173.2.100.64:1521/fxq40cs",
+   "head": "王婕",
+   "predicate": "MAINTAINS",
+   "intensity": 3,
+   "tail": "Oracle",
+   "source": "llm"
+  },
+  {
+   "kind": "claim",
+   "id": "claim-12",
+   "evidence": "运营发布5月21日商品截单提醒",
+   "head": "运营",
+   "predicate": "MAINTAINS",
+   "intensity": 3,
+   "tail": "商品",
+   "source": "llm"
+  },
+  {
+   "kind": "claim",
+   "id": "claim-13",
+   "evidence": "传讯员8号发布二店梦谷小部屋今日现货掉落及图片",
+   "head": "传讯员8号",
+   "predicate": "COLLABORATES_WITH",
+   "intensity": 2,
+   "tail": "部屋",
+   "source": "llm"
+  },
+  {
+   "kind": "claim",
+   "id": "claim-14",
+   "evidence": "土豆发图展示目前使用的两个设备",
+   "head": "土豆",
+   "predicate": "OWNS",
+   "intensity": 4,
+   "tail": "设备",
+   "source": "llm"
+  },
+  {
+   "kind": "claim",
+   "id": "claim-15",
+   "evidence": "AAA武陵架索接线潘工表示不放心可提供源文件",
+   "head": "潘工",
+   "predicate": "OWNS",
+   "intensity": 4,
+   "tail": "源文件",
+   "source": "llm"
+  },
+  {
+   "kind": "claim",
+   "id": "claim-16",
+   "evidence": "任泽昂让@429791739和@1985222059使用 fxq@njzq.com.cn、Njzq@95386、https://aigc.njzq.cn:8089/",
+   "head": "任泽昂",
+   "predicate": "OWNS",
+   "intensity": 4,
+   "tail": "fxq",
+   "source": "llm"
+  },
+  {
+   "kind": "claim",
+   "id": "claim-17",
+   "evidence": "米琪拉发布春节放假公告并@全体成员",
+   "head": "米琪拉",
+   "predicate": "OWNS",
+   "intensity": 4,
+   "tail": "公告",
+   "source": "llm"
+  },
+  {
+   "kind": "claim",
+   "id": "claim-18",
+   "evidence": "运营发布5月24日商品截单提醒",
+   "head": "运营",
+   "predicate": "MAINTAINS",
+   "intensity": 3,
+   "tail": "商品",
+   "source": "llm"
+  },
+  {
+   "kind": "claim",
+   "id": "claim-19",
+   "evidence": "王勇提供访问地址 http://192.168.31.27:3001/aml/@4690364584 并让对方使用该地址访问",
+   "head": "王勇",
+   "predicate": "OWNS",
+   "intensity": 4,
+   "tail": "地址",
+   "source": "llm"
+  },
+  {
+   "kind": "claim",
+   "id": "claim-20",
+   "evidence": "用户未登录时需要拉起OA并跳转兴元地址",
+   "head": "用户",
+   "predicate": "DEPENDS_ON",
+   "intensity": 1,
+   "tail": "OA",
+   "source": "llm"
+  }
+ ],
  "behaviors": [
   {
    "kind": "behavior",

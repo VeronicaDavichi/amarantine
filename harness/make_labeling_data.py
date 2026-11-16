@@ -208,6 +208,52 @@ def _roster_names_all() -> list[str]:
     return _ROSTER_CACHE
 
 
+
+
+def build_claims_audit(limit: int = 20, *, scan: int = 120) -> list[dict]:
+    """生成「机器边核对」评测集：每项是一条机器抽出的边，人判对/不对。
+
+    这是 039 的 precision 口径：`precision = 判对 / 总核对数`。
+    比「机器去匹配人工自由填的词」可靠 —— 后者会把两个都对的答案判成错。
+    """
+    from memory.config import load_settings
+    from memory.services.relations import (
+        PREDICATE_TO_INTENSITY,
+        RELATION_CUES,
+        extract_statements_combined,
+    )
+
+    settings = load_settings()
+    roster = _roster_names_all()
+    # 只在「v2 陈述句」上抽边：那些句子已过滤营销、含人名与强关系词。
+    # 全库扫描会把 `运营发布商品` 之类营销句全抽成边（实测 20 条全是噪声）。
+    seed = build_statements_v2(limit=60)
+    texts = [it["evidence"] for it in seed]
+
+    items: list[dict] = []
+    for i, text in enumerate(texts):
+        if len(items) >= limit:
+            break
+        if not text.strip():
+            continue
+        ctx = [t for t in texts[max(0, i - 2): i] if t]
+        claims, _ = extract_statements_combined(
+            text, settings, context=ctx, roster=roster)
+        for c in claims:
+            items.append({
+                "kind": "claim",
+                "id": f"claim-{len(items)+1}",
+                "evidence": text[:200],
+                "head": c.head,
+                "predicate": c.predicate,
+                "intensity": PREDICATE_TO_INTENSITY.get(c.predicate),
+                "tail": c.tail,
+                "source": c.source,
+            })
+            if len(items) >= limit:
+                break
+    return items
+
 def build_statements_v2(limit: int = 20) -> list[dict]:
     """生成「句子明说关系」的评测集。
 
@@ -445,6 +491,10 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", default=str(ROOT / "docs" / "labeling-data.js"))
     ap.add_argument(
+        "--claims-audit", action="store_true",
+        help="生成「机器边核对」评测集（039 precision 口径）",
+    )
+    ap.add_argument(
         "--statements-v2", action="store_true",
         help="生成「只标句子明说关系」的评测集（039 改造 A 用）",
     )
@@ -474,6 +524,7 @@ def main() -> int:
             build_statements_v2() if getattr(args, "statements_v2", False)
             else build_statements()
         ),
+        "claims": build_claims_audit() if getattr(args, "claims_audit", False) else [],
         "behaviors": build_behaviors(),
         "senses": (
             build_senses_llm(args.senses) if getattr(args, "senses_llm", False)

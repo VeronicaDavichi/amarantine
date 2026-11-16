@@ -338,8 +338,10 @@ _LLM_PROMPT = """你在读中文群聊。下面给出一句话，以及从这句
   → 便携式对服务器有 4 级关系）
 - head 和 tail **只能从候选实体里挑**，不要新造词
 - 不要输出「一起」「说话」「知道」这类只是同处一句、没有职责含义的配对
-- 强度 0 不要输出
-- 一句话可能有多条，都要列；一条都没有就输出 []
+- **只输出这句话最主要的那一条关系**（人工标注也是一句一条）；
+  并列多件事时选最核心的那条
+- head 必须是**人**（群友昵称、人名），不能是系统名/物件名
+- 强度 0 不要输出；看不出关系就输出 []
 
 候选实体：{candidates}
 
@@ -419,6 +421,58 @@ def candidate_entities(text: str, *, roster: list[str] | None = None) -> list[st
     return out
 
 
+
+#: 中文称呼后缀：`王老师` / `张总` / `李哥` —— 名册里不一定有，但确实指人
+_PERSON_SUFFIX = ("老师", "先生", "女士", "小姐", "总", "经理", "主管", "大佬",
+                  "师傅", "医生", "律师", "哥", "姐")
+
+
+def person_candidates(text: str, *, roster: list[str] | None = None) -> list[str]:
+    """收集一句话里「像人的」名字。
+
+    三条来源：
+    1. jieba 标成 `nr` / `nrfg` / `nrt` 的词
+    2. 名册子串（去 emoji）
+    3. **称呼模式**：`王老师` / `张总` / `李哥`
+
+    Note:
+        只用名册会漏两类真实情况：脱敏改名（`王勇` ↔ 名册里的 `王泳`）
+        和称呼（`王老师`）。这两类占语料很大比例，miss 掉会让 precision 判不出来。
+    """
+    import re as _re
+
+    body = text or ""
+    out: list[str] = []
+
+    def add(name: str) -> None:
+        name = (name or "").strip()
+        if not name or name in out or len(name) < 2 or len(name) > 12:
+            return
+        out.append(name)
+
+    try:
+        import jieba.posseg as pseg
+
+        for w in pseg.cut(body):
+            if w.flag in ("nr", "nrfg", "nrt") and len(w.word) >= 2:
+                add(w.word)
+    except Exception:  # noqa: BLE001
+        pass
+
+    for raw in roster or []:
+        cleaned = _re.sub(r"[^\u4e00-\u9fa5A-Za-z0-9]", "", str(raw or ""))
+        for cand in (str(raw or ""), cleaned):
+            if cand and cand in body:
+                add(cand)
+                break
+
+    # 称呼：取后缀前 1~3 个字
+    for suffix in _PERSON_SUFFIX:
+        for m in _re.finditer(r"([\u4e00-\u9fa5]{1,3})" + _re.escape(suffix), body):
+            add(m.group(0))
+    return out
+
+
 def validate_relation(
     head: str,
     tail: str,
@@ -427,6 +481,7 @@ def validate_relation(
     candidates: list[str],
     text: str,
     evidence: str = "",
+    people: list[str] | None = None,
 ) -> tuple[bool, str]:
     """检查一条 LLM 抽出来的关系是否成立（实体约束）。
 
@@ -461,6 +516,10 @@ def validate_relation(
         return False, f"evidence 没覆盖头尾: {ev[:30]!r}"
     if not any(cue in ev for cue in RELATION_CUES):
         return False, f"evidence 里没有关系词: {ev[:30]!r}"
+    # 头必须是「人」：关系层要回答「谁负责什么」，主语是物件没有意义
+    if people:
+        if not any(h == p or h in p or p in h for p in people):
+            return False, f"头 {h!r} 不是人"
     return True, ""
 
 
@@ -470,6 +529,8 @@ def extract_statements_llm(
     *,
     context: list[str] | None = None,
     roster: list[str] | None = None,
+    people: list[str] | None = None,
+    max_claims: int = 1,
     client: Any | None = None,
 ) -> tuple[list[RelationClaim], list[dict]]:
     """用 LLM 从一句话里抽关系陈述（改造 A）。
@@ -493,6 +554,9 @@ def extract_statements_llm(
     if not body:
         return [], []
     candidates = candidate_entities(body, roster=roster)
+    # 人集合：调用方可覆盖，否则从句子本身推断（jieba nr + 名册 + 称呼）
+    if people is None:
+        people = person_candidates(body, roster=roster)
     ctx = "\n".join(f"- {c[:100]}" for c in (context or [])[:5]) or "（无）"
     prompt = _LLM_PROMPT.format(
         candidates=_json.dumps(candidates, ensure_ascii=False),
@@ -547,7 +611,7 @@ def extract_statements_llm(
         tail = str(item.get("tail") or "").strip()
         ok, reason = validate_relation(
             head, tail, intensity, candidates=candidates, text=body,
-            evidence=str(item.get("evidence") or ""))
+            evidence=str(item.get("evidence") or ""), people=people)
         if not ok:
             rejected.append({"head": head, "tail": tail,
                              "intensity": intensity, "reason": reason})
@@ -561,6 +625,8 @@ def extract_statements_llm(
             evidence=(),
             source="llm",
         ))
+        if len(claims) >= max_claims:
+            break
     return claims, rejected
 
 def extract_statements_combined(
@@ -569,7 +635,9 @@ def extract_statements_combined(
     *,
     context: list[str] | None = None,
     roster: list[str] | None = None,
+    people: list[str] | None = None,
     use_llm: bool = True,
+    max_claims: int = 1,
     client: Any | None = None,
 ) -> tuple[list[RelationClaim], list[dict]]:
     """规则 + LLM 双通道抽取（改造 A 的入口）。
@@ -593,7 +661,8 @@ def extract_statements_combined(
         return rule_claims, rejected
 
     llm_claims, llm_rejected = extract_statements_llm(
-        body, settings, context=context, roster=roster, client=client)
+        body, settings, context=context, roster=roster, people=people,
+        max_claims=max_claims, client=client)
     rejected.extend(llm_rejected)
 
     by_key: dict[tuple[str, str, str], RelationClaim] = {}

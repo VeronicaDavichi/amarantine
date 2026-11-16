@@ -109,7 +109,8 @@ def main() -> int:
         human_tail = (lab.get("tail") or {}).get("name")
 
         claims, rejected = extract_statements_combined(
-            text, settings, roster=roster, use_llm=not args.no_llm)
+            text, settings, roster=roster, people=roster,
+            use_llm=not args.no_llm)
         got_int = [PREDICATE_TO_INTENSITY.get(c.predicate) for c in claims]
 
         human_rel = human_int is not None and human_int > 0

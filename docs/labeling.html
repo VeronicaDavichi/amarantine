@@ -104,6 +104,7 @@
   const GROUPS = [
     { key: "statements", name: "关系陈述", kind: "relation" },
     { key: "behaviors", name: "关系行为", kind: "relation" },
+    { key: "claims", name: "机器边核对", kind: "claim" },
     { key: "senses", name: "指称义项", kind: "sense" },
   ];
   const STORE = "amarantine-label-v4";
@@ -220,6 +221,11 @@
       body += `<div class="machine">规则结果：` + (item.machine && item.machine.extracted
         ? `<b>${esc(item.machine.head)}</b> --${esc(item.machine.predicate)}--> <b>${esc(item.machine.tail)}</b>`
         : `<b>未抽取</b>（规则漏掉）`) + `</div>`;
+    } else if (item.kind === "claim") {
+      body += `<div class="hint" style="margin:10px 0;color:var(--warn)">`
+           + `⬇ 机器从这句话抽出的边：<b>${esc(item.head)} --${esc(item.predicate)}--> ${esc(item.tail)}</b><br>`
+           + `判断这条边**对不对**（只看这句话支持不支持，不管强度分档）</div>`;
+      body += `<div class="evidence">${esc(item.evidence)}</div>`;
     } else if (item.kind === "behavior") {
       body += `<div class="machine"><b>${esc(item.person)}</b> --${esc(item.verb)}--> <b>${esc(item.target)}</b></div>`;
       (item.evidence || []).forEach(t => body += `<div class="evidence">${esc(t)}</div>`);
@@ -256,6 +262,15 @@
              + (lb.head ? ` · 主语 ${esc(lb.head.name)}` : "")
              + (lb.tail ? ` → ${esc(lb.tail.name)}` : "") + `</div>`;
       }
+    } else if (g.kind === "claim") {
+      const opts = [["ok", "✅ 对（这句话支持这条边）"], ["bad", "❌ 错（句子里没有）"],
+                    ["warn", "🤔 不确定"]];
+      body += `<div class="row" style="margin-top:16px">`;
+      opts.forEach(([k, t]) => {
+        body += `<button class="sense" data-key="${k}" style="border-color:${k === "ok" ? "var(--ok)" : k === "bad" ? "var(--bad)" : "var(--warn)"}">${t}</button>`;
+      });
+      body += `</div>`;
+      if (lb.label) body += `<div class="hint done">已核：${lb.label}</div>`;
     } else {
       const senses = [["ok", "正确（确实指这个意思）"], ["bad", "错误（指别的/误绑）"], ["warn", "不确定"]];
       body += `<div class="row" style="margin-top:16px">`;
