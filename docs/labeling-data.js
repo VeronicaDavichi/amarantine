@@ -610,7 +610,231 @@ window.LABEL_DATA = {
  "statements": [
   {
    "kind": "statement",
-   "id": "stmt-pos-1",
+   "id": "stmt2-1",
+   "evidence": "Dream设想本地部署交给大肥鱼一键出视频，说目标就是这样",
+   "entities": [
+    {
+     "name": "大肥",
+     "kind": "place"
+    },
+    {
+     "name": "Dream",
+     "kind": "topic"
+    },
+    {
+     "name": "大肥鱼",
+     "kind": "roster"
+    },
+    {
+     "name": "就是这样",
+     "kind": "roster"
+    },
+    {
+     "name": "设想",
+     "kind": "noun"
+    },
+    {
+     "name": "部署",
+     "kind": "noun"
+    },
+    {
+     "name": "一键",
+     "kind": "noun"
+    },
+    {
+     "name": "视频",
+     "kind": "noun"
+    },
+    {
+     "name": "目标",
+     "kind": "noun"
+    }
+   ],
+   "machine": {
+    "extracted": false,
+    "head": null,
+    "predicate": null,
+    "tail": null
+   },
+   "source": "explicit"
+  },
+  {
+   "kind": "statement",
+   "id": "stmt2-2",
+   "evidence": "新机子瓦一兔子说昨天跟同事吵架、已发给主管，表示不想干了",
+   "entities": [
+    {
+     "name": "瓦一",
+     "kind": "topic"
+    },
+    {
+     "name": "兔子",
+     "kind": "roster"
+    },
+    {
+     "name": "新机子瓦一兔子",
+     "kind": "roster"
+    },
+    {
+     "name": "昨天",
+     "kind": "roster"
+    },
+    {
+     "name": "机子",
+     "kind": "noun"
+    },
+    {
+     "name": "同事",
+     "kind": "noun"
+    },
+    {
+     "name": "发给",
+     "kind": "noun"
+    },
+    {
+     "name": "主管",
+     "kind": "noun"
+    }
+   ],
+   "machine": {
+    "extracted": false,
+    "head": null,
+    "predicate": null,
+    "tail": null
+   },
+   "source": "explicit"
+  },
+  {
+   "kind": "statement",
+   "id": "stmt2-3",
+   "evidence": "x分享大肥鱼接入QQ后每天只花一块多的部署成本",
+   "entities": [
+    {
+     "name": "大肥",
+     "kind": "place"
+    },
+    {
+     "name": "QQ",
+     "kind": "topic"
+    },
+    {
+     "name": "大肥鱼",
+     "kind": "roster"
+    },
+    {
+     "name": "部署",
+     "kind": "noun"
+    },
+    {
+     "name": "成本",
+     "kind": "noun"
+    }
+   ],
+   "machine": {
+    "extracted": false,
+    "head": null,
+    "predicate": null,
+    "tail": null
+   },
+   "source": "explicit"
+  },
+  {
+   "kind": "statement",
+   "id": "stmt2-4",
+   "evidence": "Valhalla表示没看懂实现方式",
+   "entities": [
+    {
+     "name": "Valhalla",
+     "kind": "topic"
+    },
+    {
+     "name": "方式",
+     "kind": "noun"
+    }
+   ],
+   "machine": {
+    "extracted": false,
+    "head": null,
+    "predicate": null,
+    "tail": null
+   },
+   "source": "explicit"
+  },
+  {
+   "kind": "statement",
+   "id": "stmt2-5",
+   "evidence": "Dream反馈本地出图受电脑配置限制，群友讨论本地部署并建议先保证能跑再谈效果",
+   "entities": [
+    {
+     "name": "Dream",
+     "kind": "topic"
+    },
+    {
+     "name": "电脑配置",
+     "kind": "noun"
+    },
+    {
+     "name": "群友",
+     "kind": "noun"
+    },
+    {
+     "name": "部署",
+     "kind": "noun"
+    },
+    {
+     "name": "建议",
+     "kind": "noun"
+    },
+    {
+     "name": "效果",
+     "kind": "noun"
+    }
+   ],
+   "machine": {
+    "extracted": false,
+    "head": null,
+    "predicate": null,
+    "tail": null
+   },
+   "source": "explicit"
+  },
+  {
+   "kind": "statement",
+   "id": "stmt2-6",
+   "evidence": "远望打算本地部署小模型来做对话bot",
+   "entities": [
+    {
+     "name": "bot",
+     "kind": "roster"
+    },
+    {
+     "name": "远望",
+     "kind": "roster"
+    },
+    {
+     "name": "部署",
+     "kind": "noun"
+    },
+    {
+     "name": "模型",
+     "kind": "noun"
+    },
+    {
+     "name": "对话",
+     "kind": "noun"
+    }
+   ],
+   "machine": {
+    "extracted": false,
+    "head": null,
+    "predicate": null,
+    "tail": null
+   },
+   "source": "explicit"
+  },
+  {
+   "kind": "statement",
+   "id": "stmt2-7",
    "evidence": "小鲸鱼称自家是头一号住户，克劳德负责写门牌号并把尘霜记为第二号",
    "entities": [
     {
@@ -643,334 +867,374 @@ window.LABEL_DATA = {
     }
    ],
    "machine": {
-    "head": "克劳德",
-    "predicate": "OWNS",
-    "tail": "写门牌号",
-    "extracted": true
+    "extracted": false,
+    "head": null,
+    "predicate": null,
+    "tail": null
    },
-   "source": "rule_hit"
+   "source": "explicit"
   },
   {
    "kind": "statement",
-   "id": "stmt-pos-2",
-   "evidence": "讨论给身份加内容时应让AI自行观察而非提问，记忆只负责记住",
+   "id": "stmt2-8",
+   "evidence": "星落落称朋友用5090本地部署训练半个月，东堂散华调侃，土豆期待成品并询问进度",
    "entities": [
     {
-     "name": "AI",
-     "kind": "topic"
-    },
-    {
-     "name": "身份",
-     "kind": "noun"
-    },
-    {
-     "name": "内容",
-     "kind": "noun"
-    },
-    {
-     "name": "记忆",
-     "kind": "noun"
-    }
-   ],
-   "machine": {
-    "head": "记忆只",
-    "predicate": "OWNS",
-    "tail": "记住",
-    "extracted": true
-   },
-   "source": "rule_hit"
-  },
-  {
-   "kind": "statement",
-   "id": "stmt-neg-3",
-   "evidence": "朱倩表示请一位分支机构老师一起的事情还在沟通",
-   "entities": [
-    {
-     "name": "朱倩",
+     "name": "东堂",
      "kind": "person"
     },
     {
-     "name": "老师一起",
+     "name": "训练半个",
      "kind": "topic"
     },
     {
-     "name": "分支机构",
+     "name": "东堂散华",
+     "kind": "roster"
+    },
+    {
+     "name": "土豆",
+     "kind": "roster"
+    },
+    {
+     "name": "散华",
+     "kind": "roster"
+    },
+    {
+     "name": "星落",
+     "kind": "roster"
+    },
+    {
+     "name": "朋友",
+     "kind": "roster"
+    },
+    {
+     "name": "落落",
+     "kind": "roster"
+    },
+    {
+     "name": "部署",
      "kind": "noun"
     },
     {
-     "name": "老师",
+     "name": "训练",
      "kind": "noun"
     },
     {
-     "name": "事情",
+     "name": "成品",
      "kind": "noun"
     }
    ],
    "machine": {
+    "extracted": false,
     "head": null,
     "predicate": null,
-    "tail": null,
-    "extracted": false
+    "tail": null
    },
-   "source": "rule_miss"
+   "source": "explicit"
   },
   {
    "kind": "statement",
-   "id": "stmt-neg-4",
-   "evidence": "棉棉担心两个攻击力强的角色待在一起会出事",
+   "id": "stmt2-9",
+   "evidence": "王勇表示下午看看能不能部署一版本",
    "entities": [
+    {
+     "name": "王勇",
+     "kind": "person"
+    },
+    {
+     "name": "部署一",
+     "kind": "topic"
+    },
+    {
+     "name": "看看",
+     "kind": "roster"
+    },
+    {
+     "name": "部署",
+     "kind": "noun"
+    },
+    {
+     "name": "版本",
+     "kind": "noun"
+    }
+   ],
+   "machine": {
+    "extracted": false,
+    "head": null,
+    "predicate": null,
+    "tail": null
+   },
+   "source": "explicit"
+  },
+  {
+   "kind": "statement",
+   "id": "stmt2-10",
+   "evidence": "棉棉确认是不是本地部署，往汐与神经症确认是本地跑、正算显存",
+   "entities": [
+    {
+     "name": "往汐",
+     "kind": "roster"
+    },
     {
      "name": "棉棉",
      "kind": "roster"
     },
     {
-     "name": "攻击力",
-     "kind": "noun"
+     "name": "神经症",
+     "kind": "roster"
     },
     {
-     "name": "角色",
+     "name": "部署",
      "kind": "noun"
     }
    ],
    "machine": {
+    "extracted": false,
     "head": null,
     "predicate": null,
-    "tail": null,
-    "extracted": false
+    "tail": null
    },
-   "source": "rule_miss"
+   "source": "explicit"
   },
   {
    "kind": "statement",
-   "id": "stmt-neg-5",
-   "evidence": "乌角鲨在群里大笑并问对方家的鱼怎么不出来一起笑",
+   "id": "stmt2-11",
+   "evidence": "西伯利亚大土豆分享自己崩溃后清理缓存并重启修复的经验",
    "entities": [
     {
-     "name": "对方家",
-     "kind": "topic"
+     "name": "西伯利亚",
+     "kind": "place"
+    },
+    {
+     "name": "西伯利亚大土豆",
+     "kind": "roster"
+    },
+    {
+     "name": "土豆",
+     "kind": "roster"
+    },
+    {
+     "name": "经验",
+     "kind": "noun"
+    }
+   ],
+   "machine": {
+    "extracted": false,
+    "head": null,
+    "predicate": null,
+    "tail": null
+   },
+   "source": "explicit"
+  },
+  {
+   "kind": "statement",
+   "id": "stmt2-12",
+   "evidence": "乌角鲨最终称没钱养服务器，劝大家别让他实现以免无法debug",
+   "entities": [
+    {
+     "name": "没钱",
+     "kind": "roster"
     },
     {
      "name": "角鲨",
      "kind": "noun"
     },
     {
-     "name": "群里",
-     "kind": "noun"
-    },
-    {
-     "name": "对方",
-     "kind": "noun"
-    }
-   ],
-   "machine": {
-    "head": null,
-    "predicate": null,
-    "tail": null,
-    "extracted": false
-   },
-   "source": "rule_miss"
-  },
-  {
-   "kind": "statement",
-   "id": "stmt-neg-6",
-   "evidence": "任泽昂询问老师们现在是否有空一起线上交流反洗钱智能体的方案，预计二三十分钟",
-   "entities": [
-    {
-     "name": "任泽昂",
-     "kind": "person"
-    },
-    {
-     "name": "有空一起",
-     "kind": "topic"
-    },
-    {
-     "name": "老师",
-     "kind": "noun"
-    },
-    {
-     "name": "有空",
-     "kind": "noun"
-    },
-    {
-     "name": "交流",
-     "kind": "noun"
-    },
-    {
-     "name": "智能",
-     "kind": "noun"
-    },
-    {
-     "name": "方案",
-     "kind": "noun"
-    },
-    {
-     "name": "预计",
-     "kind": "noun"
-    }
-   ],
-   "machine": {
-    "head": null,
-    "predicate": null,
-    "tail": null,
-    "extracted": false
-   },
-   "source": "rule_miss"
-  },
-  {
-   "kind": "statement",
-   "id": "stmt-neg-7",
-   "evidence": "Valhalla追问服务器含义，便携式解释这是让鱼儿们聚在一起自行经营生活的空间",
-   "entities": [
-    {
-     "name": "Valhalla",
-     "kind": "topic"
-    },
-    {
-     "name": "便携式",
-     "kind": "roster"
-    },
-    {
      "name": "服务器",
      "kind": "noun"
     },
     {
-     "name": "含义",
+     "name": "大家",
      "kind": "noun"
     },
     {
-     "name": "鱼儿",
-     "kind": "noun"
-    },
-    {
-     "name": "经营",
-     "kind": "noun"
-    },
-    {
-     "name": "生活",
-     "kind": "noun"
-    },
-    {
-     "name": "空间",
+     "name": "无法",
      "kind": "noun"
     }
    ],
    "machine": {
+    "extracted": false,
     "head": null,
     "predicate": null,
-    "tail": null,
-    "extracted": false
+    "tail": null
    },
-   "source": "rule_miss"
+   "source": "explicit"
   },
   {
    "kind": "statement",
-   "id": "stmt-neg-8",
-   "evidence": "任泽昂提出找张老师一起了解清洗数据怎么构建MCP接口",
+   "id": "stmt2-13",
+   "evidence": "任泽昂要求@498545782王老师先更新测试环境前端",
    "entities": [
     {
      "name": "任泽昂",
      "kind": "person"
     },
     {
-     "name": "张老师",
+     "name": "王老师",
      "kind": "person"
     },
     {
-     "name": "MCP",
-     "kind": "topic"
+     "name": "测试",
+     "kind": "roster"
+    },
+    {
+     "name": "测试环境",
+     "kind": "noun"
+    }
+   ],
+   "machine": {
+    "extracted": false,
+    "head": null,
+    "predicate": null,
+    "tail": null
+   },
+   "source": "weak_cue"
+  },
+  {
+   "kind": "statement",
+   "id": "stmt2-14",
+   "evidence": "运营发布7月18日截单提醒",
+   "entities": [
+    {
+     "name": "运营",
+     "kind": "roster"
+    }
+   ],
+   "machine": {
+    "extracted": false,
+    "head": null,
+    "predicate": null,
+    "tail": null
+   },
+   "source": "weak_cue"
+  },
+  {
+   "kind": "statement",
+   "id": "stmt2-15",
+   "evidence": "朱倩表示可能需要一个区间的数据，除了账户类型、金额、数量、种类",
+   "entities": [
+    {
+     "name": "朱倩",
+     "kind": "person"
+    },
+    {
+     "name": "区间",
+     "kind": "noun"
     },
     {
      "name": "数据",
      "kind": "noun"
+    },
+    {
+     "name": "账户",
+     "kind": "noun"
+    },
+    {
+     "name": "类型",
+     "kind": "noun"
+    },
+    {
+     "name": "金额",
+     "kind": "noun"
+    },
+    {
+     "name": "数量",
+     "kind": "noun"
+    },
+    {
+     "name": "种类",
+     "kind": "noun"
     }
    ],
    "machine": {
+    "extracted": false,
     "head": null,
     "predicate": null,
-    "tail": null,
-    "extracted": false
+    "tail": null
    },
-   "source": "rule_miss"
+   "source": "weak_cue"
   },
   {
    "kind": "statement",
-   "id": "stmt-neg-9",
-   "evidence": "任泽昂问几位老师五点有没有空一起看下现在的产品效果",
+   "id": "stmt2-16",
+   "evidence": "安澜发布标题为“代号：侯潮”的视频",
    "entities": [
     {
-     "name": "任泽昂",
+     "name": "侯潮",
      "kind": "person"
     },
     {
-     "name": "老师五点",
-     "kind": "topic"
+     "name": "安澜",
+     "kind": "roster"
     },
     {
-     "name": "空一起",
-     "kind": "topic"
-    },
-    {
-     "name": "老师",
+     "name": "标题",
      "kind": "noun"
     },
     {
-     "name": "产品",
+     "name": "代号",
      "kind": "noun"
     },
     {
-     "name": "效果",
+     "name": "视频",
      "kind": "noun"
     }
    ],
    "machine": {
+    "extracted": false,
     "head": null,
     "predicate": null,
-    "tail": null,
-    "extracted": false
+    "tail": null
    },
-   "source": "rule_miss"
+   "source": "weak_cue"
   },
   {
    "kind": "statement",
-   "id": "stmt-neg-10",
-   "evidence": "群友讨论把鱼都放一起会怎样，戏称会赛博吵架、污染文本库、左脚踩右脚",
+   "id": "stmt2-17",
+   "evidence": "王婕提供Oracle JDBC连接地址 jdbc:oracle:thin:@//173.2.100.64:1521/fxq40cs",
    "entities": [
     {
-     "name": "群友",
-     "kind": "noun"
+     "name": "王婕",
+     "kind": "person"
     },
     {
-     "name": "戏称",
-     "kind": "noun"
+     "name": "Oracle",
+     "kind": "topic"
     },
     {
-     "name": "会赛",
-     "kind": "noun"
+     "name": "JDBC",
+     "kind": "topic"
     },
     {
-     "name": "污染",
-     "kind": "noun"
-    },
-    {
-     "name": "文本库",
-     "kind": "noun"
-    },
-    {
-     "name": "左脚",
-     "kind": "noun"
-    },
-    {
-     "name": "右脚",
+     "name": "地址",
      "kind": "noun"
     }
    ],
    "machine": {
+    "extracted": false,
     "head": null,
     "predicate": null,
-    "tail": null,
-    "extracted": false
+    "tail": null
    },
-   "source": "rule_miss"
+   "source": "weak_cue"
+  },
+  {
+   "kind": "statement",
+   "id": "stmt2-18",
+   "evidence": "运营发布7月11日18点截单提醒",
+   "entities": [
+    {
+     "name": "运营",
+     "kind": "roster"
+    }
+   ],
+   "machine": {
+    "extracted": false,
+    "head": null,
+    "predicate": null,
+    "tail": null
+   },
+   "source": "weak_cue"
   }
  ],
  "behaviors": [
@@ -1498,108 +1762,5 @@ window.LABEL_DATA = {
    "source": "behavior"
   }
  ],
- "senses": [
-  {
-   "kind": "sense",
-   "id": "sense-1",
-   "term": "dd",
-   "gloss": "指凉橙家养的鱼",
-   "score": 3,
-   "evidence": [
-    "凉橙向托确认dd是她家的鱼并发表情",
-    "诶嘿称token欠费，询问如何让DSH接入workbuddy以节省开销"
-   ],
-   "scope": "qq-505456846",
-   "source": "llm"
-  },
-  {
-   "kind": "sense",
-   "id": "sense-2",
-   "term": "deepdeep",
-   "gloss": "群内一位成员的昵称",
-   "score": 3,
-   "evidence": [
-    "幽幽子用欢迎语迎接新人deepdeep",
-    "deepdeep回应并反驳「所有人都是大肥鱼假扮的」的说法"
-   ],
-   "scope": "qq-505456846",
-   "source": "llm"
-  },
-  {
-   "kind": "sense",
-   "id": "sense-3",
-   "term": "卡",
-   "gloss": "指卡片类周边商品",
-   "score": 3,
-   "evidence": [
-    "kk发布新品速递并介绍坂本闪卡上架与价格",
-    "重发布暗杀教室花札风透卡卡片补盒通知"
-   ],
-   "scope": "qq-505456846",
-   "source": "llm"
-  },
-  {
-   "kind": "sense",
-   "id": "sense-4",
-   "term": "向日葵",
-   "gloss": "指向日葵远程桌面软件",
-   "score": 3,
-   "evidence": [
-    "乌角鲨建议改用向日葵远程桌面，并称本机扔出来更便宜",
-    "往汐反驳说向日葵当长期跑图不划算，一卡全白搭"
-   ],
-   "scope": "qq-505456846",
-   "source": "llm"
-  },
-  {
-   "kind": "sense",
-   "id": "sense-5",
-   "term": "岔号",
-   "gloss": "接龙时编号错开对不上",
-   "score": 3,
-   "evidence": [
-    "往汐认下第七号，表示编号不重要、有茶就行，并认为两版接龙岔号是常事"
-   ],
-   "scope": "qq-505456846",
-   "source": "llm"
-  },
-  {
-   "kind": "sense",
-   "id": "sense-6",
-   "term": "托夸鱼",
-   "gloss": "指群里昵称为托夸鱼的成员",
-   "score": 3,
-   "evidence": [
-    "托夸鱼是话唠很可爱，鱼反驳说是你们太安静"
-   ],
-   "scope": "qq-505456846",
-   "source": "llm"
-  },
-  {
-   "kind": "sense",
-   "id": "sense-7",
-   "term": "文峰",
-   "gloss": "指梁文峰，被称外行的非群友",
-   "score": 3,
-   "evidence": [
-    "莫蒂斯缇追问梁叔叔是谁，B站峥空白回答是梁文峰，莫蒂斯缇调侃没来砸所以涨停",
-    "B站峥空白问是不是肥鱼，莫蒂斯缇澄清梁文峰不是群里的肥鱼，托称梁文峰是外行"
-   ],
-   "scope": "qq-505456846",
-   "source": "llm"
-  },
-  {
-   "kind": "sense",
-   "id": "sense-8",
-   "term": "机器人",
-   "gloss": "群内自动推送相册图片的机器人账号",
-   "score": 3,
-   "evidence": [
-    "群友感叹群冷清，讨论安排机器人或整活",
-    "群相册机器人推送《白丝萝莉》相册图，玛薇卡追问是不是本人"
-   ],
-   "scope": "qq-505456846",
-   "source": "llm"
-  }
- ]
+ "senses": []
 };

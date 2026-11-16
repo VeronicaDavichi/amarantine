@@ -184,6 +184,100 @@ def entities_of(text: str) -> list[dict]:
     return out[:24]
 
 
+
+
+# ============================================================ 039 v2：只标「句子明说」
+
+#: 强关系词：出现即「这句话在说职责/协作/依赖」
+_STRONG_CUES = (
+    "负责", "牵头", "主管", "分管", "维护", "运维", "对接", "依赖", "依托",
+    "协作", "合作", "配合", "协助", "搭建", "开发", "实现", "修复", "部署",
+)
+
+#: 弱关系词：常出现在「一起笑」「需要数据」这类非关系句里
+_WEAK_CUES = ("一起", "共同", "需要", "使用", "提供", "更新", "发布", "新增")
+
+#: 营销/公告模板：不是人与人/人与系统 的职责关系
+_AD_PAT = re.compile(r"(上新|尾款|补款|链接|扭蛋|定金|包邮|拍下|上架|团购|优惠)")
+
+
+def _roster_names_all() -> list[str]:
+    global _ROSTER_CACHE
+    if _ROSTER_CACHE is None:
+        _ROSTER_CACHE = identity_names()
+    return _ROSTER_CACHE
+
+
+def build_statements_v2(limit: int = 20) -> list[dict]:
+    """生成「句子明说关系」的评测集。
+
+    与 v1 的区别：v1 混入了「现实里是什么关系」（世界知识），
+    导致正确抽到句子字面关系的样本被判错。v2 只标句子本身说了什么。
+    """
+    roster = _roster_names_all()
+    rows = cy(f"MATCH (e:Event) RETURN e.summary LIMIT 6000")
+    sents: list[str] = []
+    for row in rows:
+        text = (row.get("row") or [""])[0] or ""
+        for part in re.split(r"[。！？\n]", text):
+            p = part.strip()
+            if 12 <= len(p) <= 100:
+                sents.append(p)
+
+    pos: list[str] = []
+    neg: list[str] = []
+    seen: set[str] = set()
+    for sent in sents:
+        key = sent[:14]
+        if key in seen or _AD_PAT.search(sent):
+            continue
+        if not any(name in sent for name in roster):
+            continue
+        if any(c in sent for c in _STRONG_CUES):
+            pos.append(sent)
+            seen.add(key)
+        elif any(c in sent for c in _WEAK_CUES):
+            neg.append(sent)
+            seen.add(key)
+
+    random.seed(7)
+    random.shuffle(pos)
+    random.shuffle(neg)
+
+    items: list[dict] = []
+    for sent in pos[: max(1, limit - limit // 3)]:
+        items.append({
+            "kind": "statement",
+            "id": f"stmt2-{len(items)+1}",
+            "evidence": sent,
+            "entities": entities_of(sent),
+            "machine": _machine_view(sent),
+            "source": "explicit",
+        })
+    for sent in neg[: limit // 3]:
+        items.append({
+            "kind": "statement",
+            "id": f"stmt2-{len(items)+1}",
+            "evidence": sent,
+            "entities": entities_of(sent),
+            "machine": _machine_view(sent),
+            "source": "weak_cue",
+        })
+    return items
+
+
+def _machine_view(text: str) -> dict:
+    """机器当前抽到的东西（页面展示用，同时也是评测输入）。"""
+    from memory.services.relations import candidate_entities, extract_statements
+
+    cands = candidate_entities(text, roster=_roster_names_all())
+    claims = extract_statements(text, candidates=cands)
+    if not claims:
+        return {"extracted": False, "head": None, "predicate": None, "tail": None}
+    c = claims[0]
+    return {"extracted": True, "head": c.head, "predicate": c.predicate,
+            "tail": c.tail, "count": len(claims)}
+
 def build_statements(limit: int = 20) -> list[dict]:
     rows = cy(f"MATCH (e:Event {{namespace:'{NS_QQ}'}}) RETURN e.summary LIMIT 3000")
     rows += cy(f"MATCH (e:Event {{namespace:'{NS_DING}'}}) RETURN e.summary LIMIT 3000")
@@ -351,6 +445,10 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", default=str(ROOT / "docs" / "labeling-data.js"))
     ap.add_argument(
+        "--statements-v2", action="store_true",
+        help="生成「只标句子明说关系」的评测集（039 改造 A 用）",
+    )
+    ap.add_argument(
         "--senses-llm", action="store_true",
         help="用 LLM 抽 gloss（规则版正确率 20%%，不推荐）",
     )
@@ -372,7 +470,10 @@ def main() -> int:
                      "上下文不足以判断时选「不确定」。",
         },
         "entity_pool": entity_pool(),
-        "statements": build_statements(),
+        "statements": (
+            build_statements_v2() if getattr(args, "statements_v2", False)
+            else build_statements()
+        ),
         "behaviors": build_behaviors(),
         "senses": (
             build_senses_llm(args.senses) if getattr(args, "senses_llm", False)

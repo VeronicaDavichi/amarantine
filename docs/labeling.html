@@ -95,18 +95,18 @@
   const DATA = window.LABEL_DATA || {};
   const POOL = (DATA.entity_pool || []).slice(0, 400);
   const LEVELS = [
-    [0, "0 无关系"],
-    [1, "1 极低 · 依赖 (DEPENDS_ON)"],
-    [2, "2 有关系 · 协作 (COLLABORATES)"],
-    [3, "3 较大 · 维护 (MAINTAINS)"],
-    [4, "4 强相关 · 负责 (OWNS)"],
+    [0, "0 句子没说关系"],
+    [1, "1 依赖 (DEPENDS_ON)"],
+    [2, "2 协作 (COLLABORATES)"],
+    [3, "3 维护 (MAINTAINS)"],
+    [4, "4 负责/拥有 (OWNS)"],
   ];
   const GROUPS = [
     { key: "statements", name: "关系陈述", kind: "relation" },
     { key: "behaviors", name: "关系行为", kind: "relation" },
     { key: "senses", name: "指称义项", kind: "sense" },
   ];
-  const STORE = "amarantine-label-v3";
+  const STORE = "amarantine-label-v4";
   let state = load();
   let gi = 0, idx = 0;
 
@@ -115,7 +115,7 @@
       const cur = JSON.parse(localStorage.getItem(STORE) || "{}");
       if (Object.keys(cur).length) return cur;
       // v2 → v3 迁移：陈述组 id 没变，把旧标注带过来；行为/义项因去重换过 id，不迁移
-      const old = JSON.parse(localStorage.getItem("amarantine-label-v2") || "{}");
+      const old = JSON.parse(localStorage.getItem("amarantine-label-v3") || "{}");
       const migrated = {};
       Object.keys(old).forEach(k => {
         if (k.startsWith("stmt-")) migrated[k] = old[k];
@@ -206,11 +206,16 @@
       <span>${esc(item.id)}</span>`;
     if (item.source === "rule_hit") head += `<span class="tag hit">规则抽取</span>`;
     if (item.source === "rule_miss") head += `<span class="tag miss">规则未抽</span>`;
+    if (item.source === "explicit") head += `<span class="tag hit">含强关系词</span>`;
+    if (item.source === "weak_cue") head += `<span class="tag miss">只有弱词</span>`;
     if (item.kind === "behavior") head += `<span>证据 ${item.evidence_count || 0} 条</span>`;
     head += `</div>`;
 
     let body = "";
     if (item.kind === "statement") {
+      body += `<div class="hint" style="margin:10px 0;color:var(--warn)">`
+           + `⬇ 只判断<b>这句话明说了什么关系</b>，不要用「现实里我知道他们是什么关系」。`
+           + `句子没说，就选 0。</div>`;
       body += `<div class="evidence">${esc(item.evidence)}</div>`;
       body += `<div class="machine">规则结果：` + (item.machine && item.machine.extracted
         ? `<b>${esc(item.machine.head)}</b> --${esc(item.machine.predicate)}--> <b>${esc(item.machine.tail)}</b>`
