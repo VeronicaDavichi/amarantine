@@ -2368,3 +2368,45 @@ RETURN type(r) AS 谓词, t.name AS 对象
 **噪声过滤**：媒体占位（`图片/信息/消息/内容…`）不做尾值，
 动作词（`训练/部署/发布…`）不做主语。但**动作词做尾值是允许的**
 （「部署」指那次部署）——见 spec 039 的语义定义。
+
+## 增量更新：把已导的群追到最新
+
+已经导过的群要「往后追」，不用重灌整段：按**每个群自己的最后一条消息时间**起导。
+
+```bash
+# 1) 看每个群会从什么时候开始导（UTC+8）
+python3 harness/export_qq_incremental.py --list
+
+# 2) 导出增量语料到 harness/corpus/qq-inc/
+python3 harness/export_qq_incremental.py
+
+# 3) 灌进记忆（--resume 跳过已 done 的片）
+cd back_end
+.venv-linux/bin/python3 ../harness/import_chat.py \
+    --corpus-dir ../harness/corpus/qq-inc --namespace qq-505456846 \
+    --prefix dt --window 30 --resume --gate-marketing --gate-namespaces qq-505456846
+
+# 4) 补名字标记（新成员）+ 重算关系层
+.venv-linux/bin/python3 ../harness/apply_display_names.py \
+    --namespace qq-505456846 --apply
+.venv-linux/bin/python3 ../harness/build_relations.py \
+    --namespace qq-505456846 --statements --use-llm --apply
+```
+
+**为什么按群各导**：12 个群的最新消息时间可能差 8 个月。
+统一用一个 `--since`，要么大群被重复拉几万条，要么小群的新消息全漏。
+
+**实测（2026-11-17 首次增量）**
+
+| 指标 | 数值 |
+|---|---|
+| 导出 | 12 个群 / 4795 条原始消息 |
+| 导入 | 148 片 / 4158 turn / **1871 张新卡** / 0 失败 |
+| 卡片总数 | 2546 → **4383** |
+| 最新消息 | 2026-11-17 14:26（UTC+8） |
+| 关系边 | 47 → **109 条** |
+
+耗时：导出约 5 分钟、导入约 80 分钟、关系层重算约 60 分钟。
+
+> `--overlap-hours 2`（默认）会从最后时间往前多导 2 小时，
+> 防止「最后一条正好在切窗边界」被漏掉；重复窗口由 dedupe_key 幂等跳过。

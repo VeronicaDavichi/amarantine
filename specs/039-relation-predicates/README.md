@@ -346,9 +346,9 @@ python3 harness/build_relations.py --namespace qq-505456846 \
     --statements --use-llm --apply
 ```
 
-**结果**：`OWNS 24 / MAINTAINS 12 / COLLABORATES_WITH 6 / DEPENDS_ON 5 = 47 条`
+**结果（增量导入后重跑）**：`OWNS 49 / MAINTAINS 28 / COLLABORATES_WITH 25 / DEPENDS_ON 7 = 109 条`（首次全量为 47 条）
 
-端点分布 `Person→Entity 34 / Entity→Entity 11 / Person→Person 2`，
+端点分布 `Person→Entity 84 / Entity→Entity 24 / Person→Person 1`，
 全部 `label=probable source=llm`。
 
 **第一版只写出 2 条边 —— 三个缺口**
@@ -357,7 +357,7 @@ python3 harness/build_relations.py --namespace qq-505456846 \
 |---|---|---|---|
 | 1 | 写边 Cypher 要求两端节点已存在 | 抽出 65 条 claim，写 2 条；`商品`/`服务器` 根本没节点 | 先解析两端，缺失的补建 `Entity` |
 | 2 | head 解析到 `Account` 就不可读 | 边是 `u_vnVlOWO9… -COLLABORATES_WITH-> 图片`，按名字查不到 | 按 spec 045 补建**账号锚定** `Person`（`key='acct_'+uid`）并 `MERGE (Account)-[:OPERATED_BY]->(Person)` |
-| 3 | 营销卡也含「发布/上新」 | 抽出 `运营 -OWNS-> 图片/信息/消息/内容` 一类噪声 | 新增 `is_junk_relation()`：媒体占位不做尾值、动作词不做主语 |
+| 3 | 营销卡也含「发布/上新」 | 抽出 `训练 -OWNS-> 音频文件`（主语是动作） | `is_junk_relation()`：动作词不做主语 |
 
 **为什么不能用 name 匹配节点**：同一名字可能同时是 `Entity`（产品）和
 `Person`（人），`MATCH (x {name})` 会返回两行，写边重复。统一按
@@ -365,8 +365,10 @@ python3 harness/build_relations.py --namespace qq-505456846 \
 
 **⚠️ 反悔清单（补充）**
 
-- ❌ 「媒体占位」清单**不要**加到「动作词」规则里：`图片/信息` 该拒，
-  但 `部署/训练` 作为**尾值**是合法的（见上方语义定义）
+- ❌ **不要**加「媒体占位（`图片/信息/内容/视频`）不做尾值」的过滤 ——
+  它与人工标注直接冲突：20 条核对里 `kk -OWNS-> 图片`、`传讯员8号 -MAINTAINS-> 信息/内容`、
+  `安澜 -OWNS-> 视频` **全部标为「对」**。我加过又撤回了（2026-11-17）。
+  用户的语义是「发布某物的人负责维护该物的信息」，所以媒体名词做尾值合法。
 - ❌ **不要**用 `name` 匹配端点写边（会重复、会写进 `Alias` 节点）
 - ❌ **不要**为了「按名字查得到」就把 `Person.key` 换成名字派生 ——
   那是 spec 045 已经解决的问题；账号锚定 + `OPERATED_BY` 才是正路
