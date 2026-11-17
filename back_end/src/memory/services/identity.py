@@ -539,3 +539,76 @@ def ensure_display_names(
                 pass
     return {"written": written, "failed": 0}
 
+# ============================================================ spec 047 T6：群头衔
+
+#: 头衔是 QQ 独有的**角色标记**，和「名字」不是一回事，所以单独一类边：
+#:   (:Account)-[:TITLED {scope, source}]->(:Title {text})
+#: 同一人可有多条（公告会覆盖旧头衔，轨迹保留），不参与名字分桶。
+ENSURE_TITLE_CYPHER = """
+UNWIND $items AS item
+MERGE (a:Account {namespace: $namespace, uid: item.uid})
+ON CREATE SET a.created_at = $now
+SET a.last_seen = $now
+WITH a, item
+MERGE (t:Title {namespace: $namespace, text: item.title})
+ON CREATE SET t.first_seen = $now
+MERGE (a)-[r:TITLED {scope: $scope}]->(t)
+ON CREATE SET r.created_at = $now
+SET r.source = item.source, r.updated_at = $now
+RETURN count(r) AS n
+"""
+
+#: 按头衔反查账号
+WHOIS_TITLE_CYPHER = """
+MATCH (a:Account {namespace: $namespace})-[r:TITLED {scope: $scope}]->(t:Title {text: $title})
+RETURN a.uid AS uid, r.source AS source
+ORDER BY a.uid
+"""
+
+
+def ensure_titles(
+    *,
+    namespace: str,
+    scope: str,
+    records: list[dict],
+    settings: Any,
+    driver: Any | None = None,
+) -> dict[str, int]:
+    """写群头衔（幂等）。失败只告警 —— 图是派生层。"""
+    items = [
+        {"uid": str(r.get("uid") or "").strip(),
+         "title": str(r.get("title") or "").strip(),
+         "source": str(r.get("source") or "member_table")}
+        for r in records
+        if str(r.get("uid") or "").strip() and str(r.get("title") or "").strip()
+    ]
+    if not items:
+        return {"written": 0, "failed": 0}
+
+    owns = driver is None
+    drv = driver
+    written = 0
+    try:
+        if drv is None:
+            from neo4j import GraphDatabase
+
+            drv = GraphDatabase.driver(
+                settings.NEO4J_URI, auth=(settings.NEO4J_USER, settings.NEO4J_PASSWORD)
+            )
+        with drv.session() as session:
+            res = session.run(
+                ENSURE_TITLE_CYPHER,
+                namespace=namespace, scope=scope, items=items, now=_now(),
+            ).single()
+            written = int(res["n"]) if res else 0
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("写群头衔失败（已降级）| %s", exc)
+        return {"written": 0, "failed": len(items)}
+    finally:
+        if owns and drv is not None:
+            try:
+                drv.close()
+            except Exception:  # noqa: BLE001
+                pass
+    return {"written": written, "failed": 0}
+

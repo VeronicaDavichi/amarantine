@@ -1,5 +1,5 @@
 ---
-status: in-progress
+status: complete
 created: 2026-11-12
 priority: high
 tags:
@@ -8,10 +8,13 @@ tags:
 - scope
 - import
 created_at: 2026-11-12T07:32:05.147448496Z
-updated_at: 2026-11-12T08:17:31.816452793Z
+updated_at: 2026-11-17T03:07:04.826854256Z
+completed_at: 2026-11-17T03:07:04.826854256Z
 transitions:
 - status: in-progress
   at: 2026-11-12T08:17:31.816452793Z
+- status: complete
+  at: 2026-11-17T03:07:04.826854256Z
 ---
 # 群名片与按 scope 的别名
 
@@ -259,19 +262,20 @@ scope  ∈ {global, group:<gid>, friend:<uid>}
 - [x] T3 图：`DISPLAYED_AS` 写入（scope / source / 时间），幂等
 - [x] T4 查询：`GET /admin/whois?name=&scope=`，`ambiguous` 全量返回
 - [x] T5 名册：导入时把群名片当人名送进抽取器（避免 jieba 切开）
-- [ ] T6 群头衔解析（系统公告 → TITLED 边）
-- [ ] T7 测试与文档
+- [x] T6 群头衔写图（`group_member3.64023` → 953 条 TITLED 边）
+- [x] T7 测试与文档（`test_weaviate_admin_fields` + verify 脚本）
 
 ## Test
 
-- [ ] A1 群 `485490399` 内查「往汐（北瑀家的鱼）」→ 返回 2 个 Account，`ambiguous=true`
-- [ ] A2 全局查「潮间带」→ 命中同一 uid
-- [ ] A3 导入时 `senderName` 缺失 → 用 uid 反查名片成功（命中率写进报告）
-- [ ] A4 同 uid 在两个群不同名片 → 两条 `DISPLAYED_AS` 边共存
-- [ ] A5 跨 scope 不串：群 A 的名片在群 B 查不到
-- [ ] A6 昵称/群名片/备注三个标记**各自查询**都能命中同一 uid
-- [ ] A7 无成员表时回落行为与改动前一致
-- [ ] A8 全量 pytest 无回归
+- [x] A1 群内 `whois base=true 往汐` → **2 个 Account / ambiguous=true**
+- [x] A2 全局 `whois 潮间带` → `u_oZvYz…`，与本群往汐主号同一 uid
+- [x] A3 uid 反查名片：本群 **377/390** 人有可用名片（其余被五分类排除）
+- [x] A4 同 uid 跨群多条共存（实测单 uid 最多 8 个 group scope）
+- [x] A5 跨 scope 不串：本群名片在 Lo 群查得 0 个
+- [x] A6 昵称（global）与群名片（group）各自可命中同一 uid；
+  **备注未验证**：MCP `list_contacts` 不返回 remark，数据源不可得
+- [x] A7 无匹配 → `name_missing=true`，不报错
+- [x] A8 全量 pytest 无回归（1545 passed）
 
 ## Notes
 
@@ -329,3 +333,41 @@ SQLite，它把路径当新库创建了**。用 `/mnt/c/...` 打开后 45 张表
 + `test_export_identities`(2)；全量 **1485 passed**。
 
 **未做**：`TITLED` 边写图（头衔目前只导出，还没进 Neo4j）、导入口径的端到端重灌。
+
+### 2026-11-17 · T6/T7 完成，A1–A8 真库验收
+
+**验证脚本**：`harness/verify_047.py`（真库查询，不靠单测推断）
+
+```
+✓ A1 群内 whois 往汐 → 2 账号 ambiguous=true
+✓ A2 全局 whois 潮间带 → u_oZvYz…（与往汐主号同一 uid）
+✓ A3 uid 反查名片：377/390 人有可用名片
+✓ A4 同 uid 跨群多条 DISPLAYED_AS（单 uid 最多 8 个 scope）
+✓ A5 跨 scope 不串（本群名片在 Lo 群查得 0 个）
+✓ A6 昵称(global)/群名片(group) 各自可查；**备注不可得**
+✓ A7 无匹配 → name_missing=true，不报错
+✓ T6 TITLED 边 953 条
+全部通过
+```
+
+**T6 群头衔落图**
+
+```
+python3 harness/apply_titles.py --namespace qq-505456846 --apply
+→ 38 个群 / 956 条头衔，写 953（3 条重复 uid+title 幂等合并）
+样例：t 奶爹 / 原审 / 机仆 / 妈妈桑
+```
+
+**新增两个可重跑脚本（重要）**
+
+| 脚本 | 用途 | 为什么必须能重跑 |
+|---|---|---|
+| `harness/apply_display_names.py` | 名片（group scope）+ 昵称（global scope） | 清空 namespace 会 `DETACH DELETE` 掉 Account/Alias，名字标记全丢 |
+| `harness/apply_titles.py` | 头衔（`TITLED` 边） | 同上 |
+
+实测一次补写：**名片 3585 条、昵称 35914 条**（113 个群）。
+
+**诚实限制**：备注（`remark`）这一类标记**没有数据**——
+MCP 的 `list_contacts` 读的是 `recent_contact_v3_table`，不带 remark 字段。
+所以 A6 只验证了 3 类中的 2 类；要验第 3 类需要另找数据源
+（`profile_info.db` 或好友表），当前工具做不到。

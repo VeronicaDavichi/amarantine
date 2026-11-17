@@ -1707,6 +1707,43 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 **没有优先级，只有生效范围。** 查询发生在哪个 scope，就取那个 scope 的标记：
 本 scope 有 → 用；没有 → 回落 `global`；全都没有 → 用 `uid` 短形式占位并标 `name_missing`。
 
+> **清空 namespace 后必须重写名字标记**：`MATCH (n {namespace}) DETACH DELETE n`
+> 会把 `Account`/`Alias` 一起删掉，名字标记全丢（实测重灌后 `whois` 查不到任何人）。
+> 补救：
+>
+> ```bash
+> python3 harness/apply_display_names.py --namespace qq-505456846 --apply
+> # 实测：113 个群 → 名片 3585 条、昵称 35914 条
+> ```
+
+#### 群头衔（QQ 独有，和「名字」不是一回事）
+
+头衔是**角色标记**（`机仆`、`妈妈桑`、`往汐家的鱼`、`奶爹`），不参与名字分桶：
+
+```
+(:Account)-[:TITLED {scope:"group:<gid>", source:"member_table"}]->(:Title {text})
+```
+
+来源是 `group_info.db.group_member3` 的 **`64023` 列**（protobuf 字段号列名），
+由 `harness/export_qq_identities.py` 一并导出：
+
+```bash
+python3 harness/export_qq_identities.py --plain <解密后的 group_info.db> \
+  --out-dir back_end/data/corpus/qq-identities
+python3 harness/apply_titles.py --namespace qq-505456846 --apply
+# 实测：38 个群 / 956 条头衔 → 写 953 条 TITLED 边
+```
+
+**踩过的坑**：在 WSL 里用 Windows 路径（`C:/Users/...`）打开 SQLite，
+它会把这个路径当**新库**创建，于是看到「0 张表」的假象。
+必须转成 `/mnt/c/Users/...`。
+
+#### 已知限制：备注（remark）没有数据
+
+`list_contacts` 读的是 `recent_contact_v3_table`，**不返回 remark 字段**。
+所以「昵称/群名片/备注三类标记」里，目前只有前两类有真实数据可验证。
+要补备注得另找数据源（好友表 / `profile_info.db`），当前工具做不到。
+
 #### 五分类：名片不是都能当名字用
 
 实测群 `1019369531`（500 人）同名组 10 个，形态完全不同 ——
