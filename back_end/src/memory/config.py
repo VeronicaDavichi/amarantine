@@ -117,6 +117,10 @@ class Settings(BaseSettings):
     #: 只查本地图，不联网；默认开。
     ABBR_EXPAND_ENABLED: bool = True
 
+    #: 别名扩展（二次召回）自己的预算。**不能吃主召回的剩余**：
+    #: 实测主召回常把 RECALL_BUDGET_MS 用完，剩余为负 → 扩展永不执行。
+    ABBR_EXPAND_BUDGET_MS: int = 800
+
     ENTITY_RULE_ENABLED: bool = True
 
     #: 后缀白名单：短名是长名前缀、且多出的部分在此表内 -> 判同一实体。

@@ -185,9 +185,11 @@ def recall(
         """
         if not _expansions or not result.materials:
             return result
-        elapsed = (time.monotonic() - t0) * 1000
-        remain = budget - elapsed
-        if remain < 200:  # 预算不够就算了，扩展不是必需
+        # **独立预算**，不吃主召回的剩余。
+        # 踩过的坑：第一版用 `budget - elapsed`，主召回本身常把 1500ms 用完，
+        # 实测 remain = -430ms → 扩展从来没执行过（功能是死的）。
+        expand_budget = getattr(settings, "ABBR_EXPAND_BUDGET_MS", 800)
+        if expand_budget <= 0:
             return result
         try:
             sec_settings = settings.model_copy(update={"ABBR_EXPAND_ENABLED": False})
@@ -204,7 +206,7 @@ def recall(
                 embedder=embedder,
                 graph_searcher=graph_searcher,
                 counter=None,
-                budget_ms=int(remain),
+                budget_ms=expand_budget,
                 trace_store=None,
                 rerank_client=rerank_client,
             )
