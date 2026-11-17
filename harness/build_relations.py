@@ -53,6 +53,117 @@ RETURN e.event_id AS event_id, e.summary AS summary
 """
 
 #: 每种谓词一条，因为关系类型不能参数化。
+#: 关系两端节点的统一寻址：`(kind, key)`。
+#: - person / entity：按 `name` 匹配对应标签
+#: - account：按 `uid` 匹配（Account 没有 name，名字在 Alias 上）
+_MATCH_END = """
+MATCH ({var}) WHERE {var}.namespace = $namespace AND (
+  ({var}.kind_hint = 'Account' AND {var}.uid = {key})
+  OR ({var}.kind_hint <> 'Account' AND {var}.name = {key}
+      AND {var}.kind_hint IN labels({var}))
+)"""
+
+
+def _end_match(var: str, side: str) -> str:
+    """按 `(kind, key)` 精确定位节点。
+
+    Person / Entity 都带 `key` 属性；Account 只有 `uid`。
+    用 key 而不是 name 匹配：同名不同类型节点（`豆包` 既是 Entity 又是 Person）
+    会让 name 匹配产生重复行。
+    """
+    return (
+        f"MATCH ({var}) WHERE {var}.namespace = $namespace AND (\n"
+        f"  (item.{side}_kind = 'Account' AND {var}.uid = item.{side}_key)\n"
+        f"  OR (item.{side}_kind <> 'Account' AND {var}.key = item.{side}_key\n"
+        f"      AND item.{side}_kind IN labels({var}))\n"
+        f")"
+    )
+
+
+def write_cypher(predicate: str) -> str:
+    """生成一条谓词的写边 Cypher（两端都按 kind+key 解析）。"""
+    return f"""
+UNWIND $items AS item
+{_end_match("h", "head")}
+WITH DISTINCT item, h
+{_end_match("t", "tail")}
+WITH DISTINCT item, h, t
+MERGE (h)-[r:{predicate}]->(t)
+ON CREATE SET r.first_seen = $now, r.evidence = [], r.source = item.source
+SET r.evidence = reduce(acc = coalesce(r.evidence, []), x IN item.evidence |
+        CASE WHEN x IN acc THEN acc ELSE acc + x END),
+    r.last_seen = $now
+SET r.evidence_count = size(r.evidence),
+    r.label = CASE WHEN r.label = 'exact' THEN 'exact' ELSE item.label END,
+    r.confidence = CASE WHEN r.label = 'exact' THEN 1.0 ELSE item.confidence END,
+    r.source = CASE WHEN r.source = 'statement' THEN 'statement' ELSE item.source END
+RETURN count(r) AS n
+"""
+
+
+#: 缺失的尾实体补一个 Entity 节点（`kind=topic`，`source` 可追溯）
+ENSURE_ENTITY_CYPHER = """
+UNWIND $names AS name
+MERGE (e:Entity {namespace: $namespace, name: name})
+ON CREATE SET e.kind = 'topic', e.key = 'ent_' + name,
+              e.created_at = $now, e.source = 'relation_stmt'
+RETURN count(e) AS n
+"""
+
+
+#: 名字能解析到 Account 但没有 Person 时，建一个**账号锚定**的 Person
+#: （spec 045：Person 的键用 uid，不随名字变），并把 Account 挂上去。
+ENSURE_PERSON_CYPHER = """
+UNWIND $rows AS row
+MATCH (a:Account {namespace: $namespace, uid: row.uid})
+MERGE (p:Person {namespace: $namespace, key: 'acct_' + row.uid})
+ON CREATE SET p.name = row.name, p.created_at = $now,
+              p.source = 'relation_stmt'
+MERGE (a)-[r:OPERATED_BY]->(p)
+ON CREATE SET r.created_at = $now
+RETURN count(p) AS n
+"""
+
+
+def resolve_ends(session, namespace: str, names: set[str]):
+    """把名字解析成 `(标签, key)`，缺 Person 的按账号锚定补建。
+
+    优先级：Person > Entity > Account(经 Alias，补建 Person) > 新建 Entity。
+
+    Returns:
+        `(resolved, missing, anchored)`；`anchored` 是补建 Person 的条数。
+    """
+    people = {r["name"]: r["key"] for r in session.run(
+        "MATCH (p:Person {namespace:$ns}) RETURN p.name AS name, p.key AS key",
+        ns=namespace) if r.get("name") and r.get("key")}
+    entities = {r["name"]: r["key"] for r in session.run(
+        "MATCH (e:Entity {namespace:$ns}) RETURN e.name AS name, e.key AS key",
+        ns=namespace) if r.get("name") and r.get("key")}
+    accounts = {}
+    for rec in session.run(
+        "MATCH (a:Account {namespace:$ns})-[:DISPLAYED_AS]->(al:Alias {namespace:$ns}) "
+        "RETURN al.name AS name, a.uid AS uid", ns=namespace):
+        accounts.setdefault(rec["name"], rec["uid"])
+
+    resolved: dict[str, tuple[str, str]] = {}
+    to_anchor: list[dict] = []
+    missing: list[str] = []
+    for name in names:
+        if not name:
+            continue
+        if name in people:
+            resolved[name] = ("Person", people[name])
+        elif name in entities:
+            resolved[name] = ("Entity", entities[name])
+        elif name in accounts:
+            uid = accounts[name]
+            to_anchor.append({"name": name, "uid": uid})
+            resolved[name] = ("Person", f"acct_{uid}")
+        else:
+            missing.append(name)
+    return resolved, missing, to_anchor
+
+
 WRITE_CYPHER = {
     "OWNS": """
 UNWIND $items AS item
@@ -136,6 +247,12 @@ def main() -> int:
     ap.add_argument("--threshold", type=int, default=DEFAULT_THRESHOLD)
     ap.add_argument("--window-days", type=int, default=DEFAULT_WINDOW_DAYS)
     ap.add_argument("--statements", action="store_true", help="同时跑陈述通道")
+    ap.add_argument(
+        "--all-cards", action="store_true",
+        help="对每张卡都调 LLM（默认只处理含关系词的卡，省 90%% 调用）",
+    )
+    ap.add_argument("--limit-cards", type=int, default=0,
+                    help="只处理前 N 张含关系词的卡（调试用）")
     args = ap.parse_args()
 
     from memory.config import load_settings
@@ -164,6 +281,24 @@ def main() -> int:
                 st: list = []
                 rejected_all: list[dict] = []
                 texts = [row.get("summary") or "" for row in summaries]
+                if args.use_llm:
+                    # 营销卡也含「发布/上新」，抽出来全是 `运营-OWNS->图片` 噪声；
+                    # 而且会给 `图片`/`信息` 建一堆垃圾 Entity 节点。
+                    from memory.services.marketing import looks_like_marketing
+
+                    before = len(texts)
+                    texts = [t for t in texts
+                             if not looks_like_marketing(t)[0]]
+                    print(f"  跳过营销卡 {before - len(texts)} 张")
+                if args.use_llm and not args.all_cards:
+                    # 只喂含关系词的卡：全量 2546 张逐张调 LLM 要数小时，
+                    # 而实测只有约 10% 的卡里有关系动词（其余是「发了图片」）。
+                    from memory.services.relations import RELATION_CUES
+
+                    texts = [t for t in texts if any(c in t for c in RELATION_CUES)]
+                    if args.limit_cards:
+                        texts = texts[: args.limit_cards]
+                    print(f"  含关系词的卡 {len(texts)} 张（--all-cards 可全扫）")
                 for i, summary in enumerate(texts):
                     # 上下文 = 前 2 条摘要（理解指代用；不从里面抽关系）
                     ctx = [t for t in texts[max(0, i - 2): i] if t]
@@ -204,15 +339,45 @@ def main() -> int:
                     "confidence": c.confidence, "evidence": list(c.evidence),
                     "source": c.source,
                 })
+            # 两端节点先解析：缺失的建 Entity，否则 MATCH 不中、边全丢
+            # （实测：65 条 claim 只写出 2 条，因为 `商品`/`服务器` 没有节点）
+            names: set[str] = set()
+            for items in by_predicate.values():
+                for it in items:
+                    names.add(it["head"])
+                    names.add(it["tail"])
+            resolved, missing, to_anchor = resolve_ends(session, args.namespace, names)
+            if to_anchor:
+                session.run(ENSURE_PERSON_CYPHER, namespace=args.namespace,
+                            rows=to_anchor, now=now)
+                print(f"补建账号锚定 Person {len({r['uid'] for r in to_anchor})} 个")
+            if missing:
+                print(f"\n补建 Entity 节点 {len(missing)} 个：{sorted(missing)[:8]}…")
+                session.run(ENSURE_ENTITY_CYPHER, namespace=args.namespace,
+                            names=sorted(missing), now=now)
+                for name in missing:
+                    resolved[name] = ("Entity", f"ent_{name}")
+
+            unresolved = 0
             for predicate, items in by_predicate.items():
-                cypher = WRITE_CYPHER.get(predicate)
-                if not cypher:
-                    print(f"⚠ 未知谓词 {predicate}，跳过")
+                payload = []
+                for it in items:
+                    hk = resolved.get(it["head"])
+                    tk = resolved.get(it["tail"])
+                    if not hk or not tk:
+                        unresolved += 1
+                        continue
+                    payload.append({**it, "head_kind": hk[0], "head_key": hk[1],
+                                    "tail_kind": tk[0], "tail_key": tk[1]})
+                if not payload:
                     continue
-                res = session.run(cypher, namespace=args.namespace, items=items, now=now).single()
+                res = session.run(write_cypher(predicate), namespace=args.namespace,
+                                  items=payload, now=now).single()
                 n = int(res["n"]) if res else 0
                 written += n
-                print(f"  写入 {predicate}: {n}")
+                print(f"  写入 {predicate}: {n} / {len(payload)}")
+            if unresolved:
+                print(f"  ⚠ 未解析 {unresolved} 条（节点缺失）")
             print(f"\n共写入 {written} 条边")
             return 0
     finally:

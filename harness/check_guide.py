@@ -117,6 +117,8 @@ def main() -> int:
         "RANK_DIGITS", "RANK_SUFFIXES",
         # 非配置项：labeler 里的「X人」判据（文档里讲别名右值时会提到）
         "DESCRIPTIVE_BEFORE_REN",
+        # 非配置项：关系谓词名（spec 039，文档里讲关系层时会提到）
+        "OWNS", "MAINTAINS", "COLLABORATES_WITH", "DEPENDS_ON",
     }
     unknown = [v for v in unknown if v not in allowed_extra]
     for v in unknown:

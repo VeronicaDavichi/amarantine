@@ -2325,3 +2325,46 @@ curl -s -X POST -H "Authorization: Bearer $ADMIN_TOKEN" \
 > **为什么不自动合并**：中文实体名的字面/向量相似度与「是否同一实体」
 > 没有稳定相关性（实测 14 组：应合并最低 0.4806 < 不该合并最高 0.8801，
 > 区间完全重叠）。所以只做「可疑就留痕」，最终由人拍板。
+
+## 关系层：谁负责什么
+
+四类谓词从**事件卡摘要**里抽，`label=probable`（模型判定）、`source=llm`：
+
+| 谓词 | 含义 | 触发强度 |
+|---|---|---|
+| `OWNS` | 拥有 / 负责 / 建设 | 4 |
+| `MAINTAINS` | 长期维护 / 部署 / 对接 | 3 |
+| `COLLABORATES_WITH` | 一起做事 / 协作 | 2 |
+| `DEPENDS_ON` | 依赖 | 1 |
+
+**重建（派生数据，可随时重跑）**
+
+```bash
+bash harness/wake.sh                      # 先唤醒容器
+cd back_end
+.venv-linux/bin/python3 ../harness/build_relations.py \
+    --namespace qq-505456846 --statements --use-llm --apply
+```
+
+默认只处理**含关系词**的卡（约 257/2546），全扫加 `--all-cards`。
+实测 2546 张卡全量约 25 分钟、产出 47 条边。
+
+**查询**
+
+```cypher
+MATCH (p:Person {namespace:'qq-505456846', name:'kk'})-[r]->(t)
+RETURN type(r) AS 谓词, t.name AS 对象
+```
+
+**两端节点怎么落**
+
+| 名字能解析到 | 写成 | 说明 |
+|---|---|---|
+| 已有 `Person` | `Person` | 走 `name` |
+| 已有 `Entity` | `Entity` | 主题/物件 |
+| 只有 `Alias` + `Account` | 补建账号锚定 `Person`（`key='acct_'+uid`） | spec 045：键不随名字变 |
+| 完全没有 | 补建 `Entity`（`key='ent_'+name`） | 可追溯 `source='relation_stmt'` |
+
+**噪声过滤**：媒体占位（`图片/信息/消息/内容…`）不做尾值，
+动作词（`训练/部署/发布…`）不做主语。但**动作词做尾值是允许的**
+（「部署」指那次部署）——见 spec 039 的语义定义。

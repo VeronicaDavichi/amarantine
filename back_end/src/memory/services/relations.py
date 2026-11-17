@@ -527,6 +527,9 @@ def validate_relation(
         return False, f"evidence 没覆盖头尾: {ev[:30]!r}"
     if not any(cue in ev for cue in RELATION_CUES):
         return False, f"evidence 里没有关系词: {ev[:30]!r}"
+    junk = is_junk_relation(h, t)
+    if junk:
+        return False, junk
     # 头必须是「人」：关系层要回答「谁负责什么」，主语是物件没有意义
     if people:
         if not any(h == p or h in p or p in h for p in people):
@@ -683,3 +686,29 @@ def extract_statements_combined(
         if cur is None or (cur.label != "exact" and claim.label == "exact"):
             by_key[key] = claim
     return list(by_key.values()), rejected
+
+#: 纯媒体占位：`运营发布…及图片` 里的「图片」不是被维护的对象，只是附件形式。
+#: 实测全量跑出来的 58 条边里有 20 条是 `X -OWNS-> 图片/信息/消息/内容`。
+_MEDIA_PLACEHOLDERS = frozenset({
+    "图片", "图", "视频", "音频", "文件", "附件", "消息", "信息", "内容",
+    "截图", "链接", "记录", "文本", "文字", "语音", "表情", "封面",
+})
+
+#: 动作词不能当**主语**：`训练 -OWNS-> 音频文件` 的主语是动作，不是行为主体。
+#: 注意：当**尾值**时这些词是合法的（「部署＝那次部署」，见 spec 039 语义定义）。
+_ACTION_HEAD_DENY = frozenset({
+    "训练", "部署", "维护", "发布", "更新", "修复", "实现", "分享", "讨论",
+    "上传", "下载", "安装", "配置", "编译", "测试", "运行", "启动", "重启",
+})
+
+
+def is_junk_relation(head: str, tail: str) -> str:
+    """判断一条关系是否是噪声。返回原因，空串表示通过。"""
+    h = (head or "").strip()
+    t = (tail or "").strip()
+    if t in _MEDIA_PLACEHOLDERS:
+        return f"尾 {t!r} 是媒体占位，不是维护对象"
+    if h in _ACTION_HEAD_DENY:
+        return f"头 {h!r} 是动作词，不能当主语"
+    return ""
+
