@@ -154,6 +154,7 @@ bash harness/verify_all.sh --static   # 只跑静态检查，不需要容器
 | 会话内指代回溯 + 卡归并（`resolves`） | [046](specs/046-context-backtracking-merge/) |
 | 群名片按 scope 别名 + 群头衔 `TITLED` | [047](specs/047-group-card-alias/) |
 | 拼音首字母缩写（`lysk → 恋与深空`） | [048](specs/048-abbr-alias/) |
+| 实体消歧候选池（「看过但没敢合」也留痕，可人工裁决） | [016](specs/016-entity-disambiguation/) |
 
 **已知缺陷 / 边界**
 

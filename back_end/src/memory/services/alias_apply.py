@@ -154,13 +154,34 @@ def resolve_event_aliases(
             logger.info("图上没有候选对象，跳过别名推断 | %s", event_id)
             return report
 
+        declined: list[dict] = []
         resolved = resolve_claims(
             todo,
             candidates=candidates,
             settings=settings,
             client=llm_client,
             timeout_s=timeout_s,
+            declined=declined,
         )
+        # spec 016 T5：有候选但没合并的，进**人工确认池**。
+        # 以前这些信息只存在日志里，人永远不知道「机器看过这两个名字、没敢合」。
+        if declined:
+            record_safe(
+                settings,
+                namespace=namespace,
+                event_id=event_id,
+                rejects=[
+                    {
+                        "alias": d["alias"],
+                        "canonical": d["candidate"],
+                        "side": "candidate",
+                        "reason": "candidate_ambiguous",
+                        "detail": d["reason"],
+                    }
+                    for d in declined
+                ],
+                source_text=f"candidate_pool:{event_id}",
+            )
         report.resolved = resolved
         if not resolved:
             return report

@@ -126,6 +126,7 @@ def resolve_one(
     settings: Settings,
     client: Any | None = None,
     timeout_s: float | None = None,
+    declined: list[dict] | None = None,
 ) -> AliasClaim | None:
     """解析一条描述性 claim。解析不出来返回 None。
 
@@ -136,6 +137,17 @@ def resolve_one(
         return None
     if not candidates:
         return None
+
+    def _decline(reason: str, candidate: str | None = None) -> None:
+        """记一条「有候选但没合并」（spec 016 T5 candidate 池）。"""
+        if declined is None:
+            return
+        declined.append({
+            "alias": claim.alias,
+            "candidate": candidate or claim.canonical,
+            "reason": reason,
+        })
+
 
     allowed = {c for c in candidates if c and c != claim.alias}
     if not allowed:
@@ -158,6 +170,7 @@ def resolve_one(
                 claim.alias,
                 cand,
             )
+            _decline("single_char_prefix", cand)
             return None
 
     # ---- ADR C.B3 的 ② 级：确定性规则层（spec 026）----
@@ -219,6 +232,7 @@ def resolve_one(
             claim.canonical,
             data.get("reason"),
         )
+        _decline("llm_undecided", claim.canonical)
         return None
 
     # 白名单校验：模型可能编一个候选外的名字回来。
@@ -242,6 +256,7 @@ def resolve_one(
         logger.info(
             "LLM 置信度过低，丢弃 | %s -> %s conf=%.2f", claim.alias, picked, confidence
         )
+        _decline("llm_low_confidence", picked)
         return None
 
     logger.info(
@@ -268,6 +283,7 @@ def resolve_claims(
     settings: Settings,
     client: Any | None = None,
     timeout_s: float | None = None,
+    declined: list[dict] | None = None,
 ) -> list[AliasClaim]:
     """批量解析，返回**新推断出来的** claim（原 claim 不会出现在结果里）。
 
@@ -285,6 +301,7 @@ def resolve_claims(
             settings=settings,
             client=client,
             timeout_s=timeout_s,
+            declined=declined,
         )
         if got is not None:
             resolved.append(got)

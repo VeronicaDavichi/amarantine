@@ -2301,3 +2301,27 @@ bash harness/verify_all.sh --static   # 只跑静态检查（不需要 WSL 容�
 ```
 
 真库部分用独立 namespace（`verify046b` 等），自带清空，不污染真实记忆。
+
+## 实体消歧候选池
+
+机器判断「这两个名字可能指同一个东西」但**不敢合并**时，不再只写日志，
+而是进候选池等人裁决：
+
+```bash
+# 列出待办（reason=candidate_ambiguous 就是候选池）
+curl -s -H "Authorization: Bearer $ADMIN_TOKEN" \
+  "http://127.0.0.1:8765/admin/alias-rejects?namespace=qq-505456846&reason=candidate_ambiguous"
+
+# 裁决：accepted = 判据错了，这两个是同一个 → 顺手补建别名边
+curl -s -X POST -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"namespace":"qq-505456846","event_id":"evt_...","alias":"张三丰","canonical":"张三","side":"candidate","resolution":"accepted"}' \
+  "http://127.0.0.1:8765/admin/alias-rejects/resolve"
+```
+
+`detail` 字段说明为什么没合并：`single_char_prefix`（单字名前缀冲突）、
+`llm_undecided`、`llm_low_confidence`。
+
+> **为什么不自动合并**：中文实体名的字面/向量相似度与「是否同一实体」
+> 没有稳定相关性（实测 14 组：应合并最低 0.4806 < 不该合并最高 0.8801，
+> 区间完全重叠）。所以只做「可疑就留痕」，最终由人拍板。

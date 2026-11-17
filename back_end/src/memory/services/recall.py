@@ -87,6 +87,26 @@ class RecallResult:
         }
 
 
+def reserve_expand_budget(total_ms: int, settings: Any, *, has_expansions: bool) -> int:
+    """算出给别名扩展预留的毫秒数（0 = 不预留）。
+
+    **必须从总预算里扣**，不能额外加：`RECALL_BUDGET_MS` 的语义是
+    「一次召回最多花多久」，扩展是增强，不该让它突破 SLA。
+
+    Args:
+        total_ms: 本次召回的总预算。
+        settings: 读 `ABBR_EXPAND_BUDGET_MS`。
+        has_expansions: 没有扩展词就不预留（否则主通道白少一半时间）。
+
+    Returns:
+        预留毫秒数，取值范围 `[0, total_ms // 2]`。
+    """
+    if not has_expansions or total_ms <= 0:
+        return 0
+    want = int(getattr(settings, "ABBR_EXPAND_BUDGET_MS", 800))
+    return max(0, min(want, total_ms // 2))
+
+
 def recall(
     query: str,
     *,
@@ -149,6 +169,14 @@ def recall(
     base_day = today or moment.date()
     budget = budget_ms if budget_ms is not None else settings.RECALL_BUDGET_MS
 
+    # 别名扩展要用独立份额，但**必须从总预算里预留**，否则总耗时会突破
+    # `RECALL_BUDGET_MS`（踩过：给 800ms 独立预算后，总时长 = 主预算 + 800）。
+    # 预留上限取一半预算：扩展是增强，不该吃掉主通道的时间。
+    _expand_reserved = reserve_expand_budget(
+        budget, settings, has_expansions=bool(_expansions))
+    if _expand_reserved:
+        budget -= _expand_reserved
+
     # 1) 时间意图（规则层；解析不出就给全库）
     date_range: DateRange = resolve_from_query(query, today=base_day)
     # ADR C.B9：`confidence < TIME_CONF_MIN` → **不设 date filter**（退回全库），
@@ -185,10 +213,11 @@ def recall(
         """
         if not _expansions or not result.materials:
             return result
-        # **独立预算**，不吃主召回的剩余。
-        # 踩过的坑：第一版用 `budget - elapsed`，主召回本身常把 1500ms 用完，
-        # 实测 remain = -430ms → 扩展从来没执行过（功能是死的）。
-        expand_budget = getattr(settings, "ABBR_EXPAND_BUDGET_MS", 800)
+        # 用**预留**的份额（见上方 `_expand_reserved`）。
+        # 踩过两次：① 用 `budget - elapsed` → 主召回耗尽预算，remain=-430ms，
+        # 扩展从未执行；② 改成完全独立 800ms → 总耗时突破 RECALL_BUDGET_MS。
+        # 正确做法是「预留」：总量不透支，扩展也有份额。
+        expand_budget = _expand_reserved
         if expand_budget <= 0:
             return result
         try:

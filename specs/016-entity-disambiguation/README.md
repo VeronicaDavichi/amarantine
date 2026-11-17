@@ -1,5 +1,5 @@
 ---
-status: archived
+status: complete
 created: 2026-11-04
 priority: medium
 tags:
@@ -7,10 +7,15 @@ tags:
 - disambiguation
 - backend
 created_at: 2026-11-04T03:07:34.419433728Z
-updated_at: 2026-11-06T01:25:26.181576864Z
+updated_at: 2026-11-17T03:24:51.765562627Z
+completed_at: 2026-11-17T03:24:51.765562627Z
 transitions:
 - status: archived
   at: 2026-11-06T01:25:26.181576864Z
+- status: in-progress
+  at: 2026-11-17T03:24:36.705767437Z
+- status: complete
+  at: 2026-11-17T03:24:51.765562627Z
 ---
 # 016 C.B3 三级实体消歧（大工程，先记录不实现）
 
@@ -88,19 +93,19 @@ transitions:
 
 ## Plan
 
-- [ ] T1 决定 `MemoryEntity` collection 的 schema 与主键规则
-- [ ] T2 实体名 embedding 的写入时机（打标时 vs 实体首次出现时）
-- [ ] T3 实现三级判定 + 灰区
-- [ ] T4 `ENTITY_ALIAS_GREY_LOW` 配置项
-- [ ] T5 `candidate_alias` 池
+- [x] ~~T1 决定 `MemoryEntity` collection 的 schema 与主键规则~~ —— **不做**：② 级不再用向量（见 026），没有实体名向量就不需要这个 collection
+- [x] ~~T2 实体名 embedding 的写入时机~~ —— **不做**：同上，没有向量可写
+- [x] T3 三级判定：① 别名表 / ② 确定性规则层 / ③ LLM 已实现（② 由 [026](../026-entity-rule-disambiguation/) 用规则替代向量，已 complete）
+- [x] ~~T4 `ENTITY_ALIAS_GREY_LOW` 配置项~~ —— **不做**：灰区是向量方案的产物，规则层不需要灰区；省掉一个魔数配置
+- [x] T5 `candidate_alias` 池：复用 `alias_reject`（reason=`candidate_ambiguous`），人可裁决 `accepted` 补建边（2026-11-17）
 
 ## Test
 
-- [ ] D1 别名表命中时，向量与 LLM 都不被调用（断言调用次数为 0）
-- [ ] D2 余弦 ≥ 0.92 → 直接采用，不调 LLM
-- [ ] D3 余弦在 [0.85, 0.92) → 调用 LLM
-- [ ] D4 余弦 < 0.85 → 判为新实体，进 candidate_alias 池
-- [ ] D5 ② 与 ③ 冲突 → 取 ②，带 `low_confidence`
+- [x] ~~D1 别名表命中时向量与 LLM 都不被调用~~ —— **不做**：无向量可调
+- [x] ~~D2 余弦 ≥ 0.92 直接采用~~ —— **已被 026 实测否定**（区间完全重叠）
+- [x] ~~D3 灰区调 LLM~~ —— **不做**：规则层取代灰区
+- [x] D4 判为新实体 → 进 candidate 池（已实现，`test_016_candidate_pool.py`）
+- [x] D5 冲突取规则层：`resolve_one` 规则命中即 `return`，不再问 LLM
 
 ## Notes
 
@@ -154,3 +159,49 @@ ADR C.B3 明确说「**为什么不让 LLM 直接判**：LLM 对『同名不同�
 
 只覆盖一种可判定情形，**不是 C.B3**。本 spec 保持 `planned`。
 详见 `specs/020-entity-single-char-prefix/`。
+
+### 2026-11-17 · T5 完成；T1/T2/T4 与 D1–D3 明确「不做」
+
+**结论先行**：这个 spec 只有一项值得做 —— **T5 candidate 池**。
+其余任务都是「② 级用向量近邻」方案的附属物，而那个方案已被
+[026](../026-entity-rule-disambiguation/) 实测否定（应合并最低 0.4806 <
+不该合并最高 0.8801，区间完全重叠）。删掉不算损失，留着会诱导重犯。
+
+**做了什么（T5）**
+
+以前 `resolve_one` 判「有候选但不合并」时，只写一行 `logger.info` ——
+**人永远不知道机器看过这两个名字、没敢合**。现在：
+
+| 环节 | 变化 |
+|---|---|
+| `resolve_one(declined=...)` | 三种拒绝原因入池：`single_char_prefix` / `llm_undecided` / `llm_low_confidence` |
+| `resolve_claims(declined=...)` | 批量透传 |
+| `alias_apply` | 收集后 `record_safe(reason="candidate_ambiguous", side="candidate")` |
+| 管理接口 | 复用 `GET /admin/alias-rejects` 列出、`POST /admin/alias-rejects/resolve` 裁决 |
+| 裁决 `accepted` | `repair_accepted_edge(force=True)` 补建边 —— 闭环 |
+
+**真库验证**（`harness/verify_016.py`）
+
+```
+写入 1 条（此前待办 0）
+待办 1 条：
+  张三丰 vs 张三 | side=candidate | reason=candidate_ambiguous | detail=single_char_prefix
+池子写入+可列出: ✓
+裁决后移出待办: ✓
+```
+
+**为什么复用 `alias_reject` 而不是新建表**
+
+同一张表已经在装「判据说不行」的记录，字段（alias/canonical/side/reason/detail/
+resolution）完全够用；新建表意味着第二套管理接口、第二个待办列表，
+人要在两个地方看同一件事。
+
+**测试**：`test_016_candidate_pool.py`（3 条）；既有别名测试 44 条不回归。
+
+**不做清单（不是遗漏，是决定）**
+
+| 任务 | 不做的理由 |
+|---|---|
+| T1/T2 `MemoryEntity` collection + 实体名 embedding | 没有向量需求了 |
+| T4 `ENTITY_ALIAS_GREY_LOW` | 灰区是向量方案产物，规则层不需要 |
+| D1–D3 向量相关断言 | 同 026 实测结论 |
