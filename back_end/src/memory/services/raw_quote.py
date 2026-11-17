@@ -29,6 +29,7 @@ from memory.services.importer import (
 )
 
 from memory.services.sqlite_conn import open_db
+from memory.services.weaviate_store import WeaviateStore
 
 logger = logging.getLogger("memory.raw_quote")
 
@@ -183,7 +184,6 @@ class IngestJob:
     dropped_events: int = 0
     #: spec 036：切分用掉的二分轮次（1 = 没二分）
     split_rounds: int = 1
-
     def to_dict(self) -> dict[str, Any]:
         return {
             "job_id": self.job_id,
@@ -212,6 +212,8 @@ class IngestOutcome:
     dropped_events: int = 0
     #: spec 036：切分用掉的二分轮次（1 = 没二分）
     split_rounds: int = 1
+    #: spec 046 A3：模型给的 source_indices 全部越界 → 不建卡的条数
+    out_of_range: int = 0
     errors: list[str] = field(default_factory=list)
 
 
@@ -561,6 +563,44 @@ CONTEXT_TURNS = 30
 MAX_CONTEXT_TURNS = 120
 
 
+
+
+def _recent_cards(
+    namespace: str,
+    session_id: str | None,
+    settings: Settings,
+    *,
+    limit: int = 8,
+) -> list[dict[str, Any]]:
+    """取同会话最近的已有卡（event_id + summary），供 `merge_into` 判断。
+
+    **为什么要传**：第一版提示词只说「如果与【已有卡片】是同一件事」，
+    却没把卡片内容给模型 —— 它无从知道 event_id，`merge_into` 永远是 null。
+    这是 spec 046 A5 之前「真库不稳定触发」的真正原因。
+
+    失败返回空表：图/向量库不可用时归并降级，不影响建卡。
+    """
+    if not session_id:
+        return []
+    try:
+        store = WeaviateStore(settings)
+        try:
+            rows = store.list_all(namespace, limit=200)
+        finally:
+            close = getattr(store, "close", None)
+            if callable(close):
+                close()
+        mine = [r for r in rows if str(r.get("session_id") or "") == session_id]
+        mine.sort(key=lambda r: str(r.get("date_start") or ""), reverse=True)
+        return [
+            {"event_id": r.get("event_id"), "summary": r.get("summary")}
+            for r in mine[:limit] if r.get("event_id")
+        ]
+    except Exception as exc:  # noqa: BLE001 - 归并降级，不影响建卡
+        logger.warning("取已有卡失败（归并降级）: %s", exc)
+        return []
+
+
 def _min_ts(turns: list[dict[str, Any]]) -> str | None:
     """本批最早消息时间（作为「上文」的截止点，避免拿未来当上文）。"""
     stamps = [t.get("ts") for t in turns if t.get("ts")]
@@ -664,13 +704,16 @@ def run_ingest(
             context = raw_store.recent_for_session(
                 namespace, session_id, before_ts=batch_min_ts, limit=CONTEXT_TURNS
             )
-            events = split_with_sources(context, usable, settings)
+            existing = _recent_cards(namespace, session_id, settings)
+            events = split_with_sources(context, usable, settings, existing=existing)
             if any(e.needs_more_context for e in events):
                 context = raw_store.recent_for_session(
                     namespace, session_id, before_ts=batch_min_ts,
                     limit=MAX_CONTEXT_TURNS,
                 )
-                events = split_with_sources(context, usable, settings)
+                existing = _recent_cards(namespace, session_id, settings)
+                events = split_with_sources(
+                    context, usable, settings, existing=existing)
         except Exception as exc:  # noqa: BLE001
             outcome.errors.append(f"{type(exc).__name__}: {exc}")
             job_store.set_status(
@@ -703,6 +746,17 @@ def run_ingest(
             "ingest 切分丢弃事件 | job=%s kept=%d dropped=%d rounds=%d",
             job_id, len(events), dropped, rounds,
         )
+
+    # spec 046 A3：索引**全越界**的事件不建卡（模型搞混了范围）。
+    # 只丢「给了索引但一个都不合法」的；没给索引的仍走 4-gram 兜底。
+    bad_source = [e for e in events if getattr(e, "invalid_source", False)]
+    outcome.out_of_range = len(bad_source)
+    if bad_source:
+        logger.warning(
+            "ingest 索引越界不建卡 | job=%s n=%d 例=%s",
+            job_id, len(bad_source), [e.summary[:20] for e in bad_source[:3]],
+        )
+        events = [e for e in events if not getattr(e, "invalid_source", False)]
 
     # 兜底时间：模型没给 source_indices 时，仍用 4-gram 匹配（spec 040 的老办法）
     fallback_dates = assign_event_dates([e.summary for e in events], usable)

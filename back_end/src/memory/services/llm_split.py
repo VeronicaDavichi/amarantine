@@ -239,7 +239,10 @@ _SYSTEM_SOURCED = """你是事件切分器。我会给你两段文本：
 把【待切分】拆成若干条独立事件，每条输出：
 - summary: 一句话事件描述（**概括，不要照抄原话**；纯图片/表情写成「某人在群里发了图片」）
 - source_indices: 这条事件依据了【待切分】里的第几条（1 开始的序号数组）
-- merge_into: 如果这条与【已有卡片】里的某条是同一件事，填那个 event_id；否则 null
+- merge_into: 如果这条与【已有卡片】里的某条是**同一件事**，填它的 event_id；否则 null
+
+【已有卡片】（同会话最近的事件，只能从这里选 event_id；都没有就填 null）：
+{existing}
 
 规则：
 - source_indices 只能填 1~{n}，**不许引用【上文】的序号**
@@ -258,6 +261,9 @@ class SourcedEvent:
     source_indices: list[int] = field(default_factory=list)
     merge_into: str | None = None
     needs_more_context: bool = False
+    #: 模型给了 source_indices，但**全都越界**（指向【上文】或不存在）。
+    #: 这种事件说明模型搞混了范围，按 A3 不建卡。
+    invalid_source: bool = False
 
 
 def split_with_sources(
@@ -265,6 +271,7 @@ def split_with_sources(
     window: list[dict],
     settings: Settings,
     *,
+    existing: list[dict] | None = None,
     client: Any | None = None,
     timeout_s: float | None = None,
 ) -> list[SourcedEvent]:
@@ -273,6 +280,9 @@ def split_with_sources(
     Args:
         context: 同会话更早的消息（只读，不建卡）。
         window: 本次要处理的消息（每条 `{text, ts}`）。
+        existing: 同会话最近的已有卡 `[{"event_id","summary"}]`。
+            **必须传**：第一版只在提示词里提「【已有卡片】」却没给内容，
+            模型无从知道 event_id，`merge_into` 等于永远为 null（功能是死的）。
         settings: LLM 配置。
 
     Returns:
@@ -294,6 +304,11 @@ def split_with_sources(
         f"{i}. {w.get('text', '')}".replace("\n", " ")
         for i, w in enumerate(window, 1)
     ]
+    existing = existing or []
+    exist_lines = [
+        f"- {e.get('event_id')}: {str(e.get('summary') or '')[:60]}"
+        for e in existing if e.get("event_id")
+    ]
     prompt_parts = []
     if ctx_lines:
         prompt_parts.append("【上文，仅供理解指代，不要为它建卡】\n" + "\n".join(ctx_lines))
@@ -313,7 +328,10 @@ def split_with_sources(
             raw = chat(
                 [{"role": "user", "content": prompt}],
                 settings,
-                system=_SYSTEM_SOURCED.format(n=len(window)),
+                system=_SYSTEM_SOURCED.format(
+                    n=len(window),
+                    existing="\n".join(exist_lines) or "（无）",
+                ),
                 max_tokens=_est,
                 client=client,
                 timeout_s=timeout_s,
@@ -335,7 +353,10 @@ def split_with_sources(
                 raw = chat(
                     [{"role": "user", "content": short_prompt}],
                     settings,
-                    system=_SYSTEM_SOURCED.format(n=len(window)),
+                    system=_SYSTEM_SOURCED.format(
+                    n=len(window),
+                    existing="\n".join(exist_lines) or "（无）",
+                ),
                     max_tokens=_est,
                     client=client,
                     timeout_s=timeout_s,
@@ -344,7 +365,12 @@ def split_with_sources(
                 logger.warning("截短上文仍失败，降级为逐条: %s", exc2)
                 raw = []
 
-    events = _parse_sourced(raw, len(window))
+    # 只有真的传了已有卡才启用白名单；不传（老调用/测试）= 不限制
+    allowed_ids = (
+        {str(e.get("event_id")) for e in existing if e.get("event_id")}
+        if existing else None
+    )
+    events = _parse_sourced(raw, len(window), allowed_ids=allowed_ids)
     if not events:
         # 降级：一条消息一个事件（时间/范围仍精确，只是没有摘要）
         events = [
@@ -354,7 +380,12 @@ def split_with_sources(
     return events
 
 
-def _parse_sourced(raw: Any, window_len: int) -> list[SourcedEvent]:
+def _parse_sourced(
+    raw: Any,
+    window_len: int,
+    *,
+    allowed_ids: set[str] | None = None,
+) -> list[SourcedEvent]:
     """解析 LLM 输出；越界索引直接丢。
 
     **`chat()` 返回的是 JSON 字符串**，不是解析好的对象 —— 第一版没解字符串，
@@ -386,15 +417,21 @@ def _parse_sourced(raw: Any, window_len: int) -> list[SourcedEvent]:
         summary = str(item.get("summary") or "").strip()
         if not summary:
             continue
-        indices = [
-            int(i) for i in (item.get("source_indices") or [])
-            if isinstance(i, (int, float)) and 1 <= int(i) <= window_len
-        ]
-        merge_to = item.get("merge_into")
+        raw_indices = [i for i in (item.get("source_indices") or [])
+                       if isinstance(i, (int, float))]
+        indices = [int(i) for i in raw_indices if 1 <= int(i) <= window_len]
+        # A3：给了索引但全都越界 → 标 invalid_source，调用方不建卡
+        invalid = bool(raw_indices) and not indices
+        merge_raw = item.get("merge_into")
+        merge_to = str(merge_raw).strip() if merge_raw else None
+        # 白名单：只能指向真实存在的已有卡，防模型编 id
+        if merge_to and allowed_ids is not None and merge_to not in allowed_ids:
+            merge_to = None
         out.append(SourcedEvent(
             summary=summary,
             source_indices=indices,
-            merge_into=str(merge_to).strip() if merge_to else None,
+            merge_into=merge_to,
+            invalid_source=invalid,
         ))
     return out
 

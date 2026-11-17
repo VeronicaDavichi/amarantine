@@ -620,7 +620,7 @@ class WeaviateStore:
             " Get { MemoryEvent("
             f"limit: {int(limit)}, where: "
             + self._where_graphql(namespace)
-            + f") {{{self._ADMIN_FIELDS}}} }} }}"
+            + f") {{{self._ADMIN_FIELDS} _additional {{ id }} }} }} }}"
         )
         data = self._graphql(query)
         return [self._to_hit(obj, score=0.0) for obj in self._extract_hits(data)]
@@ -891,6 +891,9 @@ class WeaviateStore:
         """
         props = dict(obj)
         extra = props.pop("_additional", {}) or {}
+        # 管理员列表/删除需要对象 id；Weaviate 里它在 `_additional.id`
+        if extra.get("id"):
+            props.setdefault("id", extra["id"])
         props.setdefault("unresolved", [])
         props.setdefault("entity_names", [])
         props["unresolved"] = props.get("unresolved") or []
@@ -930,7 +933,9 @@ class WeaviateStore:
       review_verdict
       vocab_version
       reviewer
-      observed_at"""
+      observed_at
+      resolves
+      session_id"""
 
     #: 两路都要请求：`distance` 给向量通道，`score` 给 BM25 通道。
     #: 缺失的那个 Weaviate 会返回 null，不影响。

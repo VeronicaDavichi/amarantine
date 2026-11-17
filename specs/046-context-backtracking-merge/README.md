@@ -1,5 +1,5 @@
 ---
-status: in-progress
+status: complete
 created: 2026-11-12
 priority: high
 tags:
@@ -7,10 +7,13 @@ tags:
 - context
 - coreference
 created_at: 2026-11-12T01:53:57.142013608Z
-updated_at: 2026-11-12T02:33:10.859929340Z
+updated_at: 2026-11-17T01:59:33.554166886Z
+completed_at: 2026-11-17T01:59:33.554166886Z
 transitions:
 - status: in-progress
   at: 2026-11-12T02:33:10.859929340Z
+- status: complete
+  at: 2026-11-17T01:59:33.554166886Z
 ---
 # 会话内指代回溯与卡归并
 
@@ -120,9 +123,9 @@ ORDER BY ts DESC LIMIT 30      -- 不够时再取 120
 
 - [x] A1 片首「那个多少钱」带 30 条上文后，卡里能看出指代对象
 - [x] A2 模型给 `needs_more_context` 时，重试带 120 条
-- [ ] A3 越界 `source_indices` 被丢弃并计数，不建卡
+- [x] A3 越界 `source_indices` 不建卡并计数（真库验证：越界卡 0 张、count=1）
 - [x] A4 时间 = 源消息最早 ts（不再是导入日）
-- [ ] A5 `merge_into` → 新卡 `resolves` 指旧卡，旧卡 summary 不变
+- [x] A5 `merge_into` → 新卡 `resolves` 指旧卡、旧卡 summary 不变（真库验证通过）
 - [x] A6 无上文时行为与改动前一致
 - [x] A7 全量 pytest 无回归
 
@@ -202,3 +205,33 @@ ORDER BY ts DESC LIMIT 30      -- 不够时再取 120
 `source_indices` 指向消息的最早 ts；无 session 的调用仍走 036 老路径。
 
 **仍未验**：A3（越界索引，单测覆盖）、A5（`merge_into` 真库未稳定触发）。
+
+### 2026-11-17 · A3 / A5 真库验证通过（补了 4 个真缺口）
+
+**验证脚本**：`harness/verify_046.py`（自建 namespace → 清空 → 三段构造 → 断言）
+
+真库输出：
+
+```
+清空 verify046b: 删 3 张旧卡
+基准卡: evt_d0db5f483baec5a6 | 【046基准】候潮城一期方案已定
+注入的已有卡候选: ['evt_d0db5f483baec5a6']
+新卡: [('evt_71581fedec1c259f', ['evt_d0db5f483baec5a6'])]     ← A5 resolves
+越界事件建卡数: 0（应为 0）                                        ← A3
+out_of_range 计数: 1（应为 1）
+```
+
+**验证过程中发现并修掉的 4 个缺口（都不在单测覆盖内）**
+
+| # | 缺口 | 后果 | 修法 |
+|---|---|---|---|
+| 1 | 提示词只说「与【已有卡片】是同一件事」，**从没把卡片给模型** | `merge_into` 永远 null → A5 功能是死的 | `split_with_sources(existing=...)` 注入 `event_id: summary`，并做**白名单**校验防编 id |
+| 2 | 越界索引只丢不计数 | 无法判断模型是否搞混范围 | `SourcedEvent.invalid_source` + `IngestOutcome.out_of_range`，越界事件**不建卡** |
+| 3 | `_ADMIN_FIELDS` 缺 `session_id` | `_recent_cards` 按会话过滤永远为空 | 补进管理员字段 |
+| 4 | `_ADMIN_FIELDS` 缺 `resolves`、对象 id 未请求 | 归并链看不见、删改拿不到 id | 补 `resolves`；`_additional { id }` 落到 `props["id"]` |
+
+**踩坑**：`supersedes` 不在 Weaviate schema 里，写进 GraphQL 会让整个 `list_all` 500
+（`Cannot query field "supersedes"`）。已有测试守住这点。
+
+**测试**：`test_046_acceptance.py`(6) + `test_weaviate_admin_fields.py`(4)；
+全量 **1545 passed**。
