@@ -99,10 +99,17 @@ docker-compose.yml
 ### 质量
 
 ```bash
-cd back_end && uv run pytest -q        # 1502 passed
+cd back_end && uv run pytest -q        # 1545 passed
 python3 ../harness/check_spec.py       # spec 骨架一致（48 个）
 python3 ../harness/check_guide.py      # 文档与代码一致
+
+# 一键全量验收（静态 + 真库；会先唤醒容器）
+bash harness/verify_all.sh
+bash harness/verify_all.sh --static   # 只跑静态检查，不需要容器
 ```
+
+`verify_all.sh` 依次跑：单测 → spec 骨架 → 文档一致性 → `wake.sh` →
+`verify_046.py`（指代回溯/卡归并）→ `verify_047.py`（群名片/头衔/whois）。
 
 ### 外部依赖
 
@@ -125,12 +132,12 @@ python3 ../harness/check_guide.py      # 文档与代码一致
 
 ### 已知限制
 
-**未实现（有 spec，未开工）**
+**按 spec 记录的未完成项**
 
-| 项 | spec | 影响 |
+| 项 | spec | 状态 / 影响 |
 |---|---|---|
-| 称呼不归一（`王老师` 与实名是两个节点） | [038](specs/038-appellation-normalization/) | 「谁负责 X」查不准 |
-| 身份判定只到昵称，未用 uid / 备注 | [043](specs/043-identity-source-priority/) | 同名多账号分不清 |
+| 实体证据降级（拉丁 topic 误当实体） | [044](specs/044-entity-evidence-demotion/) | `planned`，**故意放一放**：当前语料量不足 |
+| 群名片的「备注」标记 | [047](specs/047-group-card-alias/) | 数据源不可得：`list_contacts` 不返回 `remark` |
 
 **已实现（供对照）**
 
@@ -138,14 +145,25 @@ python3 ../harness/check_guide.py      # 文档与代码一致
 |---|---|
 | 切分超上限按行二分，不再静默丢尾部 | [036](specs/036-split-truncation-data-loss/) |
 | 英文词形（ESB / Kafka / PyCharm）成为实体 | [037](specs/037-latin-acronym-entities/) |
+| 称呼归一到真人（`王老师` → 实名节点） | [038](specs/038-appellation-normalization/) |
+| 关系谓词：陈述 + 行为双通道，precision 20/20 | [039](specs/039-relation-predicates/) |
+| 历史聊天导入（QQ / 钉钉），营销闸门 + 指代回溯 | [040](specs/040-chat-import-tool/) |
+| 指称层：字面 → 义项（LLM 抽 gloss，8/8 正确） | [041](specs/041-reference-layer/) |
+| 身份来源分层：uid > 备注 > 昵称 > 姓名 | [043](specs/043-identity-source-priority/) |
+| Person 键从名字派生改为账号锚定 | [045](specs/045-person-key-strategy/) |
+| 会话内指代回溯 + 卡归并（`resolves`） | [046](specs/046-context-backtracking-merge/) |
+| 群名片按 scope 别名 + 群头衔 `TITLED` | [047](specs/047-group-card-alias/) |
+| 拼音首字母缩写（`lysk → 恋与深空`） | [048](specs/048-abbr-alias/) |
 
-**已知缺陷**
+**已知缺陷 / 边界**
 
-- 事件卡的 `date_start` 取的是**写入日期**，不是事件发生日 —— 时间过滤会失真
-  （**已并入 [040](specs/040-chat-import-tool/) 草稿**，不再单独立项；现有 229 张卡不可反推，需重灌）
 - 单机自托管，无多租户；隔离粒度是 `namespace`
-- 依赖外部 LLM 做对话切分与标签复核，不可用时降级但质量下降
-- 中文人名抽取依赖权威名册；无名册时退化到分词，会误判品牌名等
+- 依赖外部 LLM 做切分与标签复核：不可用时降级（产出原文卡），质量下降
+- 中文人名抽取依赖权威名册；无名册时退化到分词，会误判品牌名
+- 关系层 recall 未测（只测了 precision）；跨句推断仍是弱项
+- **清空 namespace 会连 `Account`/`Alias` 一起删**，名字标记与头衔要重写：
+  `harness/apply_display_names.py` / `harness/apply_titles.py`
+- QQ 语料只导了 12 / 106 个群（其余按需求先不导）
 
 ### License
 

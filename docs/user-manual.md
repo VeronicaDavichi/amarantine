@@ -2292,3 +2292,12 @@ API 网关限制了模型大小      → （空，停用词拦住）
 | v0.19 | 2026-11-03 | 浏览器管理台（`/ui`）：零构建单页，复核队列可裁决、事件列表可软删（**手输域名**二次确认）、误删率报告只读（`dry_run` 写死）、点 `raw_quote_ids` 看原文；新增 `GET /admin/events`（分页列表，只读）；`GET /raw` 补 `scanned` / `truncated` / `lookup_ok` 三个诚实字段 |
 | v0.20 | 2026-11-07 | 批量导入不再静默丢尾部（spec 036）：撞单批上限时按行二分重切（最多 3 轮），`ingest_job` 增 `dropped_events` / `split_rounds` 两列并在 `GET /admin/ingest/{job_id}` 返回；仍超限时打 WARNING 并计数，日志带 job 号 |
 | v0.21 | 2026-11-12 | 补 QQ 导入全流程（导成员表 → 导消息 → 导库 → 校验，含真实预期输出）、营销闸门与词库口径、指代回溯（30→120）、群名片五分类与 scope 体系（整活阈值 3、伪装名、近似名不合并）、`/admin/display-names` 与 `/admin/whois`、`time_source` 四取值；安装章节补 8083/8765/3001 端口与 `LLM_TIMEOUT_MS=180000`；补 6 条 QQ FAQ 与 5 条限制 |
+
+## 全量验收
+
+```bash
+bash harness/verify_all.sh            # 单测 + spec + 文档 + 真库验收（会先起容器）
+bash harness/verify_all.sh --static   # 只跑静态检查（不需要 WSL 容器）
+```
+
+真库部分用独立 namespace（`verify046b` 等），自带清空，不污染真实记忆。
