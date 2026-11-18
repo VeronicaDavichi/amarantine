@@ -89,9 +89,9 @@
 </main>
 <footer>数据来自 <code>docs/labeling-data.js</code> · 标注保存在浏览器 localStorage（换浏览器不同步）</footer>
 
-<script src="labeling-data.js"></script>
+<!-- 数据由下方 loader 动态载入（带时间戳，绕缓存） -->
 <script>
-(function () {
+function bootstrap() {
   const DATA = window.LABEL_DATA || {};
   const POOL = (DATA.entity_pool || []).slice(0, 400);
   // 陈述组：判断「这句话明说了什么」，所以 0 档叫「句子没说关系」
@@ -144,12 +144,13 @@
     try {
       const cur = JSON.parse(localStorage.getItem(STORE) || "{}");
       if (Object.keys(cur).length) return cur;
-      // v2 → v3 迁移：陈述组 id 没变，把旧标注带过来；行为/义项因去重换过 id，不迁移
+      // 版本迁移：**整份搬过来**，只按 id 前缀过滤会丢数据。
+      // 踩过：v5 → v6 时只搬了 `stmt-`，24 条「关系覆盖」标注在页面上全变 0。
+      // 现在的规矩：换了 store 版本就整份继承；某组 id 改名时在对应生成器里
+      // 显式映射，不要靠这里的前缀过滤。
       const old = JSON.parse(localStorage.getItem("amarantine-label-v5") || "{}");
       const migrated = {};
-      Object.keys(old).forEach(k => {
-        if (k.startsWith("stmt-")) migrated[k] = old[k];
-      });
+      Object.keys(old).forEach(k => { migrated[k] = old[k]; });
       if (Object.keys(migrated).length) {
         localStorage.setItem(STORE, JSON.stringify(migrated));
       }
@@ -575,7 +576,27 @@
 
   idx = firstUnlabeled();
   render();
-})();
+}
+
+// 数据文件必须绕开浏览器缓存：改了 `labeling-data.js` 但页面还读旧版，
+// 表现是「新加的标签页不出现」——踩过一次。
+function loadData() {
+  const url = "labeling-data.js?_=" + Date.now();
+  fetch(url, { cache: "no-store" })
+    .then((r) => r.text())
+    .then((text) => {
+      const body = text.replace(/^window\.LABEL_DATA\s*=\s*/, "").replace(/;\s*$/, "");
+      window.LABEL_DATA = JSON.parse(body);
+      bootstrap();
+    })
+    .catch((e) => {
+      document.body.insertAdjacentHTML(
+        "afterbegin",
+        `<pre style="color:#f66;padding:16px">数据加载失败：${e}</pre>`);
+    });
+}
+loadData();
+
 </script>
 </body>
 </html>

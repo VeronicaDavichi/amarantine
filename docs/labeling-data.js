@@ -1247,12 +1247,203 @@ window.LABEL_DATA = {
    "source": "weak_cue"
   }
  ],
- "claims": [],
+ "claims": [
+  {
+   "kind": "claim",
+   "id": "claim-1",
+   "evidence": "Dream设想本地部署交给大肥鱼一键出视频，说目标就是这样",
+   "head": "Dream",
+   "predicate": "OWNS",
+   "intensity": 4,
+   "tail": "部署",
+   "source": "llm"
+  },
+  {
+   "kind": "claim",
+   "id": "claim-2",
+   "evidence": "小鲸鱼称自家是头一号住户，克劳德负责写门牌号并把尘霜记为第二号",
+   "head": "克劳德",
+   "predicate": "OWNS",
+   "intensity": 4,
+   "tail": "门牌号",
+   "source": "llm"
+  },
+  {
+   "kind": "claim",
+   "id": "claim-3",
+   "evidence": "远望打算本地部署小模型来做对话bot",
+   "head": "远望",
+   "predicate": "OWNS",
+   "intensity": 4,
+   "tail": "模型",
+   "source": "llm"
+  },
+  {
+   "kind": "claim",
+   "id": "claim-4",
+   "evidence": "新机子瓦一兔子说昨天跟同事吵架、已发给主管，表示不想干了",
+   "head": "新机子瓦一兔子",
+   "predicate": "MAINTAINS",
+   "intensity": 3,
+   "tail": "主管",
+   "source": "llm"
+  },
+  {
+   "kind": "claim",
+   "id": "claim-5",
+   "evidence": "星落落称朋友用5090本地部署训练半个月，东堂散华调侃，土豆期待成品并询问进度",
+   "head": "朋友",
+   "predicate": "MAINTAINS",
+   "intensity": 3,
+   "tail": "部署",
+   "source": "llm"
+  },
+  {
+   "kind": "claim",
+   "id": "claim-6",
+   "evidence": "王勇表示下午看看能不能部署一版本",
+   "head": "王勇",
+   "predicate": "OWNS",
+   "intensity": 4,
+   "tail": "部署",
+   "source": "llm"
+  },
+  {
+   "kind": "claim",
+   "id": "claim-7",
+   "evidence": "西伯利亚大土豆分享自己崩溃后清理缓存并重启修复的经验",
+   "head": "西伯利亚大土豆",
+   "predicate": "OWNS",
+   "intensity": 4,
+   "tail": "经验",
+   "source": "llm"
+  },
+  {
+   "kind": "claim",
+   "id": "claim-8",
+   "evidence": "kk发布明日截单商品图片",
+   "head": "kk",
+   "predicate": "MAINTAINS",
+   "intensity": 3,
+   "tail": "商品",
+   "source": "llm"
+  },
+  {
+   "kind": "claim",
+   "id": "claim-9",
+   "evidence": "五河琴里の棒棒糖使用抽签功能并获得签值",
+   "head": "五河琴里の棒棒糖",
+   "predicate": "COLLABORATES_WITH",
+   "intensity": 2,
+   "tail": "功能",
+   "source": "llm"
+  },
+  {
+   "kind": "claim",
+   "id": "claim-10",
+   "evidence": "任泽昂请何老师提供CIF截图以展示近十日操作站点如何查看和分析",
+   "head": "任泽昂",
+   "predicate": "COLLABORATES_WITH",
+   "intensity": 2,
+   "tail": "老师",
+   "source": "llm"
+  },
+  {
+   "kind": "claim",
+   "id": "claim-11",
+   "evidence": "kk再次发布明日截单商品图",
+   "head": "kk",
+   "predicate": "MAINTAINS",
+   "intensity": 3,
+   "tail": "商品",
+   "source": "llm"
+  },
+  {
+   "kind": "claim",
+   "id": "claim-12",
+   "evidence": "守门而坐贾偏宜发另一张图，称不愿更新系统所以设置不信任证书",
+   "head": "守门而坐贾偏宜",
+   "predicate": "COLLABORATES_WITH",
+   "intensity": 2,
+   "tail": "证书",
+   "source": "llm"
+  },
+  {
+   "kind": "claim",
+   "id": "claim-13",
+   "evidence": "Q群管家发布广告，欢迎新成员进群",
+   "head": "Q群管家",
+   "predicate": "OWNS",
+   "intensity": 4,
+   "tail": "广告",
+   "source": "llm"
+  },
+  {
+   "kind": "claim",
+   "id": "claim-14",
+   "evidence": "运营发布原神艾尔海森卡维新日谷参与A店fes特典",
+   "head": "运营",
+   "predicate": "MAINTAINS",
+   "intensity": 3,
+   "tail": "fes",
+   "source": "llm"
+  },
+  {
+   "kind": "claim",
+   "id": "claim-15",
+   "evidence": "任泽昂让@429791739和@1985222059使用 fxq@njzq.com.cn、Njzq@95386、https://aigc.njzq.cn:8089/",
+   "head": "任泽昂",
+   "predicate": "OWNS",
+   "intensity": 4,
+   "tail": "fxq",
+   "source": "llm"
+  },
+  {
+   "kind": "claim",
+   "id": "claim-16",
+   "evidence": "运营发布5月21日商品截单提醒",
+   "head": "运营",
+   "predicate": "MAINTAINS",
+   "intensity": 3,
+   "tail": "商品",
+   "source": "llm"
+  },
+  {
+   "kind": "claim",
+   "id": "claim-17",
+   "evidence": "运营发布11月15日截止预定商品的明日截单提醒",
+   "head": "运营",
+   "predicate": "COLLABORATES_WITH",
+   "intensity": 2,
+   "tail": "商品",
+   "source": "llm"
+  },
+  {
+   "kind": "claim",
+   "id": "claim-18",
+   "evidence": "运营发布截单提醒，提示即将截止预定的商品",
+   "head": "运营",
+   "predicate": "OWNS",
+   "intensity": 4,
+   "tail": "商品",
+   "source": "llm"
+  },
+  {
+   "kind": "claim",
+   "id": "claim-19",
+   "evidence": "凉橙表示小鲸鱼的回复设置确实需要改，并建议拉长回复间隔",
+   "head": "凉橙",
+   "predicate": "MAINTAINS",
+   "intensity": 3,
+   "tail": "小鲸鱼",
+   "source": "llm"
+  }
+ ],
  "coverage": [
   {
    "kind": "coverage",
    "id": "cov-1",
-   "evidence": "乌角鲨最终称没钱养服务器，劝大家别让他实现以免无法debug",
+   "evidence": "运营发布9月20日截单提醒",
    "machine": [],
    "source": "v2_seed"
   },
@@ -1266,7 +1457,7 @@ window.LABEL_DATA = {
   {
    "kind": "coverage",
    "id": "cov-3",
-   "evidence": "新机子瓦一兔子说昨天跟同事吵架、已发给主管，表示不想干了",
+   "evidence": "Dream反馈本地出图受电脑配置限制，群友讨论本地部署并建议先保证能跑再谈效果",
    "machine": [],
    "source": "v2_seed"
   },
@@ -1280,13 +1471,13 @@ window.LABEL_DATA = {
   {
    "kind": "coverage",
    "id": "cov-5",
-   "evidence": "kk再次发布明日截单商品图",
+   "evidence": "任泽昂请何老师提供CIF截图以展示近十日操作站点如何查看和分析",
    "machine": [
     {
-     "head": "kk",
-     "predicate": "MAINTAINS",
-     "intensity": 3,
-     "tail": "商品"
+     "head": "老师",
+     "predicate": "COLLABORATES_WITH",
+     "intensity": 2,
+     "tail": "CIF"
     }
    ],
    "source": "v2_seed"
@@ -1294,7 +1485,7 @@ window.LABEL_DATA = {
   {
    "kind": "coverage",
    "id": "cov-6",
-   "evidence": "棉棉确认是不是本地部署，往汐与神经症确认是本地跑、正算显存",
+   "evidence": "乌角鲨最终称没钱养服务器，劝大家别让他实现以免无法debug",
    "machine": [],
    "source": "v2_seed"
   },
@@ -1322,13 +1513,13 @@ window.LABEL_DATA = {
   {
    "kind": "coverage",
    "id": "cov-9",
-   "evidence": "西伯利亚大土豆分享自己崩溃后清理缓存并重启修复的经验",
+   "evidence": "王勇表示下午看看能不能部署一版本",
    "machine": [
     {
-     "head": "西伯利亚大土豆",
+     "head": "王勇",
      "predicate": "OWNS",
      "intensity": 4,
-     "tail": "经验"
+     "tail": "部署"
     }
    ],
    "source": "v2_seed"
@@ -1350,20 +1541,20 @@ window.LABEL_DATA = {
   {
    "kind": "coverage",
    "id": "cov-11",
-   "evidence": "Dream反馈本地出图受电脑配置限制，群友讨论本地部署并建议先保证能跑再谈效果",
+   "evidence": "棉棉确认是不是本地部署，往汐与神经症确认是本地跑、正算显存",
    "machine": [],
    "source": "v2_seed"
   },
   {
    "kind": "coverage",
    "id": "cov-12",
-   "evidence": "守门而坐贾偏宜发另一张图，称不愿更新系统所以设置不信任证书",
+   "evidence": "kk再次发布明日截单商品图",
    "machine": [
     {
-     "head": "守门而坐贾偏宜",
-     "predicate": "MAINTAINS",
-     "intensity": 3,
-     "tail": "系统"
+     "head": "kk",
+     "predicate": "COLLABORATES_WITH",
+     "intensity": 2,
+     "tail": "商品"
     }
    ],
    "source": "v2_seed"
@@ -1375,9 +1566,9 @@ window.LABEL_DATA = {
    "machine": [
     {
      "head": "远望",
-     "predicate": "MAINTAINS",
-     "intensity": 3,
-     "tail": "模型"
+     "predicate": "COLLABORATES_WITH",
+     "intensity": 2,
+     "tail": "部署"
     }
    ],
    "source": "v2_seed"
@@ -1406,7 +1597,7 @@ window.LABEL_DATA = {
   {
    "kind": "coverage",
    "id": "cov-16",
-   "evidence": "运营发布9月20日截单提醒",
+   "evidence": "运营发布11月8日截止的截单提醒",
    "machine": [],
    "source": "v2_seed"
   },
@@ -1420,20 +1611,20 @@ window.LABEL_DATA = {
   {
    "kind": "coverage",
    "id": "cov-18",
-   "evidence": "运营发布11月8日截止的截单提醒",
+   "evidence": "守门而坐贾偏宜发另一张图，称不愿更新系统所以设置不信任证书",
    "machine": [],
    "source": "v2_seed"
   },
   {
    "kind": "coverage",
    "id": "cov-19",
-   "evidence": "星落落称朋友用5090本地部署训练半个月，东堂散华调侃，土豆期待成品并询问进度",
+   "evidence": "新机子瓦一兔子说昨天跟同事吵架、已发给主管，表示不想干了",
    "machine": [
     {
-     "head": "朋友",
-     "predicate": "OWNS",
-     "intensity": 4,
-     "tail": "训练"
+     "head": "新机子瓦一兔子",
+     "predicate": "MAINTAINS",
+     "intensity": 3,
+     "tail": "主管"
     }
    ],
    "source": "v2_seed"
@@ -1441,13 +1632,13 @@ window.LABEL_DATA = {
   {
    "kind": "coverage",
    "id": "cov-20",
-   "evidence": "kk发布明日截单商品图片",
+   "evidence": "西伯利亚大土豆分享自己崩溃后清理缓存并重启修复的经验",
    "machine": [
     {
-     "head": "kk",
-     "predicate": "MAINTAINS",
-     "intensity": 3,
-     "tail": "图片"
+     "head": "西伯利亚大土豆",
+     "predicate": "OWNS",
+     "intensity": 4,
+     "tail": "经验"
     }
    ],
    "source": "v2_seed"
@@ -1455,12 +1646,12 @@ window.LABEL_DATA = {
   {
    "kind": "coverage",
    "id": "cov-21",
-   "evidence": "王勇表示下午看看能不能部署一版本",
+   "evidence": "星落落称朋友用5090本地部署训练半个月，东堂散华调侃，土豆期待成品并询问进度",
    "machine": [
     {
-     "head": "王勇",
-     "predicate": "OWNS",
-     "intensity": 4,
+     "head": "朋友",
+     "predicate": "MAINTAINS",
+     "intensity": 3,
      "tail": "部署"
     }
    ],
@@ -1476,13 +1667,13 @@ window.LABEL_DATA = {
   {
    "kind": "coverage",
    "id": "cov-23",
-   "evidence": "任泽昂请何老师提供CIF截图以展示近十日操作站点如何查看和分析",
+   "evidence": "五河琴里の棒棒糖使用抽签功能并获得签值",
    "machine": [
     {
-     "head": "老师",
-     "predicate": "MAINTAINS",
-     "intensity": 3,
-     "tail": "CIF"
+     "head": "五河琴里の棒棒糖",
+     "predicate": "DEPENDS_ON",
+     "intensity": 1,
+     "tail": "功能"
     }
    ],
    "source": "v2_seed"
@@ -1490,13 +1681,13 @@ window.LABEL_DATA = {
   {
    "kind": "coverage",
    "id": "cov-24",
-   "evidence": "五河琴里の棒棒糖使用抽签功能并获得签值",
+   "evidence": "kk发布明日截单商品图片",
    "machine": [
     {
-     "head": "五河琴里の棒棒糖",
-     "predicate": "COLLABORATES_WITH",
-     "intensity": 2,
-     "tail": "功能"
+     "head": "kk",
+     "predicate": "OWNS",
+     "intensity": 4,
+     "tail": "图片"
     }
    ],
    "source": "v2_seed"
