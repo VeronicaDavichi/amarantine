@@ -246,3 +246,29 @@ def analyze_group(members: list[dict]) -> list[NameBucket]:
         out.append(bucket)
     out.sort(key=lambda b: (-len(b.accounts), b.base))
     return out
+
+#: 分隔符：既不是 CJK（汉字/假名）也不是 ASCII 字母数字的字符。
+#: 空格、标点、括号、emoji 都算；`年`/`兔`/`号` 这类不算。
+_NAME_SEP_RE = re.compile(r"[^\u4e00-\u9fa5\u3040-\u30ffA-Za-z0-9]")
+
+
+def has_name_boundary(alias: str, frag: str) -> bool:
+    """`frag` 在 `alias` 里是否处在**真正的分隔**边界上。
+
+    用来判断「这个名字碎片能不能当成另一个叫法」。
+
+    **为什么需要**：`新机子瓦一兔子` 是「真相只有一个」的谐音
+    （shinjitsu wa hitotsu），`瓦一` 只是音节，不是另一个名字；
+    `传讯员8号` 的 `员8`、`扑街少年MIKA` 的 `MIKA` 同理 ——
+    在没有分隔符的连续串里切词，切出来的是分词器的产物。
+
+    Returns:
+        True 表示两侧至少一侧有分隔符（空格/标点/括号/emoji）。
+    """
+    idx = (alias or "").find(frag or "")
+    if idx < 0 or not frag:
+        return False
+    before = alias[idx - 1] if idx > 0 else ""
+    after = alias[idx + len(frag)] if idx + len(frag) < len(alias) else ""
+    return bool((before and _NAME_SEP_RE.match(before))
+                or (after and _NAME_SEP_RE.match(after)))

@@ -1247,198 +1247,7 @@ window.LABEL_DATA = {
    "source": "weak_cue"
   }
  ],
- "claims": [
-  {
-   "kind": "claim",
-   "id": "claim-1",
-   "evidence": "Dream设想本地部署交给大肥鱼一键出视频，说目标就是这样",
-   "head": "大肥鱼",
-   "predicate": "OWNS",
-   "intensity": 4,
-   "tail": "部署",
-   "source": "llm"
-  },
-  {
-   "kind": "claim",
-   "id": "claim-2",
-   "evidence": "小鲸鱼称自家是头一号住户，克劳德负责写门牌号并把尘霜记为第二号",
-   "head": "克劳德",
-   "predicate": "OWNS",
-   "intensity": 4,
-   "tail": "门牌号",
-   "source": "llm"
-  },
-  {
-   "kind": "claim",
-   "id": "claim-3",
-   "evidence": "远望打算本地部署小模型来做对话bot",
-   "head": "远望",
-   "predicate": "MAINTAINS",
-   "intensity": 3,
-   "tail": "模型",
-   "source": "llm"
-  },
-  {
-   "kind": "claim",
-   "id": "claim-4",
-   "evidence": "新机子瓦一兔子说昨天跟同事吵架、已发给主管，表示不想干了",
-   "head": "新机子瓦一兔子",
-   "predicate": "MAINTAINS",
-   "intensity": 3,
-   "tail": "主管",
-   "source": "llm"
-  },
-  {
-   "kind": "claim",
-   "id": "claim-5",
-   "evidence": "星落落称朋友用5090本地部署训练半个月，东堂散华调侃，土豆期待成品并询问进度",
-   "head": "朋友",
-   "predicate": "OWNS",
-   "intensity": 4,
-   "tail": "部署",
-   "source": "llm"
-  },
-  {
-   "kind": "claim",
-   "id": "claim-6",
-   "evidence": "王勇表示下午看看能不能部署一版本",
-   "head": "王勇",
-   "predicate": "MAINTAINS",
-   "intensity": 3,
-   "tail": "版本",
-   "source": "llm"
-  },
-  {
-   "kind": "claim",
-   "id": "claim-7",
-   "evidence": "西伯利亚大土豆分享自己崩溃后清理缓存并重启修复的经验",
-   "head": "西伯利亚大土豆",
-   "predicate": "OWNS",
-   "intensity": 4,
-   "tail": "经验",
-   "source": "llm"
-  },
-  {
-   "kind": "claim",
-   "id": "claim-8",
-   "evidence": "kk发布明日截单商品图片",
-   "head": "kk",
-   "predicate": "OWNS",
-   "intensity": 4,
-   "tail": "图片",
-   "source": "llm"
-  },
-  {
-   "kind": "claim",
-   "id": "claim-9",
-   "evidence": "五河琴里の棒棒糖使用抽签功能并获得签值",
-   "head": "五河琴里の棒棒糖",
-   "predicate": "DEPENDS_ON",
-   "intensity": 1,
-   "tail": "功能",
-   "source": "llm"
-  },
-  {
-   "kind": "claim",
-   "id": "claim-10",
-   "evidence": "任泽昂请何老师提供CIF截图以展示近十日操作站点如何查看和分析",
-   "head": "任泽昂",
-   "predicate": "COLLABORATES_WITH",
-   "intensity": 2,
-   "tail": "老师",
-   "source": "llm"
-  },
-  {
-   "kind": "claim",
-   "id": "claim-11",
-   "evidence": "kk再次发布明日截单商品图",
-   "head": "kk",
-   "predicate": "OWNS",
-   "intensity": 4,
-   "tail": "商品",
-   "source": "llm"
-  },
-  {
-   "kind": "claim",
-   "id": "claim-12",
-   "evidence": "Q群管家发布广告，欢迎新成员进群",
-   "head": "Q群管家",
-   "predicate": "OWNS",
-   "intensity": 4,
-   "tail": "广告",
-   "source": "llm"
-  },
-  {
-   "kind": "claim",
-   "id": "claim-13",
-   "evidence": "任泽昂让@429791739和@1985222059使用 fxq@njzq.com.cn、Njzq@95386、https://aigc.njzq.cn:8089/",
-   "head": "任泽昂",
-   "predicate": "OWNS",
-   "intensity": 4,
-   "tail": "fxq",
-   "source": "llm"
-  },
-  {
-   "kind": "claim",
-   "id": "claim-14",
-   "evidence": "喜欢果睡评论群相册新增的图很骚",
-   "head": "喜欢果睡",
-   "predicate": "COLLABORATES_WITH",
-   "intensity": 2,
-   "tail": "评论",
-   "source": "llm"
-  },
-  {
-   "kind": "claim",
-   "id": "claim-15",
-   "evidence": "运营发布5月21日商品截单提醒",
-   "head": "运营",
-   "predicate": "OWNS",
-   "intensity": 4,
-   "tail": "商品",
-   "source": "llm"
-  },
-  {
-   "kind": "claim",
-   "id": "claim-16",
-   "evidence": "运营发布11月15日截止预定商品的明日截单提醒",
-   "head": "运营",
-   "predicate": "MAINTAINS",
-   "intensity": 3,
-   "tail": "商品",
-   "source": "llm"
-  },
-  {
-   "kind": "claim",
-   "id": "claim-17",
-   "evidence": "运营发布截单提醒，提示即将截止预定的商品",
-   "head": "运营",
-   "predicate": "MAINTAINS",
-   "intensity": 3,
-   "tail": "商品",
-   "source": "llm"
-  },
-  {
-   "kind": "claim",
-   "id": "claim-18",
-   "evidence": "任泽昂询问是不是测试环境代码没有更新",
-   "head": "任泽昂",
-   "predicate": "DEPENDS_ON",
-   "intensity": 1,
-   "tail": "测试环境",
-   "source": "llm"
-  },
-  {
-   "kind": "claim",
-   "id": "claim-19",
-   "evidence": "凉橙表示小鲸鱼的回复设置确实需要改，并建议拉长回复间隔",
-   "head": "小鲸鱼",
-   "predicate": "OWNS",
-   "intensity": 4,
-   "tail": "设置",
-   "source": "llm"
-  }
- ],
+ "claims": [],
  "coverage": [
   {
    "kind": "coverage",
@@ -1457,14 +1266,14 @@ window.LABEL_DATA = {
   {
    "kind": "coverage",
    "id": "cov-3",
-   "evidence": "北瑀发问号表情不认账，往汐让他喊麦门，北瑀称饿了之后行为不负责并喊麦门，往汐让他先点吃的",
+   "evidence": "新机子瓦一兔子说昨天跟同事吵架、已发给主管，表示不想干了",
    "machine": [],
    "source": "v2_seed"
   },
   {
    "kind": "coverage",
    "id": "cov-4",
-   "evidence": "黑瞳九月询问群相册新增加了2张《白丝萝莉》[图片][图片]是否是校花球童",
+   "evidence": "两人讨论去地中海留学需要学习当地语言，胖吉强调教授懂英语不代表路人懂",
    "machine": [],
    "source": "v2_seed"
   },
@@ -1499,13 +1308,13 @@ window.LABEL_DATA = {
   {
    "kind": "coverage",
    "id": "cov-8",
-   "evidence": "远望打算本地部署小模型来做对话bot",
+   "evidence": "小鲸鱼称自家是头一号住户，克劳德负责写门牌号并把尘霜记为第二号",
    "machine": [
     {
-     "head": "远望",
+     "head": "克劳德",
      "predicate": "OWNS",
      "intensity": 4,
-     "tail": "模型"
+     "tail": "门牌号"
     }
    ],
    "source": "v2_seed"
@@ -1527,13 +1336,13 @@ window.LABEL_DATA = {
   {
    "kind": "coverage",
    "id": "cov-10",
-   "evidence": "Dream设想本地部署交给大肥鱼一键出视频，说目标就是这样",
+   "evidence": "北瑀发问号表情不认账，往汐让他喊麦门，北瑀称饿了之后行为不负责并喊麦门，往汐让他先点吃的",
    "machine": [
     {
-     "head": "大肥鱼",
-     "predicate": "OWNS",
-     "intensity": 4,
-     "tail": "部署"
+     "head": "北瑀",
+     "predicate": "COLLABORATES_WITH",
+     "intensity": 2,
+     "tail": "麦门"
     }
    ],
    "source": "v2_seed"
@@ -1548,13 +1357,13 @@ window.LABEL_DATA = {
   {
    "kind": "coverage",
    "id": "cov-12",
-   "evidence": "Q群管家发布广告，欢迎新成员进群",
+   "evidence": "守门而坐贾偏宜发另一张图，称不愿更新系统所以设置不信任证书",
    "machine": [
     {
-     "head": "Q群管家",
-     "predicate": "OWNS",
-     "intensity": 4,
-     "tail": "广告"
+     "head": "守门而坐贾偏宜",
+     "predicate": "MAINTAINS",
+     "intensity": 3,
+     "tail": "系统"
     }
    ],
    "source": "v2_seed"
@@ -1562,13 +1371,13 @@ window.LABEL_DATA = {
   {
    "kind": "coverage",
    "id": "cov-13",
-   "evidence": "新机子瓦一兔子说昨天跟同事吵架、已发给主管，表示不想干了",
+   "evidence": "远望打算本地部署小模型来做对话bot",
    "machine": [
     {
-     "head": "新机子瓦一兔子",
-     "predicate": "COLLABORATES_WITH",
-     "intensity": 2,
-     "tail": "主管"
+     "head": "远望",
+     "predicate": "MAINTAINS",
+     "intensity": 3,
+     "tail": "模型"
     }
    ],
    "source": "v2_seed"
@@ -1576,20 +1385,20 @@ window.LABEL_DATA = {
   {
    "kind": "coverage",
    "id": "cov-14",
-   "evidence": "两人讨论去地中海留学需要学习当地语言，胖吉强调教授懂英语不代表路人懂",
+   "evidence": "纳垢慈父在群里分享了B站视频《第0.5次内战&共同体》",
    "machine": [],
    "source": "v2_seed"
   },
   {
    "kind": "coverage",
    "id": "cov-15",
-   "evidence": "小鲸鱼称自家是头一号住户，克劳德负责写门牌号并把尘霜记为第二号",
+   "evidence": "Dream设想本地部署交给大肥鱼一键出视频，说目标就是这样",
    "machine": [
     {
-     "head": "克劳德",
+     "head": "大肥鱼",
      "predicate": "OWNS",
      "intensity": 4,
-     "tail": "门牌号"
+     "tail": "部署"
     }
    ],
    "source": "v2_seed"
@@ -1604,7 +1413,7 @@ window.LABEL_DATA = {
   {
    "kind": "coverage",
    "id": "cov-17",
-   "evidence": "守门而坐贾偏宜发另一张图，称不愿更新系统所以设置不信任证书",
+   "evidence": "喜欢果睡评论群相册新增的图很骚",
    "machine": [],
    "source": "v2_seed"
   },
@@ -1636,8 +1445,8 @@ window.LABEL_DATA = {
    "machine": [
     {
      "head": "kk",
-     "predicate": "OWNS",
-     "intensity": 4,
+     "predicate": "MAINTAINS",
+     "intensity": 3,
      "tail": "图片"
     }
    ],
@@ -1660,7 +1469,7 @@ window.LABEL_DATA = {
   {
    "kind": "coverage",
    "id": "cov-22",
-   "evidence": "喜欢果睡评论群相册新增的图很骚",
+   "evidence": "黑瞳九月询问群相册新增加了2张《白丝萝莉》[图片][图片]是否是校花球童",
    "machine": [],
    "source": "v2_seed"
   },
@@ -1670,10 +1479,10 @@ window.LABEL_DATA = {
    "evidence": "任泽昂请何老师提供CIF截图以展示近十日操作站点如何查看和分析",
    "machine": [
     {
-     "head": "任泽昂",
-     "predicate": "COLLABORATES_WITH",
-     "intensity": 2,
-     "tail": "老师"
+     "head": "老师",
+     "predicate": "MAINTAINS",
+     "intensity": 3,
+     "tail": "CIF"
     }
    ],
    "source": "v2_seed"
@@ -1691,6 +1500,178 @@ window.LABEL_DATA = {
     }
    ],
    "source": "v2_seed"
+  }
+ ],
+ "fragments": [
+  {
+   "kind": "fragment",
+   "id": "frag-9",
+   "frag": "ALICE",
+   "alias": "ALICE + OLIVIA",
+   "rest": " + OLIVIA",
+   "uid": "u_435AByFRA4uBemFD8Xbj6Q",
+   "cards": 9,
+   "source": "unique_owner"
+  },
+  {
+   "kind": "fragment",
+   "id": "frag-10",
+   "frag": "OLIVIA",
+   "alias": "ALICE + OLIVIA",
+   "rest": "ALICE + ",
+   "uid": "u_435AByFRA4uBemFD8Xbj6Q",
+   "cards": 7,
+   "source": "unique_owner"
+  },
+  {
+   "kind": "fragment",
+   "id": "frag-12",
+   "frag": "DeepSeek",
+   "alias": "小特（DeepSeek）",
+   "rest": "小特（）",
+   "uid": "u_6vINgsYe6DitNNvC1mX46Q",
+   "cards": 4,
+   "source": "unique_owner"
+  },
+  {
+   "kind": "fragment",
+   "id": "frag-1",
+   "frag": "SX",
+   "alias": "王逗比–SX",
+   "rest": "王逗比–",
+   "uid": "u_bxcWXkyYoJOotcOb9Hfrsg",
+   "cards": 3,
+   "source": "unique_owner"
+  },
+  {
+   "kind": "fragment",
+   "id": "frag-2",
+   "frag": "HYS",
+   "alias": "HYS.collinear",
+   "rest": ".collinear",
+   "uid": "u_vyGPx5ubyMMCSlZQA9KCOw",
+   "cards": 2,
+   "source": "unique_owner"
+  },
+  {
+   "kind": "fragment",
+   "id": "frag-8",
+   "frag": "CBA",
+   "alias": "⑨⑨⑨CBA",
+   "rest": "⑨⑨⑨",
+   "uid": "u_6_lCH0h4Ro6Rf_tIAft5ww",
+   "cards": 2,
+   "source": "unique_owner"
+  },
+  {
+   "kind": "fragment",
+   "id": "frag-3",
+   "frag": "Relued",
+   "alias": "䍀Relued",
+   "rest": "䍀",
+   "uid": "u_Wn3Wq4u7mCONYVLNYxfNOA",
+   "cards": 1,
+   "source": "unique_owner"
+  },
+  {
+   "kind": "fragment",
+   "id": "frag-4",
+   "frag": "NotFound",
+   "alias": "NotFound-404-",
+   "rest": "-404-",
+   "uid": "u_Z1YPn4XS8ng8tZ4H9GEiUA",
+   "cards": 1,
+   "source": "unique_owner"
+  },
+  {
+   "kind": "fragment",
+   "id": "frag-5",
+   "frag": "Heat",
+   "alias": "Heat？",
+   "rest": "？",
+   "uid": "u_x-n9U5zBrSEn7GncBXhCLg",
+   "cards": 1,
+   "source": "unique_owner"
+  },
+  {
+   "kind": "fragment",
+   "id": "frag-6",
+   "frag": "Ester",
+   "alias": "Ester☆",
+   "rest": "☆",
+   "uid": "u_TBrkews_JFpg3TR02WaHIw",
+   "cards": 1,
+   "source": "unique_owner"
+  },
+  {
+   "kind": "fragment",
+   "id": "frag-7",
+   "frag": "COiL",
+   "alias": "COiL.MON",
+   "rest": ".MON",
+   "uid": "u_3_6HvfMNszXGPiGJCFPlfw",
+   "cards": 1,
+   "source": "unique_owner"
+  },
+  {
+   "kind": "fragment",
+   "id": "frag-11",
+   "frag": "PhiLia093",
+   "alias": "PhiLia093·Elysia",
+   "rest": "·Elysia",
+   "uid": "u_YbN9deKjOKC5P0sDy4n8HA",
+   "cards": 1,
+   "source": "unique_owner"
+  },
+  {
+   "kind": "fragment",
+   "id": "frag-13",
+   "frag": "问题多",
+   "alias": "办法总比问题多♔",
+   "rest": "办法总比♔",
+   "uid": "u_Dh0BZOyALT4hFKNgvWV-NQ",
+   "cards": 1,
+   "source": "unique_owner"
+  },
+  {
+   "kind": "fragment",
+   "id": "frag-14",
+   "frag": "Give",
+   "alias": "Give up",
+   "rest": " up",
+   "uid": "u_JiSpxC_bpUSkLC33TOd12g",
+   "cards": 1,
+   "source": "unique_owner"
+  },
+  {
+   "kind": "fragment",
+   "id": "frag-15",
+   "frag": "冰澜ゞ",
+   "alias": "ゞ凝芸☤冰澜ゞ😳😳",
+   "rest": "ゞ凝芸☤😳😳",
+   "uid": "u_kBVZf27EjbMdBQTlh2PcgA",
+   "cards": 1,
+   "source": "unique_owner"
+  },
+  {
+   "kind": "fragment",
+   "id": "frag-16",
+   "frag": "農家の",
+   "alias": "𐂂果物農家の🍏",
+   "rest": "𐂂果物🍏",
+   "uid": "u_cDN7wLPh-XGeSaLQa27Q1w",
+   "cards": 1,
+   "source": "unique_owner"
+  },
+  {
+   "kind": "fragment",
+   "id": "frag-17",
+   "frag": "NFC",
+   "alias": "100%NFC香菜汁",
+   "rest": "100%香菜汁",
+   "uid": "u_9N-ODGiOQ48Y2TAEJwFxdw",
+   "cards": 1,
+   "source": "unique_owner"
   }
  ],
  "behaviors": [

@@ -212,6 +212,82 @@ def _roster_names_all() -> list[str]:
 
 
 
+
+
+#: emoji / 控制字符（与 services/emoji_alias.py 同口径）
+_EMOJI_RE = re.compile(
+    "[\U0001F000-\U0001FAFF\u2600-\u27BF\u2B00-\u2BFF\uFE0F\u200D\u20E3"
+    "\u202a-\u202e\u200b-\u200f]")
+
+
+def _has_boundary(alias: str, frag: str) -> bool:
+    """薄壳：规则在 `memory.services.name_marker.has_name_boundary`（可测试）。"""
+    from memory.services.name_marker import has_name_boundary
+
+    return has_name_boundary(alias, frag)
+
+
+def build_fragments(limit: int = 80) -> list[dict]:
+    """找「像某个账号名字的一部分」的 topic 实体，交给人判断要不要并回 Person。
+
+    这些碎片是上游分词把带空格/emoji 的显示名切碎留下的
+    （`Veronica Davichi` → `Veronica`），spec 044 想「降级」它们，
+    但降级只会让噪声闭嘴；**并回 Person 才能让「谁说了什么」查得准**。
+
+    只收「唯一账号」的（多账号同名跳过，否则并错人）。
+    """
+    name2uids: dict[str, set[str]] = {}
+    for r in cy(f"MATCH (a:Account {{namespace:'{NS_QQ}'}})"
+                f"-[:DISPLAYED_AS]->(al:Alias {{namespace:'{NS_QQ}'}}) "
+                f"RETURN al.name AS n, a.uid AS uid"):
+        name = (r.get("row") or [None])[0]
+        uid = (r.get("row") or [None, None])[1]
+        if name and uid:
+            name2uids.setdefault(name, set()).add(uid)
+
+    person_names = {r["row"][0] for r in cy(
+        f"MATCH (p:Person {{namespace:'{NS_QQ}'}}) RETURN p.name AS n")}
+
+    rows = cy(f"""
+    MATCH (e:Entity {{namespace:'{NS_QQ}'}})
+    WHERE coalesce(e.kind,'topic') = 'topic'
+    OPTIONAL MATCH (ev:Event {{namespace:'{NS_QQ}'}})-[:MENTIONS]->(e)
+    RETURN e.name AS name, count(DISTINCT ev) AS cards
+    """)
+
+    items: list[dict] = []
+    for r in rows:
+        name = (r.get("row") or [None])[0]
+        cards = (r.get("row") or [None, 0])[1] or 0
+        if not name or name in person_names:
+            continue
+        owners: set[str] = set()
+        alias_hit = ""
+        for alias, uids in name2uids.items():
+            if alias != name and name in alias:
+                owners |= uids
+                if not alias_hit or len(alias) < len(alias_hit):
+                    alias_hit = alias
+        if len(owners) != 1 or not alias_hit:
+            continue
+        # 连续串内部切出来的不算（谐音/拼词会切错，见 _has_boundary）
+        if not _has_boundary(alias_hit, name):
+            continue
+        rest = alias_hit.replace(name, "", 1)
+        items.append({
+            "kind": "fragment",
+            "id": f"frag-{len(items)+1}",
+            "frag": name,
+            "alias": alias_hit,
+            "rest": rest,
+            "uid": next(iter(owners)),
+            "cards": cards,
+            "source": "unique_owner",
+        })
+
+    items.sort(key=lambda x: -x["cards"])
+    return items[:limit]
+
 def build_coverage(limit: int = 24, *, seed: int = 13, half: int | None = None) -> list[dict]:
     """生成关系覆盖评测集（039 的 recall 口径）。
 
@@ -540,6 +616,10 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", default=str(ROOT / "docs" / "labeling-data.js"))
     ap.add_argument(
+        "--fragments", action="store_true",
+        help="生成人名碎片复核集（044 前置：碎片并回 Person）",
+    )
+    ap.add_argument(
         "--coverage", action="store_true",
         help="生成关系覆盖评测集（039 recall 口径：这句该有几条）",
     )
@@ -579,6 +659,7 @@ def main() -> int:
         ),
         "claims": build_claims_audit() if getattr(args, "claims_audit", False) else [],
         "coverage": build_coverage() if getattr(args, "coverage", False) else [],
+        "fragments": build_fragments() if getattr(args, "fragments", False) else [],
         "behaviors": build_behaviors(),
         "senses": (
             build_senses_llm(args.senses) if getattr(args, "senses_llm", False)

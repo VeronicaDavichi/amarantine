@@ -133,9 +133,10 @@
     { key: "behaviors", name: "关系行为", kind: "relation" },
     { key: "claims", name: "机器边核对", kind: "claim" },
     { key: "coverage", name: "关系覆盖", kind: "coverage" },
+    { key: "fragments", name: "人名碎片", kind: "fragment" },
     { key: "senses", name: "指称义项", kind: "sense" },
   ];
-  const STORE = "amarantine-label-v5";
+  const STORE = "amarantine-label-v6";
   let state = load();
   let gi = 0, idx = 0;
 
@@ -144,7 +145,7 @@
       const cur = JSON.parse(localStorage.getItem(STORE) || "{}");
       if (Object.keys(cur).length) return cur;
       // v2 → v3 迁移：陈述组 id 没变，把旧标注带过来；行为/义项因去重换过 id，不迁移
-      const old = JSON.parse(localStorage.getItem("amarantine-label-v4") || "{}");
+      const old = JSON.parse(localStorage.getItem("amarantine-label-v5") || "{}");
       const migrated = {};
       Object.keys(old).forEach(k => {
         if (k.startsWith("stmt-")) migrated[k] = old[k];
@@ -252,6 +253,15 @@
       body += `<div class="machine">规则结果：` + (item.machine && item.machine.extracted
         ? `<b>${esc(item.machine.head)}</b> --${esc(item.machine.predicate)}--> <b>${esc(item.machine.tail)}</b>`
         : `<b>未抽取</b>（规则漏掉）`) + `</div>`;
+    } else if (item.kind === "fragment") {
+      body += `<div class="machine">碎片：<b>${esc(item.frag)}</b>
+        <span class="tag hit">${item.cards} 张卡</span></div>`;
+      body += `<div class="hint" style="margin:8px 0">`
+           + `它出现在某账号的名字里：<b>${esc(item.alias)}</b>`
+           + `（多出的部分：<code>${esc(item.rest)}</code>）<br>`
+           + `uid：<code>${esc(item.uid)}</code></div>`;
+      body += `<div class="hint" style="margin-top:8px">`
+           + `判断：<b>${esc(item.frag)}</b> 是不是这个账号的<b>另一种叫法</b>？</div>`;
     } else if (item.kind === "coverage") {
       const ms = item.machine || [];
       body += `<div class="hint" style="margin:10px 0;color:var(--warn)">`
@@ -329,6 +339,16 @@
              + (lb.head ? ` · 主语 ${esc(lb.head.name)}` : "")
              + (lb.tail ? ` → ${esc(lb.tail.name)}` : "") + `</div>`;
       }
+    } else if (g.kind === "fragment") {
+      const opts = [["ok", "✅ 是同一人（并回 Person）"],
+                    ["bad", "❌ 不是人（别并）"],
+                    ["warn", "🤔 拿不准（先跳过）"]];
+      body += `<div class="row" style="margin-top:16px">`;
+      opts.forEach(([k, t]) => {
+        body += `<button class="sense" data-key="${k}">${t}</button>`;
+      });
+      body += `</div>`;
+      if (lb.label) body += `<div class="hint done">已标：${esc(lb.label)}</div>`;
     } else if (g.kind === "coverage") {
       const opts = [[0, "0 条"], [1, "1 条"], [2, "2 条"], [3, "3 条或更多"]];
       body += `<div class="row" style="margin-top:16px">`;
@@ -441,6 +461,16 @@
           render();
         };
       });
+    } else if (g.kind === "fragment") {
+      const opts = [["ok", "✅ 是同一人（并回 Person）"],
+                    ["bad", "❌ 不是人（别并）"],
+                    ["warn", "🤔 拿不准（先跳过）"]];
+      body += `<div class="row" style="margin-top:16px">`;
+      opts.forEach(([k, t]) => {
+        body += `<button class="sense" data-key="${k}">${t}</button>`;
+      });
+      body += `</div>`;
+      if (lb.label) body += `<div class="hint done">已标：${esc(lb.label)}</div>`;
     } else if (g.kind === "coverage") {
       // 「这句实际有几条关系」：0–3。**之前漏了这段绑定**，
       // 按钮能点、选中样式也变，但状态没写进 state —— 人以为标了，导出却是空的。
