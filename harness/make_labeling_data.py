@@ -210,6 +210,55 @@ def _roster_names_all() -> list[str]:
 
 
 
+
+
+def build_coverage(limit: int = 24, *, seed: int = 13, half: int | None = None) -> list[dict]:
+    """生成关系覆盖评测集（039 的 recall 口径）。
+
+    **种子不是全库随机**：实测全库随机会抽到 24 张营销卡（`kk发布…上新`），
+    机器全判 0 条，测不出 recall（那是「该抽 0 条」，不是漏抽）。
+    改用 v2 陈述句作种子（已过滤营销、含人名 + 强关系词），
+    并保证一半样本是「机器抽到了边」的，一半是「机器抽 0 条」的。
+    """
+    from memory.config import load_settings
+    from memory.services.relations import (
+        PREDICATE_TO_INTENSITY,
+        extract_statements_combined,
+    )
+
+    settings = load_settings()
+    roster = _roster_names_all()
+    seed_items = build_statements_v2(limit=90)
+    texts = [it["evidence"] for it in seed_items]
+
+    with_claims: list[dict] = []
+    without: list[dict] = []
+    for i, text in enumerate(texts):
+        ctx = texts[max(0, i - 2): i]
+        claims, _rejected = extract_statements_combined(
+            text, settings, context=ctx, roster=roster)
+        item = {
+            "kind": "coverage",
+            "id": "",  # 最后统一编号
+            "evidence": text,
+            "machine": [
+                {"head": c.head, "predicate": c.predicate,
+                 "intensity": PREDICATE_TO_INTENSITY.get(c.predicate), "tail": c.tail}
+                for c in claims
+            ],
+            "source": "v2_seed",
+        }
+        (with_claims if claims else without).append(item)
+
+    n_half = half if half is not None else limit // 2
+    picked = with_claims[:n_half] + without[: max(0, limit - len(with_claims[:n_half]))]
+    random.seed(seed)
+    random.shuffle(picked)
+    for i, it in enumerate(picked, 1):
+        it["id"] = f"cov-{i}"
+    return picked[:limit]
+
+
 def build_claims_audit(limit: int = 20, *, scan: int = 120) -> list[dict]:
     """生成「机器边核对」评测集：每项是一条机器抽出的边，人判对/不对。
 
@@ -491,6 +540,10 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", default=str(ROOT / "docs" / "labeling-data.js"))
     ap.add_argument(
+        "--coverage", action="store_true",
+        help="生成关系覆盖评测集（039 recall 口径：这句该有几条）",
+    )
+    ap.add_argument(
         "--claims-audit", action="store_true",
         help="生成「机器边核对」评测集（039 precision 口径）",
     )
@@ -525,6 +578,7 @@ def main() -> int:
             else build_statements()
         ),
         "claims": build_claims_audit() if getattr(args, "claims_audit", False) else [],
+        "coverage": build_coverage() if getattr(args, "coverage", False) else [],
         "behaviors": build_behaviors(),
         "senses": (
             build_senses_llm(args.senses) if getattr(args, "senses_llm", False)

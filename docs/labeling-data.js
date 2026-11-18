@@ -611,6 +611,96 @@ window.LABEL_DATA = {
   {
    "kind": "statement",
    "id": "stmt2-1",
+   "evidence": "x分享大肥鱼接入QQ后每天只花一块多的部署成本",
+   "entities": [
+    {
+     "name": "大肥",
+     "kind": "place"
+    },
+    {
+     "name": "QQ",
+     "kind": "topic"
+    },
+    {
+     "name": "大肥鱼",
+     "kind": "roster"
+    },
+    {
+     "name": "部署",
+     "kind": "noun"
+    },
+    {
+     "name": "成本",
+     "kind": "noun"
+    }
+   ],
+   "machine": {
+    "extracted": false,
+    "head": null,
+    "predicate": null,
+    "tail": null
+   },
+   "source": "explicit"
+  },
+  {
+   "kind": "statement",
+   "id": "stmt2-2",
+   "evidence": "Valhalla表示没看懂实现方式",
+   "entities": [
+    {
+     "name": "Valhalla",
+     "kind": "topic"
+    },
+    {
+     "name": "方式",
+     "kind": "noun"
+    }
+   ],
+   "machine": {
+    "extracted": false,
+    "head": null,
+    "predicate": null,
+    "tail": null
+   },
+   "source": "explicit"
+  },
+  {
+   "kind": "statement",
+   "id": "stmt2-3",
+   "evidence": "北瑀发问号表情不认账，往汐让他喊麦门，北瑀称饿了之后行为不负责并喊麦门，往汐让他先点吃的",
+   "entities": [
+    {
+     "name": "北瑀",
+     "kind": "roster"
+    },
+    {
+     "name": "往汐",
+     "kind": "roster"
+    },
+    {
+     "name": "问号",
+     "kind": "roster"
+    },
+    {
+     "name": "表情",
+     "kind": "noun"
+    },
+    {
+     "name": "麦门",
+     "kind": "noun"
+    }
+   ],
+   "machine": {
+    "extracted": false,
+    "head": null,
+    "predicate": null,
+    "tail": null
+   },
+   "source": "explicit"
+  },
+  {
+   "kind": "statement",
+   "id": "stmt2-4",
    "evidence": "Dream设想本地部署交给大肥鱼一键出视频，说目标就是这样",
    "entities": [
     {
@@ -660,133 +750,35 @@ window.LABEL_DATA = {
   },
   {
    "kind": "statement",
-   "id": "stmt2-2",
-   "evidence": "新机子瓦一兔子说昨天跟同事吵架、已发给主管，表示不想干了",
-   "entities": [
-    {
-     "name": "瓦一",
-     "kind": "topic"
-    },
-    {
-     "name": "兔子",
-     "kind": "roster"
-    },
-    {
-     "name": "新机子瓦一兔子",
-     "kind": "roster"
-    },
-    {
-     "name": "昨天",
-     "kind": "roster"
-    },
-    {
-     "name": "机子",
-     "kind": "noun"
-    },
-    {
-     "name": "同事",
-     "kind": "noun"
-    },
-    {
-     "name": "发给",
-     "kind": "noun"
-    },
-    {
-     "name": "主管",
-     "kind": "noun"
-    }
-   ],
-   "machine": {
-    "extracted": false,
-    "head": null,
-    "predicate": null,
-    "tail": null
-   },
-   "source": "explicit"
-  },
-  {
-   "kind": "statement",
-   "id": "stmt2-3",
-   "evidence": "x分享大肥鱼接入QQ后每天只花一块多的部署成本",
-   "entities": [
-    {
-     "name": "大肥",
-     "kind": "place"
-    },
-    {
-     "name": "QQ",
-     "kind": "topic"
-    },
-    {
-     "name": "大肥鱼",
-     "kind": "roster"
-    },
-    {
-     "name": "部署",
-     "kind": "noun"
-    },
-    {
-     "name": "成本",
-     "kind": "noun"
-    }
-   ],
-   "machine": {
-    "extracted": false,
-    "head": null,
-    "predicate": null,
-    "tail": null
-   },
-   "source": "explicit"
-  },
-  {
-   "kind": "statement",
-   "id": "stmt2-4",
-   "evidence": "Valhalla表示没看懂实现方式",
-   "entities": [
-    {
-     "name": "Valhalla",
-     "kind": "topic"
-    },
-    {
-     "name": "方式",
-     "kind": "noun"
-    }
-   ],
-   "machine": {
-    "extracted": false,
-    "head": null,
-    "predicate": null,
-    "tail": null
-   },
-   "source": "explicit"
-  },
-  {
-   "kind": "statement",
    "id": "stmt2-5",
-   "evidence": "Dream反馈本地出图受电脑配置限制，群友讨论本地部署并建议先保证能跑再谈效果",
+   "evidence": "小鲸鱼称自家是头一号住户，克劳德负责写门牌号并把尘霜记为第二号",
    "entities": [
     {
-     "name": "Dream",
+     "name": "头一号",
      "kind": "topic"
     },
     {
-     "name": "电脑配置",
+     "name": "克劳德",
+     "kind": "roster"
+    },
+    {
+     "name": "小鲸鱼",
+     "kind": "roster"
+    },
+    {
+     "name": "尘霜",
+     "kind": "roster"
+    },
+    {
+     "name": "鲸鱼",
      "kind": "noun"
     },
     {
-     "name": "群友",
+     "name": "住户",
      "kind": "noun"
     },
     {
-     "name": "部署",
-     "kind": "noun"
-    },
-    {
-     "name": "建议",
-     "kind": "noun"
-    },
-    {
-     "name": "效果",
+     "name": "门牌号",
      "kind": "noun"
     }
    ],
@@ -835,34 +827,38 @@ window.LABEL_DATA = {
   {
    "kind": "statement",
    "id": "stmt2-7",
-   "evidence": "小鲸鱼称自家是头一号住户，克劳德负责写门牌号并把尘霜记为第二号",
+   "evidence": "新机子瓦一兔子说昨天跟同事吵架、已发给主管，表示不想干了",
    "entities": [
     {
-     "name": "头一号",
+     "name": "瓦一",
      "kind": "topic"
     },
     {
-     "name": "克劳德",
+     "name": "兔子",
      "kind": "roster"
     },
     {
-     "name": "小鲸鱼",
+     "name": "新机子瓦一兔子",
      "kind": "roster"
     },
     {
-     "name": "尘霜",
+     "name": "昨天",
      "kind": "roster"
     },
     {
-     "name": "鲸鱼",
+     "name": "机子",
      "kind": "noun"
     },
     {
-     "name": "住户",
+     "name": "同事",
      "kind": "noun"
     },
     {
-     "name": "门牌号",
+     "name": "发给",
+     "kind": "noun"
+    },
+    {
+     "name": "主管",
      "kind": "noun"
     }
    ],
@@ -877,6 +873,44 @@ window.LABEL_DATA = {
   {
    "kind": "statement",
    "id": "stmt2-8",
+   "evidence": "Dream反馈本地出图受电脑配置限制，群友讨论本地部署并建议先保证能跑再谈效果",
+   "entities": [
+    {
+     "name": "Dream",
+     "kind": "topic"
+    },
+    {
+     "name": "电脑配置",
+     "kind": "noun"
+    },
+    {
+     "name": "群友",
+     "kind": "noun"
+    },
+    {
+     "name": "部署",
+     "kind": "noun"
+    },
+    {
+     "name": "建议",
+     "kind": "noun"
+    },
+    {
+     "name": "效果",
+     "kind": "noun"
+    }
+   ],
+   "machine": {
+    "extracted": false,
+    "head": null,
+    "predicate": null,
+    "tail": null
+   },
+   "source": "explicit"
+  },
+  {
+   "kind": "statement",
+   "id": "stmt2-9",
    "evidence": "星落落称朋友用5090本地部署训练半个月，东堂散华调侃，土豆期待成品并询问进度",
    "entities": [
     {
@@ -934,7 +968,7 @@ window.LABEL_DATA = {
   },
   {
    "kind": "statement",
-   "id": "stmt2-9",
+   "id": "stmt2-10",
    "evidence": "王勇表示下午看看能不能部署一版本",
    "entities": [
     {
@@ -968,7 +1002,7 @@ window.LABEL_DATA = {
   },
   {
    "kind": "statement",
-   "id": "stmt2-10",
+   "id": "stmt2-11",
    "evidence": "棉棉确认是不是本地部署，往汐与神经症确认是本地跑、正算显存",
    "entities": [
     {
@@ -998,7 +1032,7 @@ window.LABEL_DATA = {
   },
   {
    "kind": "statement",
-   "id": "stmt2-11",
+   "id": "stmt2-12",
    "evidence": "西伯利亚大土豆分享自己崩溃后清理缓存并重启修复的经验",
    "entities": [
     {
@@ -1028,7 +1062,7 @@ window.LABEL_DATA = {
   },
   {
    "kind": "statement",
-   "id": "stmt2-12",
+   "id": "stmt2-13",
    "evidence": "乌角鲨最终称没钱养服务器，劝大家别让他实现以免无法debug",
    "entities": [
     {
@@ -1062,23 +1096,19 @@ window.LABEL_DATA = {
   },
   {
    "kind": "statement",
-   "id": "stmt2-13",
-   "evidence": "任泽昂要求@498545782王老师先更新测试环境前端",
+   "id": "stmt2-14",
+   "evidence": "kk发布明日截单商品图片",
    "entities": [
     {
-     "name": "任泽昂",
-     "kind": "person"
-    },
-    {
-     "name": "王老师",
-     "kind": "person"
-    },
-    {
-     "name": "测试",
+     "name": "kk",
      "kind": "roster"
     },
     {
-     "name": "测试环境",
+     "name": "商品",
+     "kind": "noun"
+    },
+    {
+     "name": "图片",
      "kind": "noun"
     }
    ],
@@ -1092,8 +1122,8 @@ window.LABEL_DATA = {
   },
   {
    "kind": "statement",
-   "id": "stmt2-14",
-   "evidence": "运营发布7月18日截单提醒",
+   "id": "stmt2-15",
+   "evidence": "运营发布9月20日截单提醒",
    "entities": [
     {
      "name": "运营",
@@ -1110,73 +1140,23 @@ window.LABEL_DATA = {
   },
   {
    "kind": "statement",
-   "id": "stmt2-15",
-   "evidence": "朱倩表示可能需要一个区间的数据，除了账户类型、金额、数量、种类",
-   "entities": [
-    {
-     "name": "朱倩",
-     "kind": "person"
-    },
-    {
-     "name": "区间",
-     "kind": "noun"
-    },
-    {
-     "name": "数据",
-     "kind": "noun"
-    },
-    {
-     "name": "账户",
-     "kind": "noun"
-    },
-    {
-     "name": "类型",
-     "kind": "noun"
-    },
-    {
-     "name": "金额",
-     "kind": "noun"
-    },
-    {
-     "name": "数量",
-     "kind": "noun"
-    },
-    {
-     "name": "种类",
-     "kind": "noun"
-    }
-   ],
-   "machine": {
-    "extracted": false,
-    "head": null,
-    "predicate": null,
-    "tail": null
-   },
-   "source": "weak_cue"
-  },
-  {
-   "kind": "statement",
    "id": "stmt2-16",
-   "evidence": "安澜发布标题为“代号：侯潮”的视频",
+   "evidence": "五河琴里の棒棒糖使用抽签功能并获得签值",
    "entities": [
     {
-     "name": "侯潮",
-     "kind": "person"
+     "name": "五河",
+     "kind": "place"
     },
     {
-     "name": "安澜",
+     "name": "五河琴里の棒棒糖",
      "kind": "roster"
     },
     {
-     "name": "标题",
-     "kind": "noun"
+     "name": "棒棒糖",
+     "kind": "roster"
     },
     {
-     "name": "代号",
-     "kind": "noun"
-    },
-    {
-     "name": "视频",
+     "name": "功能",
      "kind": "noun"
     }
    ],
@@ -1191,23 +1171,11 @@ window.LABEL_DATA = {
   {
    "kind": "statement",
    "id": "stmt2-17",
-   "evidence": "王婕提供Oracle JDBC连接地址 jdbc:oracle:thin:@//173.2.100.64:1521/fxq40cs",
+   "evidence": "运营发布11月8日截止的截单提醒",
    "entities": [
     {
-     "name": "王婕",
-     "kind": "person"
-    },
-    {
-     "name": "Oracle",
-     "kind": "topic"
-    },
-    {
-     "name": "JDBC",
-     "kind": "topic"
-    },
-    {
-     "name": "地址",
-     "kind": "noun"
+     "name": "运营",
+     "kind": "roster"
     }
    ],
    "machine": {
@@ -1221,11 +1189,53 @@ window.LABEL_DATA = {
   {
    "kind": "statement",
    "id": "stmt2-18",
-   "evidence": "运营发布7月11日18点截单提醒",
+   "evidence": "任泽昂请何老师提供CIF截图以展示近十日操作站点如何查看和分析",
    "entities": [
     {
-     "name": "运营",
+     "name": "任泽昂",
+     "kind": "person"
+    },
+    {
+     "name": "CIF",
+     "kind": "topic"
+    },
+    {
+     "name": "如何",
      "kind": "roster"
+    },
+    {
+     "name": "老师",
+     "kind": "noun"
+    },
+    {
+     "name": "站点",
+     "kind": "noun"
+    },
+    {
+     "name": "分析",
+     "kind": "noun"
+    }
+   ],
+   "machine": {
+    "extracted": false,
+    "head": null,
+    "predicate": null,
+    "tail": null
+   },
+   "source": "weak_cue"
+  },
+  {
+   "kind": "statement",
+   "id": "stmt2-19",
+   "evidence": "kk再次发布明日截单商品图",
+   "entities": [
+    {
+     "name": "kk",
+     "kind": "roster"
+    },
+    {
+     "name": "商品",
+     "kind": "noun"
     }
    ],
    "machine": {
@@ -1251,11 +1261,11 @@ window.LABEL_DATA = {
   {
    "kind": "claim",
    "id": "claim-2",
-   "evidence": "新机子瓦一兔子说昨天跟同事吵架、已发给主管，表示不想干了",
-   "head": "兔子",
-   "predicate": "COLLABORATES_WITH",
-   "intensity": 2,
-   "tail": "主管",
+   "evidence": "小鲸鱼称自家是头一号住户，克劳德负责写门牌号并把尘霜记为第二号",
+   "head": "克劳德",
+   "predicate": "OWNS",
+   "intensity": 4,
+   "tail": "门牌号",
    "source": "llm"
   },
   {
@@ -1271,11 +1281,11 @@ window.LABEL_DATA = {
   {
    "kind": "claim",
    "id": "claim-4",
-   "evidence": "小鲸鱼称自家是头一号住户，克劳德负责写门牌号并把尘霜记为第二号",
-   "head": "克劳德",
-   "predicate": "OWNS",
-   "intensity": 4,
-   "tail": "门牌号",
+   "evidence": "新机子瓦一兔子说昨天跟同事吵架、已发给主管，表示不想干了",
+   "head": "新机子瓦一兔子",
+   "predicate": "MAINTAINS",
+   "intensity": 3,
+   "tail": "主管",
    "source": "llm"
   },
   {
@@ -1283,9 +1293,9 @@ window.LABEL_DATA = {
    "id": "claim-5",
    "evidence": "星落落称朋友用5090本地部署训练半个月，东堂散华调侃，土豆期待成品并询问进度",
    "head": "朋友",
-   "predicate": "COLLABORATES_WITH",
-   "intensity": 2,
-   "tail": "训练",
+   "predicate": "OWNS",
+   "intensity": 4,
+   "tail": "部署",
    "source": "llm"
   },
   {
@@ -1293,9 +1303,9 @@ window.LABEL_DATA = {
    "id": "claim-6",
    "evidence": "王勇表示下午看看能不能部署一版本",
    "head": "王勇",
-   "predicate": "COLLABORATES_WITH",
-   "intensity": 2,
-   "tail": "部署",
+   "predicate": "MAINTAINS",
+   "intensity": 3,
+   "tail": "版本",
    "source": "llm"
   },
   {
@@ -1311,86 +1321,56 @@ window.LABEL_DATA = {
   {
    "kind": "claim",
    "id": "claim-8",
-   "evidence": "任泽昂要求@498545782王老师先更新测试环境前端",
-   "head": "王老师",
-   "predicate": "MAINTAINS",
-   "intensity": 3,
-   "tail": "测试环境",
+   "evidence": "kk发布明日截单商品图片",
+   "head": "kk",
+   "predicate": "OWNS",
+   "intensity": 4,
+   "tail": "图片",
    "source": "llm"
   },
   {
    "kind": "claim",
    "id": "claim-9",
-   "evidence": "朱倩表示可能需要一个区间的数据，除了账户类型、金额、数量、种类",
-   "head": "朱倩",
+   "evidence": "五河琴里の棒棒糖使用抽签功能并获得签值",
+   "head": "五河琴里の棒棒糖",
    "predicate": "DEPENDS_ON",
    "intensity": 1,
-   "tail": "数据",
+   "tail": "功能",
    "source": "llm"
   },
   {
    "kind": "claim",
    "id": "claim-10",
-   "evidence": "安澜发布标题为“代号：侯潮”的视频",
-   "head": "安澜",
-   "predicate": "OWNS",
-   "intensity": 4,
-   "tail": "视频",
+   "evidence": "任泽昂请何老师提供CIF截图以展示近十日操作站点如何查看和分析",
+   "head": "任泽昂",
+   "predicate": "COLLABORATES_WITH",
+   "intensity": 2,
+   "tail": "老师",
    "source": "llm"
   },
   {
    "kind": "claim",
    "id": "claim-11",
-   "evidence": "王婕提供Oracle JDBC连接地址 jdbc:oracle:thin:@//173.2.100.64:1521/fxq40cs",
-   "head": "王婕",
-   "predicate": "MAINTAINS",
-   "intensity": 3,
-   "tail": "Oracle",
-   "source": "llm"
-  },
-  {
-   "kind": "claim",
-   "id": "claim-12",
-   "evidence": "运营发布5月21日商品截单提醒",
-   "head": "运营",
-   "predicate": "MAINTAINS",
-   "intensity": 3,
+   "evidence": "kk再次发布明日截单商品图",
+   "head": "kk",
+   "predicate": "OWNS",
+   "intensity": 4,
    "tail": "商品",
    "source": "llm"
   },
   {
    "kind": "claim",
+   "id": "claim-12",
+   "evidence": "Q群管家发布广告，欢迎新成员进群",
+   "head": "Q群管家",
+   "predicate": "OWNS",
+   "intensity": 4,
+   "tail": "广告",
+   "source": "llm"
+  },
+  {
+   "kind": "claim",
    "id": "claim-13",
-   "evidence": "传讯员8号发布二店梦谷小部屋今日现货掉落及图片",
-   "head": "传讯员8号",
-   "predicate": "COLLABORATES_WITH",
-   "intensity": 2,
-   "tail": "部屋",
-   "source": "llm"
-  },
-  {
-   "kind": "claim",
-   "id": "claim-14",
-   "evidence": "土豆发图展示目前使用的两个设备",
-   "head": "土豆",
-   "predicate": "OWNS",
-   "intensity": 4,
-   "tail": "设备",
-   "source": "llm"
-  },
-  {
-   "kind": "claim",
-   "id": "claim-15",
-   "evidence": "AAA武陵架索接线潘工表示不放心可提供源文件",
-   "head": "潘工",
-   "predicate": "OWNS",
-   "intensity": 4,
-   "tail": "源文件",
-   "source": "llm"
-  },
-  {
-   "kind": "claim",
-   "id": "claim-16",
    "evidence": "任泽昂让@429791739和@1985222059使用 fxq@njzq.com.cn、Njzq@95386、https://aigc.njzq.cn:8089/",
    "head": "任泽昂",
    "predicate": "OWNS",
@@ -1400,18 +1380,28 @@ window.LABEL_DATA = {
   },
   {
    "kind": "claim",
-   "id": "claim-17",
-   "evidence": "米琪拉发布春节放假公告并@全体成员",
-   "head": "米琪拉",
-   "predicate": "OWNS",
-   "intensity": 4,
-   "tail": "公告",
+   "id": "claim-14",
+   "evidence": "喜欢果睡评论群相册新增的图很骚",
+   "head": "喜欢果睡",
+   "predicate": "COLLABORATES_WITH",
+   "intensity": 2,
+   "tail": "评论",
    "source": "llm"
   },
   {
    "kind": "claim",
-   "id": "claim-18",
-   "evidence": "运营发布5月24日商品截单提醒",
+   "id": "claim-15",
+   "evidence": "运营发布5月21日商品截单提醒",
+   "head": "运营",
+   "predicate": "OWNS",
+   "intensity": 4,
+   "tail": "商品",
+   "source": "llm"
+  },
+  {
+   "kind": "claim",
+   "id": "claim-16",
+   "evidence": "运营发布11月15日截止预定商品的明日截单提醒",
    "head": "运营",
    "predicate": "MAINTAINS",
    "intensity": 3,
@@ -1420,23 +1410,287 @@ window.LABEL_DATA = {
   },
   {
    "kind": "claim",
-   "id": "claim-19",
-   "evidence": "王勇提供访问地址 http://192.168.31.27:3001/aml/@4690364584 并让对方使用该地址访问",
-   "head": "王勇",
-   "predicate": "OWNS",
-   "intensity": 4,
-   "tail": "地址",
+   "id": "claim-17",
+   "evidence": "运营发布截单提醒，提示即将截止预定的商品",
+   "head": "运营",
+   "predicate": "MAINTAINS",
+   "intensity": 3,
+   "tail": "商品",
    "source": "llm"
   },
   {
    "kind": "claim",
-   "id": "claim-20",
-   "evidence": "用户未登录时需要拉起OA并跳转兴元地址",
-   "head": "用户",
+   "id": "claim-18",
+   "evidence": "任泽昂询问是不是测试环境代码没有更新",
+   "head": "任泽昂",
    "predicate": "DEPENDS_ON",
    "intensity": 1,
-   "tail": "OA",
+   "tail": "测试环境",
    "source": "llm"
+  },
+  {
+   "kind": "claim",
+   "id": "claim-19",
+   "evidence": "凉橙表示小鲸鱼的回复设置确实需要改，并建议拉长回复间隔",
+   "head": "小鲸鱼",
+   "predicate": "OWNS",
+   "intensity": 4,
+   "tail": "设置",
+   "source": "llm"
+  }
+ ],
+ "coverage": [
+  {
+   "kind": "coverage",
+   "id": "cov-1",
+   "evidence": "乌角鲨最终称没钱养服务器，劝大家别让他实现以免无法debug",
+   "machine": [],
+   "source": "v2_seed"
+  },
+  {
+   "kind": "coverage",
+   "id": "cov-2",
+   "evidence": "x分享大肥鱼接入QQ后每天只花一块多的部署成本",
+   "machine": [],
+   "source": "v2_seed"
+  },
+  {
+   "kind": "coverage",
+   "id": "cov-3",
+   "evidence": "北瑀发问号表情不认账，往汐让他喊麦门，北瑀称饿了之后行为不负责并喊麦门，往汐让他先点吃的",
+   "machine": [],
+   "source": "v2_seed"
+  },
+  {
+   "kind": "coverage",
+   "id": "cov-4",
+   "evidence": "黑瞳九月询问群相册新增加了2张《白丝萝莉》[图片][图片]是否是校花球童",
+   "machine": [],
+   "source": "v2_seed"
+  },
+  {
+   "kind": "coverage",
+   "id": "cov-5",
+   "evidence": "kk再次发布明日截单商品图",
+   "machine": [
+    {
+     "head": "kk",
+     "predicate": "MAINTAINS",
+     "intensity": 3,
+     "tail": "商品"
+    }
+   ],
+   "source": "v2_seed"
+  },
+  {
+   "kind": "coverage",
+   "id": "cov-6",
+   "evidence": "棉棉确认是不是本地部署，往汐与神经症确认是本地跑、正算显存",
+   "machine": [],
+   "source": "v2_seed"
+  },
+  {
+   "kind": "coverage",
+   "id": "cov-7",
+   "evidence": "Valhalla表示没看懂实现方式",
+   "machine": [],
+   "source": "v2_seed"
+  },
+  {
+   "kind": "coverage",
+   "id": "cov-8",
+   "evidence": "远望打算本地部署小模型来做对话bot",
+   "machine": [
+    {
+     "head": "远望",
+     "predicate": "OWNS",
+     "intensity": 4,
+     "tail": "模型"
+    }
+   ],
+   "source": "v2_seed"
+  },
+  {
+   "kind": "coverage",
+   "id": "cov-9",
+   "evidence": "西伯利亚大土豆分享自己崩溃后清理缓存并重启修复的经验",
+   "machine": [
+    {
+     "head": "西伯利亚大土豆",
+     "predicate": "OWNS",
+     "intensity": 4,
+     "tail": "经验"
+    }
+   ],
+   "source": "v2_seed"
+  },
+  {
+   "kind": "coverage",
+   "id": "cov-10",
+   "evidence": "Dream设想本地部署交给大肥鱼一键出视频，说目标就是这样",
+   "machine": [
+    {
+     "head": "大肥鱼",
+     "predicate": "OWNS",
+     "intensity": 4,
+     "tail": "部署"
+    }
+   ],
+   "source": "v2_seed"
+  },
+  {
+   "kind": "coverage",
+   "id": "cov-11",
+   "evidence": "Dream反馈本地出图受电脑配置限制，群友讨论本地部署并建议先保证能跑再谈效果",
+   "machine": [],
+   "source": "v2_seed"
+  },
+  {
+   "kind": "coverage",
+   "id": "cov-12",
+   "evidence": "Q群管家发布广告，欢迎新成员进群",
+   "machine": [
+    {
+     "head": "Q群管家",
+     "predicate": "OWNS",
+     "intensity": 4,
+     "tail": "广告"
+    }
+   ],
+   "source": "v2_seed"
+  },
+  {
+   "kind": "coverage",
+   "id": "cov-13",
+   "evidence": "新机子瓦一兔子说昨天跟同事吵架、已发给主管，表示不想干了",
+   "machine": [
+    {
+     "head": "新机子瓦一兔子",
+     "predicate": "COLLABORATES_WITH",
+     "intensity": 2,
+     "tail": "主管"
+    }
+   ],
+   "source": "v2_seed"
+  },
+  {
+   "kind": "coverage",
+   "id": "cov-14",
+   "evidence": "两人讨论去地中海留学需要学习当地语言，胖吉强调教授懂英语不代表路人懂",
+   "machine": [],
+   "source": "v2_seed"
+  },
+  {
+   "kind": "coverage",
+   "id": "cov-15",
+   "evidence": "小鲸鱼称自家是头一号住户，克劳德负责写门牌号并把尘霜记为第二号",
+   "machine": [
+    {
+     "head": "克劳德",
+     "predicate": "OWNS",
+     "intensity": 4,
+     "tail": "门牌号"
+    }
+   ],
+   "source": "v2_seed"
+  },
+  {
+   "kind": "coverage",
+   "id": "cov-16",
+   "evidence": "运营发布9月20日截单提醒",
+   "machine": [],
+   "source": "v2_seed"
+  },
+  {
+   "kind": "coverage",
+   "id": "cov-17",
+   "evidence": "守门而坐贾偏宜发另一张图，称不愿更新系统所以设置不信任证书",
+   "machine": [],
+   "source": "v2_seed"
+  },
+  {
+   "kind": "coverage",
+   "id": "cov-18",
+   "evidence": "运营发布11月8日截止的截单提醒",
+   "machine": [],
+   "source": "v2_seed"
+  },
+  {
+   "kind": "coverage",
+   "id": "cov-19",
+   "evidence": "星落落称朋友用5090本地部署训练半个月，东堂散华调侃，土豆期待成品并询问进度",
+   "machine": [
+    {
+     "head": "朋友",
+     "predicate": "OWNS",
+     "intensity": 4,
+     "tail": "训练"
+    }
+   ],
+   "source": "v2_seed"
+  },
+  {
+   "kind": "coverage",
+   "id": "cov-20",
+   "evidence": "kk发布明日截单商品图片",
+   "machine": [
+    {
+     "head": "kk",
+     "predicate": "OWNS",
+     "intensity": 4,
+     "tail": "图片"
+    }
+   ],
+   "source": "v2_seed"
+  },
+  {
+   "kind": "coverage",
+   "id": "cov-21",
+   "evidence": "王勇表示下午看看能不能部署一版本",
+   "machine": [
+    {
+     "head": "王勇",
+     "predicate": "OWNS",
+     "intensity": 4,
+     "tail": "部署"
+    }
+   ],
+   "source": "v2_seed"
+  },
+  {
+   "kind": "coverage",
+   "id": "cov-22",
+   "evidence": "喜欢果睡评论群相册新增的图很骚",
+   "machine": [],
+   "source": "v2_seed"
+  },
+  {
+   "kind": "coverage",
+   "id": "cov-23",
+   "evidence": "任泽昂请何老师提供CIF截图以展示近十日操作站点如何查看和分析",
+   "machine": [
+    {
+     "head": "任泽昂",
+     "predicate": "COLLABORATES_WITH",
+     "intensity": 2,
+     "tail": "老师"
+    }
+   ],
+   "source": "v2_seed"
+  },
+  {
+   "kind": "coverage",
+   "id": "cov-24",
+   "evidence": "五河琴里の棒棒糖使用抽签功能并获得签值",
+   "machine": [
+    {
+     "head": "五河琴里の棒棒糖",
+     "predicate": "COLLABORATES_WITH",
+     "intensity": 2,
+     "tail": "功能"
+    }
+   ],
+   "source": "v2_seed"
   }
  ],
  "behaviors": [
@@ -1510,6 +1764,80 @@ window.LABEL_DATA = {
   {
    "kind": "behavior",
    "id": "beh-2",
+   "person": "海嗣",
+   "verb": "讨论",
+   "target": "江苏",
+   "date": "2026-09-03",
+   "merged_count": 4,
+   "merged_people": [
+    "沙滩",
+    "海嗣"
+   ],
+   "evidence_count": 4,
+   "evidence": [
+    "海嗣询问对方在江苏哪里，感叹自己被嫌弃，聊到海门人有钱并自嘲是穷鬼、房子买到农村",
+    "Veronica Davichi 转发花嫁五条悟沙滩婚约款周边的聊天记录",
+    "Veronica Davichi 转发花嫁五条悟沙滩婚约款周边的聊天记录"
+   ],
+   "entities": [
+    {
+     "name": "海嗣",
+     "kind": "person"
+    },
+    {
+     "name": "沙滩",
+     "kind": "person"
+    },
+    {
+     "name": "江苏",
+     "kind": "place"
+    },
+    {
+     "name": "婚约款",
+     "kind": "topic"
+    },
+    {
+     "name": "Veronica",
+     "kind": "topic"
+    },
+    {
+     "name": "Davichi",
+     "kind": "topic"
+    },
+    {
+     "name": "房子",
+     "kind": "roster"
+    },
+    {
+     "name": "对方",
+     "kind": "noun"
+    },
+    {
+     "name": "海门",
+     "kind": "noun"
+    },
+    {
+     "name": "穷鬼",
+     "kind": "noun"
+    },
+    {
+     "name": "农村",
+     "kind": "noun"
+    },
+    {
+     "name": "婚约",
+     "kind": "noun"
+    },
+    {
+     "name": "聊天记录",
+     "kind": "noun"
+    }
+   ],
+   "source": "behavior"
+  },
+  {
+   "kind": "behavior",
+   "id": "beh-3",
    "person": "王逗",
    "verb": "讨论",
    "target": "SX",
@@ -1580,7 +1908,106 @@ window.LABEL_DATA = {
   },
   {
    "kind": "behavior",
-   "id": "beh-3",
+   "id": "beh-4",
+   "person": "海嗣",
+   "verb": "讨论",
+   "target": "分析7",
+   "date": "2026-07-20",
+   "merged_count": 3,
+   "merged_people": [
+    "海嗣"
+   ],
+   "evidence_count": 3,
+   "evidence": [
+    "海嗣分析7年11万的吃喝开销应是同事请客，并讨论新疆反腐有KPI",
+    "海嗣分析7年11万的吃喝开销应是同事请客，并讨论新疆反腐有KPI",
+    "海嗣分析7年11万的吃喝开销应是同事请客，并讨论新疆反腐有KPI"
+   ],
+   "entities": [
+    {
+     "name": "海嗣",
+     "kind": "person"
+    },
+    {
+     "name": "分析7",
+     "kind": "topic"
+    },
+    {
+     "name": "新疆",
+     "kind": "place"
+    },
+    {
+     "name": "KPI",
+     "kind": "topic"
+    },
+    {
+     "name": "分析",
+     "kind": "noun"
+    },
+    {
+     "name": "同事",
+     "kind": "noun"
+    }
+   ],
+   "source": "behavior"
+  },
+  {
+   "kind": "behavior",
+   "id": "beh-5",
+   "person": "海嗣",
+   "verb": "去",
+   "target": "江中",
+   "date": "2026-05-26",
+   "merged_count": 3,
+   "merged_people": [
+    "华莱士",
+    "海嗣"
+   ],
+   "evidence_count": 3,
+   "evidence": [
+    "海嗣质疑乳酸菌素片是否有用，并调侃无效可去告江中",
+    "海嗣调侃美丽的怪物不如去吃华莱士",
+    "海嗣调侃美丽的怪物不如去吃华莱士"
+   ],
+   "entities": [
+    {
+     "name": "海嗣",
+     "kind": "person"
+    },
+    {
+     "name": "华莱士",
+     "kind": "person"
+    },
+    {
+     "name": "江中",
+     "kind": "place"
+    },
+    {
+     "name": "美丽",
+     "kind": "place"
+    },
+    {
+     "name": "乳酸菌",
+     "kind": "roster"
+    },
+    {
+     "name": "美丽的怪物",
+     "kind": "roster"
+    },
+    {
+     "name": "素片",
+     "kind": "noun"
+    },
+    {
+     "name": "怪物",
+     "kind": "noun"
+    }
+   ],
+   "source": "behavior"
+  },
+  {
+   "kind": "behavior",
+   "id": "beh-6",
    "person": "羽生玲",
    "verb": "去",
    "target": "Valhalla",
@@ -1633,198 +2060,52 @@ window.LABEL_DATA = {
   },
   {
    "kind": "behavior",
-   "id": "beh-4",
-   "person": "羽生玲",
-   "verb": "确认",
-   "target": "GPT-SoVITS",
-   "date": "2026-10-24",
-   "merged_count": 2,
-   "merged_people": [
-    "羽生玲",
-    "道谢"
-   ],
-   "evidence_count": 2,
-   "evidence": [
-    "羽生玲央询问训练音色用什么软件，淮茶确认用GPT-SoVITS，羽生玲央道谢",
-    "羽生玲央询问训练音色用什么软件，淮茶确认用GPT-SoVITS，羽生玲央道谢"
-   ],
-   "entities": [
-    {
-     "name": "羽生玲",
-     "kind": "person"
-    },
-    {
-     "name": "道谢",
-     "kind": "person"
-    },
-    {
-     "name": "GPT-SoVITS",
-     "kind": "topic"
-    },
-    {
-     "name": "淮茶",
-     "kind": "roster"
-    },
-    {
-     "name": "羽生玲央",
-     "kind": "roster"
-    },
-    {
-     "name": "训练",
-     "kind": "noun"
-    },
-    {
-     "name": "音色",
-     "kind": "noun"
-    },
-    {
-     "name": "软件",
-     "kind": "noun"
-    }
-   ],
-   "source": "behavior"
-  },
-  {
-   "kind": "behavior",
-   "id": "beh-5",
-   "person": "蓝白",
-   "verb": "讨论",
-   "target": "JSK",
-   "date": "2026-11-01",
-   "merged_count": 2,
-   "merged_people": [
-    "蓝白"
-   ],
-   "evidence_count": 2,
-   "evidence": [
-    "守门而坐贾偏宜购买蓝白JSK长款和粉色开衫，与194讨论巴黎假日、搭配及转手打算",
-    "守门而坐贾偏宜购买蓝白JSK长款和粉色开衫，与194讨论巴黎假日、搭配及转手打算"
-   ],
-   "entities": [
-    {
-     "name": "蓝白",
-     "kind": "person"
-    },
-    {
-     "name": "巴黎",
-     "kind": "place"
-    },
-    {
-     "name": "JSK",
-     "kind": "topic"
-    },
-    {
-     "name": "守门而坐贾偏宜",
-     "kind": "roster"
-    },
-    {
-     "name": "守门",
-     "kind": "noun"
-    },
-    {
-     "name": "长款",
-     "kind": "noun"
-    },
-    {
-     "name": "粉色",
-     "kind": "noun"
-    },
-    {
-     "name": "开衫",
-     "kind": "noun"
-    }
-   ],
-   "source": "behavior"
-  },
-  {
-   "kind": "behavior",
-   "id": "beh-6",
-   "person": "安辞",
-   "verb": "讨论",
-   "target": "Ferry",
-   "date": "2026-04-30",
-   "merged_count": 1,
-   "merged_people": [
-    "安辞"
-   ],
-   "evidence_count": 1,
-   "evidence": [
-    "Ferry.安辞在群里分享了一段聊天记录"
-   ],
-   "entities": [
-    {
-     "name": "安辞",
-     "kind": "person"
-    },
-    {
-     "name": "Ferry",
-     "kind": "topic"
-    },
-    {
-     "name": "Ferry.安辞",
-     "kind": "roster"
-    },
-    {
-     "name": "群里",
-     "kind": "noun"
-    },
-    {
-     "name": "聊天记录",
-     "kind": "noun"
-    }
-   ],
-   "source": "behavior"
-  },
-  {
-   "kind": "behavior",
    "id": "beh-7",
-   "person": "毛绒",
-   "verb": "发布",
-   "target": "海洋",
-   "date": "2026-06-11",
-   "merged_count": 1,
+   "person": "明白",
+   "verb": "去",
+   "target": "青春",
+   "date": "2026-10-11",
+   "merged_count": 3,
    "merged_people": [
-    "毛绒"
+    "明白"
    ],
-   "evidence_count": 1,
+   "evidence_count": 3,
    "evidence": [
-    "kk发布第五人格蒸汽朋克海洋风毛绒玩偶挂件上架消息"
+    "LYLCC建议去B站抄作业，青春猪头少年表示明白",
+    "LYLCC建议去B站抄作业，青春猪头少年表示明白",
+    "LYLCC建议去B站抄作业，青春猪头少年表示明白"
    ],
    "entities": [
     {
-     "name": "毛绒",
+     "name": "明白",
      "kind": "person"
     },
     {
-     "name": "海洋",
+     "name": "青春",
      "kind": "place"
     },
     {
-     "name": "kk",
+     "name": "猪头少年",
+     "kind": "topic"
+    },
+    {
+     "name": "LYLCC",
+     "kind": "topic"
+    },
+    {
+     "name": "少年",
      "kind": "roster"
     },
     {
-     "name": "玩偶",
-     "kind": "roster"
-    },
-    {
-     "name": "人格",
+     "name": "建议",
      "kind": "noun"
     },
     {
-     "name": "蒸汽",
+     "name": "作业",
      "kind": "noun"
     },
     {
-     "name": "朋克",
-     "kind": "noun"
-    },
-    {
-     "name": "挂件",
-     "kind": "noun"
-    },
-    {
-     "name": "消息",
+     "name": "猪头",
      "kind": "noun"
     }
    ],
@@ -1833,41 +2114,59 @@ window.LABEL_DATA = {
   {
    "kind": "behavior",
    "id": "beh-8",
-   "person": "毛绒",
-   "verb": "发布",
-   "target": "ENSKY",
-   "date": "2026-06-05",
-   "merged_count": 1,
+   "person": "肯德基",
+   "verb": "去",
+   "target": "河北",
+   "date": "2026-05-14",
+   "merged_count": 2,
    "merged_people": [
-    "毛绒"
+    "特朗普",
+    "肯德基"
    ],
-   "evidence_count": 1,
+   "evidence_count": 2,
    "evidence": [
-    "kk发布咒术回战5周年ENSKY猫耳毛绒玩偶上架消息"
+    "猪肉蛋堡调侃特朗普行程选得精明，能赶上酒店和肯德基优惠，周末还去河北",
+    "猪肉蛋堡调侃特朗普行程选得精明，能赶上酒店和肯德基优惠，周末还去河北"
    ],
    "entities": [
     {
-     "name": "毛绒",
+     "name": "特朗普",
      "kind": "person"
     },
     {
-     "name": "ENSKY",
-     "kind": "topic"
+     "name": "肯德基",
+     "kind": "person"
     },
     {
-     "name": "kk",
+     "name": "河北",
+     "kind": "place"
+    },
+    {
+     "name": "周末",
      "kind": "roster"
     },
     {
-     "name": "玩偶",
+     "name": "猪肉蛋堡",
      "kind": "roster"
     },
     {
-     "name": "咒术",
+     "name": "猪肉",
      "kind": "noun"
     },
     {
-     "name": "消息",
+     "name": "蛋堡",
+     "kind": "noun"
+    },
+    {
+     "name": "行程",
+     "kind": "noun"
+    },
+    {
+     "name": "酒店",
+     "kind": "noun"
+    },
+    {
+     "name": "优惠",
      "kind": "noun"
     }
    ],
@@ -1876,41 +2175,39 @@ window.LABEL_DATA = {
   {
    "kind": "behavior",
    "id": "beh-9",
-   "person": "怀玉玉",
-   "verb": "发布",
-   "target": "OPED",
-   "date": "2026-06-16",
-   "merged_count": 1,
+   "person": "肯德基",
+   "verb": "讨论",
+   "target": "KFC",
+   "date": "2026-08-06",
+   "merged_count": 2,
    "merged_people": [
-    "怀玉玉"
+    "海嗣发",
+    "肯德基"
    ],
-   "evidence_count": 1,
+   "evidence_count": 2,
    "evidence": [
-    "kk发布咒术回战涉谷事变与怀玉玉折OPED拍立得上架消息"
+    "海嗣发肯德基疯四文案，并说自己不看就转发，还调侃群聊因不请他吃KFC被解散",
+    "海嗣发肯德基疯四文案，并说自己不看就转发，还调侃群聊因不请他吃KFC被解散"
    ],
    "entities": [
     {
-     "name": "怀玉玉",
+     "name": "海嗣发",
      "kind": "person"
     },
     {
-     "name": "OPED",
+     "name": "肯德基",
+     "kind": "person"
+    },
+    {
+     "name": "KFC",
      "kind": "topic"
     },
     {
-     "name": "kk",
+     "name": "海嗣",
      "kind": "roster"
     },
     {
-     "name": "咒术",
-     "kind": "noun"
-    },
-    {
-     "name": "事变",
-     "kind": "noun"
-    },
-    {
-     "name": "消息",
+     "name": "文案",
      "kind": "noun"
     }
    ],
@@ -1919,45 +2216,47 @@ window.LABEL_DATA = {
   {
    "kind": "behavior",
    "id": "beh-10",
-   "person": "阴晴不定",
-   "verb": "发布",
-   "target": "哥哥",
-   "date": "2026-06-04",
-   "merged_count": 1,
+   "person": "海嗣",
+   "verb": "讨论",
+   "target": "外贸款",
+   "date": "2026-10-08",
+   "merged_count": 2,
    "merged_people": [
-    "阴晴不定"
+    "安卓",
+    "海嗣"
    ],
-   "evidence_count": 1,
+   "evidence_count": 2,
    "evidence": [
-    "kk发布《阴晴不定的大哥哥》公主咖啡和服系列上架消息"
+    "海嗣讨论手机充电器规格，称5V1A激活不了多数安卓手机充电、自己买的可能是外贸款",
+    "海嗣讨论手机充电器规格，称5V1A激活不了多数安卓手机充电、自己买的可能是外贸款"
    ],
    "entities": [
     {
-     "name": "阴晴不定",
+     "name": "海嗣",
      "kind": "person"
     },
     {
-     "name": "哥哥",
-     "kind": "place"
+     "name": "安卓",
+     "kind": "person"
     },
     {
-     "name": "kk",
-     "kind": "roster"
+     "name": "外贸款",
+     "kind": "topic"
     },
     {
-     "name": "咖啡",
-     "kind": "roster"
-    },
-    {
-     "name": "公主",
+     "name": "手机",
      "kind": "noun"
     },
     {
-     "name": "和服",
+     "name": "充电器",
      "kind": "noun"
     },
     {
-     "name": "消息",
+     "name": "规格",
+     "kind": "noun"
+    },
+    {
+     "name": "外贸",
      "kind": "noun"
     }
    ],

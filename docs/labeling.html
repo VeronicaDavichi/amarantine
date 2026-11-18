@@ -105,9 +105,10 @@
     { key: "statements", name: "关系陈述", kind: "relation" },
     { key: "behaviors", name: "关系行为", kind: "relation" },
     { key: "claims", name: "机器边核对", kind: "claim" },
+    { key: "coverage", name: "关系覆盖", kind: "coverage" },
     { key: "senses", name: "指称义项", kind: "sense" },
   ];
-  const STORE = "amarantine-label-v4";
+  const STORE = "amarantine-label-v5";
   let state = load();
   let gi = 0, idx = 0;
 
@@ -116,7 +117,7 @@
       const cur = JSON.parse(localStorage.getItem(STORE) || "{}");
       if (Object.keys(cur).length) return cur;
       // v2 → v3 迁移：陈述组 id 没变，把旧标注带过来；行为/义项因去重换过 id，不迁移
-      const old = JSON.parse(localStorage.getItem("amarantine-label-v3") || "{}");
+      const old = JSON.parse(localStorage.getItem("amarantine-label-v4") || "{}");
       const migrated = {};
       Object.keys(old).forEach(k => {
         if (k.startsWith("stmt-")) migrated[k] = old[k];
@@ -136,7 +137,8 @@
   const isDone = x => {
     const s = labelOf(x.id);
     if (!s) return false;
-    return GROUPS[gi].kind === "relation" ? s.intensity !== undefined : !!s.label;
+    const rel = GROUPS[gi].kind === "relation" || GROUPS[gi].kind === "coverage";
+    return rel ? s.intensity !== undefined : !!s.label;
   };
   function firstUnlabeled() {
     const i = items().findIndex(x => !isDone(x));
@@ -221,6 +223,22 @@
       body += `<div class="machine">规则结果：` + (item.machine && item.machine.extracted
         ? `<b>${esc(item.machine.head)}</b> --${esc(item.machine.predicate)}--> <b>${esc(item.machine.tail)}</b>`
         : `<b>未抽取</b>（规则漏掉）`) + `</div>`;
+    } else if (item.kind === "coverage") {
+      const ms = item.machine || [];
+      body += `<div class="hint" style="margin:10px 0;color:var(--warn)">`
+           + `⬇ 机器从这句抽到 <b>${ms.length}</b> 条关系`
+           + (ms.length ? "：" : "（认为没有关系）") + `</div>`;
+      if (ms.length) {
+        body += `<ul style="margin:0 0 10px 20px">`;
+        ms.forEach((m) => {
+          body += `<li><b>${esc(m.head)}</b> --${esc(m.predicate)}--> <b>${esc(m.tail)}</b></li>`;
+        });
+        body += `</ul>`;
+      }
+      body += `<div class="evidence">${esc(item.evidence)}</div>`;
+      body += `<div class="hint" style="margin-top:10px">`
+           + `这句话**实际上**有多少条「谁和什么有稳定关系」？`
+           + `机器漏了也算你选的条数。</div>`;
     } else if (item.kind === "claim") {
       body += `<div class="hint" style="margin:10px 0;color:var(--warn)">`
            + `⬇ 机器从这句话抽出的边：<b>${esc(item.head)} --${esc(item.predicate)}--> ${esc(item.tail)}</b><br>`
@@ -262,6 +280,17 @@
              + (lb.head ? ` · 主语 ${esc(lb.head.name)}` : "")
              + (lb.tail ? ` → ${esc(lb.tail.name)}` : "") + `</div>`;
       }
+    } else if (g.kind === "coverage") {
+      const opts = [[0, "0 条"], [1, "1 条"], [2, "2 条"], [3, "3 条或更多"]];
+      body += `<div class="row" style="margin-top:16px">`;
+      opts.forEach(([k, t]) => {
+        const on = lb.intensity === k ? " on" : "";
+        body += `<button class="level${on}" data-level="${k}">${t}</button>`;
+      });
+      body += `</div>`;
+      body += `<label class="note-wrap">漏了什么（可空）<input class="note"`;
+      body += ` type="text" data-note="1" placeholder="例：便携式 负责 服务器"`;
+      body += ` value="${esc(lb.note || "")}"></label>`;
     } else if (g.kind === "claim") {
       const opts = [["ok", "✅ 对（这句话支持这条边）"], ["bad", "❌ 错（句子里没有）"],
                     ["warn", "🤔 不确定"]];
