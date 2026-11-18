@@ -120,12 +120,17 @@ def main() -> int:
             truth.append((human_head, human_tail, human_int))
         truth.extend(parse_note_relations(lab.get("note") or ""))
 
+        # 人工若显式选了谓词，以它为准（强度只是「几分」，谓词是「哪种关系」）
+        human_pred = str(lab.get("predicate") or "").strip()
         hit = False
         if claims:
             for c in claims:
                 ci = PREDICATE_TO_INTENSITY.get(c.predicate)
                 for th, tt, ti in truth:
-                    if ci != ti:
+                    if human_pred:
+                        if c.predicate != human_pred:
+                            continue
+                    elif ci != ti:
                         continue
                     head_ok = match(c.head, th) if th else True
                     tail_ok = match(c.tail, tt) if tt else True
@@ -147,6 +152,7 @@ def main() -> int:
                 tn += 1
 
         print(f"\n{sid} | 人工 intensity={human_int} "
+              f"谓词={human_pred or '（按强度）'} "
               f"({human_head or '?'} → {human_tail or '?'})")
         if truth:
             print(f"  真值(含备注): {truth}")

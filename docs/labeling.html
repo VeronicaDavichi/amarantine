@@ -94,12 +94,37 @@
 (function () {
   const DATA = window.LABEL_DATA || {};
   const POOL = (DATA.entity_pool || []).slice(0, 400);
-  const LEVELS = [
+  // 陈述组：判断「这句话明说了什么」，所以 0 档叫「句子没说关系」
+  const LEVELS_STATEMENT = [
     [0, "0 句子没说关系"],
     [1, "1 依赖 (DEPENDS_ON)"],
-    [2, "2 协作 (COLLABORATES)"],
+    [2, "2 协作 (COLLABORATES_WITH)"],
     [3, "3 维护 (MAINTAINS)"],
     [4, "4 负责/拥有 (OWNS)"],
+  ];
+  // 行为组：判断「这个动作是否构成稳定关系」，0 档是「偶发」
+  const LEVELS_BEHAVIOR = [
+    [0, "0 偶发（不算稳定关系）"],
+    [1, "1 弱相关 (DEPENDS_ON)"],
+    [2, "2 有关系·协作 (COLLABORATES_WITH)"],
+    [3, "3 较大·维护 (MAINTAINS)"],
+    [4, "4 强相关·负责 (OWNS)"],
+  ];
+  //: 动作词 → 图上会建的谓词（与后端 VERB_TO_PREDICATE 一致）
+  const VERB_TO_PREDICATE = {
+    "部署": "MAINTAINS", "发布": "MAINTAINS", "更新": "MAINTAINS",
+    "重启": "MAINTAINS", "回滚": "MAINTAINS", "维护": "MAINTAINS",
+    "对接": "MAINTAINS", "上架": "MAINTAINS",
+    "修改": "OWNS", "修复": "OWNS", "实现": "OWNS", "新增": "OWNS",
+  };
+  const LEVELS_OF = (g) => (g.key === "behaviors" ? LEVELS_BEHAVIOR : LEVELS_STATEMENT);
+  //: 谓词单独可选（强度 = 几分，谓词 = 哪种关系，两者不等价）
+  const PREDICATES = [
+    ["", "不指定（按强度自动）"],
+    ["DEPENDS_ON", "DEPENDS_ON 依赖"],
+    ["COLLABORATES_WITH", "COLLABORATES_WITH 协作"],
+    ["MAINTAINS", "MAINTAINS 维护"],
+    ["OWNS", "OWNS 负责/拥有"],
   ];
   const GROUPS = [
     { key: "statements", name: "关系陈述", kind: "relation" },
@@ -245,7 +270,14 @@
            + `判断这条边**对不对**（只看这句话支持不支持，不管强度分档）</div>`;
       body += `<div class="evidence">${esc(item.evidence)}</div>`;
     } else if (item.kind === "behavior") {
-      body += `<div class="machine"><b>${esc(item.person)}</b> --${esc(item.verb)}--> <b>${esc(item.target)}</b></div>`;
+      const pred = VERB_TO_PREDICATE[item.verb] || "（未映射）";
+      body += `<div class="machine"><b>${esc(item.person)}</b> --${esc(item.verb)}--> <b>${esc(item.target)}</b>`;
+      body += ` <span class="tag hit">动作 ${item.verb} → 谓词 ${pred}</span>`;
+      body += `</div>`;
+      body += `<div class="hint" style="margin:8px 0">`
+           + `动作出现 <b>${item.evidence_count || 0}</b> 次（后端阈值 ≥2 才建边）。
+               下面选的是「这个动作该算几级关系」：<br>
+               0 偶发 / 1 弱 / 2 协作 / 3 维护 / 4 负责</div>`;
       (item.evidence || []).forEach(t => body += `<div class="evidence">${esc(t)}</div>`);
     } else {
       body += `<div class="machine">词：<b>${esc(item.term)}</b> → 机器解释：<b>${esc(item.gloss)}</b>（score ${item.score}）</div>`;
@@ -271,12 +303,20 @@
       </div>`;
       body += `<div class="hint">如果表里没有你要的实体 → 选「✏️ 没抽中，手动输入」，我会据此补实体抽取</div>`;
       body += `<div class="intensity">`;
-      LEVELS.forEach(([lv, text]) => {
+      LEVELS_OF(g).forEach(([lv, text]) => {
         body += `<button data-level="${lv}" class="${lb.intensity === lv ? "sel" : ""}">${text}</button>`;
       });
       body += `</div>`;
+      body += `<div class="hint" style="margin-top:12px">谓词（哪种关系）：</div>`;
+      body += `<div class="preds">`;
+      PREDICATES.forEach(([val, text]) => {
+        const on = (lb.predicate || "") === val ? " sel" : "";
+        body += `<button data-pred="${val}" class="${on.trim()}">${text}</button>`;
+      });
+      body += `</div>`;
       if (lb.intensity !== undefined) {
-        body += `<div class="hint done">已标：${LEVELS.find(l => l[0] === lb.intensity)[1]}`
+        body += `<div class="hint done">已标：${LEVELS_OF(g).find(l => l[0] === lb.intensity)[1]}`
+             + (lb.predicate ? ` · 谓词 ${esc(lb.predicate)}` : "")
              + (lb.head ? ` · 主语 ${esc(lb.head.name)}` : "")
              + (lb.tail ? ` → ${esc(lb.tail.name)}` : "") + `</div>`;
       }
@@ -378,6 +418,18 @@
             state[item.id].tail = { name: tailSel.value, custom: false };
           save();
           next();
+        };
+      });
+
+      // 谓词是**独立选择**：强度答「几分」，谓词答「哪种关系」。
+      // 点它不跳到下一题（人常常先选谓词再调强度）。
+      document.querySelectorAll(".preds button").forEach(b => {
+        b.onclick = () => {
+          state[item.id] = state[item.id] || {};
+          state[item.id].predicate = b.dataset.pred || "";
+          state[item.id].at = new Date().toISOString();
+          save();
+          render();
         };
       });
     } else {
