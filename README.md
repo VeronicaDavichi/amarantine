@@ -161,7 +161,7 @@ bash harness/verify_all.sh --static   # 只跑静态检查，不需要容器
 - 单机自托管，无多租户；隔离粒度是 `namespace`
 - 依赖外部 LLM 做切分与标签复核：不可用时降级（产出原文卡），质量下降
 - 中文人名抽取依赖权威名册；无名册时退化到分词，会误判品牌名
-- 关系层 recall 未测（只测了 precision）；跨句推断仍是弱项
+- 关系层：precision 0.95 / recall 0.67（2026-11-18 实测）；**行为通道已停止投入**（数据凑不齐，只有陈述通道产出边）
 - **清空 namespace 会连 `Account`/`Alias` 一起删**，名字标记与头衔要重写：
   `harness/apply_display_names.py` / `harness/apply_titles.py`
 - QQ 语料只导了 12 / 106 个群；**数据导入已暂停**（2026-11-18 用户决定：磁盘吃紧）。
