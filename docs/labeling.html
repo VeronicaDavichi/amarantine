@@ -181,7 +181,8 @@
       const list = DATA[g.key] || [];
       const done = list.filter(x => {
         const s = labelOf(x.id);
-        return s && (g.kind === "relation" ? s.intensity !== undefined : !!s.label);
+        const rel = g.kind === "relation" || g.kind === "coverage";
+        return s && (rel ? s.intensity !== undefined : !!s.label);
       }).length;
       const b = document.createElement("div");
       b.className = "tab" + (i === gi ? " active" : "");
@@ -194,7 +195,8 @@
     const list = items();
     const done = list.filter(x => {
       const s = labelOf(x.id);
-      return s && (GROUPS[gi].kind === "relation" ? s.intensity !== undefined : !!s.label);
+      const rel = GROUPS[gi].kind === "relation" || GROUPS[gi].kind === "coverage";
+      return s && (rel ? s.intensity !== undefined : !!s.label);
     }).length;
     document.getElementById("progress").textContent =
       `${GROUPS[gi].name}：${done}/${list.length} 已标（${idx + 1}）`;
@@ -437,6 +439,18 @@
           render();
         };
       });
+    } else if (g.kind === "coverage") {
+      // 「这句实际有几条关系」：0–3。**之前漏了这段绑定**，
+      // 按钮能点、选中样式也变，但状态没写进 state —— 人以为标了，导出却是空的。
+      document.querySelectorAll(".level").forEach(b => {
+        b.onclick = () => {
+          state[item.id] = state[item.id] || {};
+          state[item.id].intensity = Number(b.dataset.level);
+          state[item.id].at = new Date().toISOString();
+          save();
+          next();
+        };
+      });
     } else {
       document.querySelectorAll(".sense").forEach(b => {
         b.onclick = () => {
@@ -463,7 +477,8 @@
       const list = DATA[g.key] || [];
       const done = list.filter(x => {
         const s = labelOf(x.id);
-        return s && (g.kind === "relation" ? s.intensity !== undefined : !!s.label);
+        const rel = g.kind === "relation" || g.kind === "coverage";
+        return s && (rel ? s.intensity !== undefined : !!s.label);
       }).length;
       out.summary[g.key] = { total: list.length, labeled: done };
     });
