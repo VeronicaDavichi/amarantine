@@ -164,7 +164,8 @@ bash harness/verify_all.sh --static   # 只跑静态检查，不需要容器
 - 关系层 recall 未测（只测了 precision）；跨句推断仍是弱项
 - **清空 namespace 会连 `Account`/`Alias` 一起删**，名字标记与头衔要重写：
   `harness/apply_display_names.py` / `harness/apply_titles.py`
-- QQ 语料只导了 12 / 106 个群（其余按需求先不导）
+- QQ 语料只导了 12 / 106 个群；**数据导入已暂停**（2026-11-18 用户决定：磁盘吃紧）。
+  恢复前先确认磁盘：`df -h /mnt/c`（C 盘曾经只剩 6G，清 `Temp/wsl-crashes` 回收 12G）
 
 ### License
 
