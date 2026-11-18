@@ -121,10 +121,10 @@
   //: 谓词单独可选（强度 = 几分，谓词 = 哪种关系，两者不等价）
   const PREDICATES = [
     ["", "不指定（按强度自动）"],
-    ["DEPENDS_ON", "DEPENDS_ON 依赖"],
-    ["COLLABORATES_WITH", "COLLABORATES_WITH 协作"],
-    ["MAINTAINS", "MAINTAINS 维护"],
-    ["OWNS", "OWNS 负责/拥有"],
+    ["DEPENDS_ON", "依赖 DEPENDS_ON"],
+    ["COLLABORATES_WITH", "协作 COLLABORATES_WITH"],
+    ["MAINTAINS", "维护 MAINTAINS"],
+    ["OWNS", "负责/拥有 OWNS"],
   ];
   const GROUPS = [
     { key: "statements", name: "关系陈述", kind: "relation" },
@@ -270,14 +270,16 @@
            + `判断这条边**对不对**（只看这句话支持不支持，不管强度分档）</div>`;
       body += `<div class="evidence">${esc(item.evidence)}</div>`;
     } else if (item.kind === "behavior") {
-      const pred = VERB_TO_PREDICATE[item.verb] || "（未映射）";
-      body += `<div class="machine"><b>${esc(item.person)}</b> --${esc(item.verb)}--> <b>${esc(item.target)}</b>`;
-      body += ` <span class="tag hit">动作 ${item.verb} → 谓词 ${pred}</span>`;
-      body += `</div>`;
+      const pred = VERB_TO_PREDICATE[item.verb];
+      body += `<div class="machine"><b>${esc(item.person)}</b> --${esc(item.verb)}--> <b>${esc(item.target)}</b></div>`;
       body += `<div class="hint" style="margin:8px 0">`
-           + `动作出现 <b>${item.evidence_count || 0}</b> 次（后端阈值 ≥2 才建边）。
-               下面选的是「这个动作该算几级关系」：<br>
-               0 偶发 / 1 弱 / 2 协作 / 3 维护 / 4 负责</div>`;
+           + `句子里出现的词是「<b>${esc(item.verb)}</b>」（原文动词），共 <b>${item.evidence_count || 0}</b> 次
+              （后端阈值 ≥2 才建边）。<br>`
+           + (pred
+              ? `现在这张图会建成 <b>${esc(item.person)} -[${pred}]-> ${esc(item.target)}</b>。`
+              : `这个词**不在职责动词表里**，所以当前不会建边；`
+                + `如果你认为它算某类关系，就在下面选谓词 —— 你的选择会作为评测真值。`)
+           + `</div>`;
       (item.evidence || []).forEach(t => body += `<div class="evidence">${esc(t)}</div>`);
     } else {
       body += `<div class="machine">词：<b>${esc(item.term)}</b> → 机器解释：<b>${esc(item.gloss)}</b>（score ${item.score}）</div>`;
@@ -307,7 +309,10 @@
         body += `<button data-level="${lv}" class="${lb.intensity === lv ? "sel" : ""}">${text}</button>`;
       });
       body += `</div>`;
-      body += `<div class="hint" style="margin-top:12px">谓词（哪种关系）：</div>`;
+      body += `<div class="hint" style="margin-top:12px">`
+           + `谓词 = 图上这条边叫什么（只有 4 种）；强度 = 这条边有多强（0–4）。`
+           + `两者独立，可以不选谓词。</div>`;
+      body += `<div class="hint" style="margin-top:6px">谓词（哪种关系）：</div>`;
       body += `<div class="preds">`;
       PREDICATES.forEach(([val, text]) => {
         const on = (lb.predicate || "") === val ? " sel" : "";
