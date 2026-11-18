@@ -2438,3 +2438,20 @@ python3 harness/export_qq_incremental.py --mark-inactive        # 把 0 条新�
 
 > `--overlap-hours 2`（默认）会从最后时间往前多导 2 小时，
 > 防止「最后一条正好在切窗边界」被漏掉；重复窗口由 dedupe_key 幂等跳过。
+
+#### emoji 昵称的别名（`便携式🦆🍗 → 便携式`）
+
+群里常按 emoji 的意思叫人，但图上只认完整字符串。补一层派生别名：
+
+```bash
+# 报告：候选 + 语料出现次数（不写图）
+python3 harness/emoji_alias_scan.py --namespace qq-505456846
+# 写图（默认 ≥3 次才采纳）
+python3 harness/emoji_alias_scan.py --namespace qq-505456846 --apply
+```
+
+两条规则：**去 emoji**（`便携式🦆🍗 → 便携式`，最有效）和 **emoji 替词**
+（`🍰 → 蛋糕`、`🦆🍗 → 鸭腿`）。词表在 `back_end/config/emoji_words.json`。
+
+**必须有语料验证**：替词很容易臆造 —— `便携式鸭腿` 在 4383 张卡里 0 次出现，
+而 `便携式` 有 139 次。所以候选词要在原文里出现 ≥3 次才写进图。

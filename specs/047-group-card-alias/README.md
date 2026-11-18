@@ -334,40 +334,60 @@ SQLite，它把路径当新库创建了**。用 `/mnt/c/...` 打开后 45 张表
 
 **未做**：`TITLED` 边写图（头衔目前只导出，还没进 Neo4j）、导入口径的端到端重灌。
 
-### 2026-11-17 · T6/T7 完成，A1–A8 真库验收
 
-**验证脚本**：`harness/verify_047.py`（真库查询，不靠单测推断）
+### 2026-11-18 · emoji 昵称派生别名（用户提的思路）
 
-```
-✓ A1 群内 whois 往汐 → 2 账号 ambiguous=true
-✓ A2 全局 whois 潮间带 → u_oZvYz…（与往汐主号同一 uid）
-✓ A3 uid 反查名片：377/390 人有可用名片
-✓ A4 同 uid 跨群多条 DISPLAYED_AS（单 uid 最多 8 个 scope）
-✓ A5 跨 scope 不串（本群名片在 Lo 群查得 0 个）
-✓ A6 昵称(global)/群名片(group) 各自可查；**备注不可得**
-✓ A7 无匹配 → name_missing=true，不报错
-✓ T6 TITLED 边 953 条
-全部通过
-```
+**起因**：`便携式🦆🍗` 这类名字在群里常被按 emoji 的意思叫（`鸭腿`），
+但图上只认完整字符串，按 `便携式` 查不到人。
 
-**T6 群头衔落图**
+**做法**：两条规则 + 语料验证闸门。
 
-```
-python3 harness/apply_titles.py --namespace qq-505456846 --apply
-→ 38 个群 / 956 条头衔，写 953（3 条重复 uid+title 幂等合并）
-样例：t 奶爹 / 原审 / 机仆 / 妈妈桑
-```
-
-**新增两个可重跑脚本（重要）**
-
-| 脚本 | 用途 | 为什么必须能重跑 |
+| 规则 | 例子 | 实测 |
 |---|---|---|
-| `harness/apply_display_names.py` | 名片（group scope）+ 昵称（global scope） | 清空 namespace 会 `DETACH DELETE` 掉 Account/Alias，名字标记全丢 |
-| `harness/apply_titles.py` | 头衔（`TITLED` 边） | 同上 |
+| 去 emoji | `便携式🦆🍗 → 便携式` | 语料 139 次 ✅ 最有效 |
+| emoji 替词 | `🦆🍗 → 鸭腿`、`🍰 → 蛋糕` | `便携式鸭腿` 语料 **0 次**；`蛋糕`/`柠檬`/`玫瑰` 有 5–9 次 |
 
-实测一次补写：**名片 3585 条、昵称 35914 条**（113 个群）。
+**闸门**：候选词必须在 `raw_quote` 里出现 ≥3 次才写图
+（`harness/emoji_alias_scan.py --min-hits`）。
+没有这道闸，替词会批量臆造名字。
 
-**诚实限制**：备注（`remark`）这一类标记**没有数据**——
-MCP 的 `list_contacts` 读的是 `recent_contact_v3_table`，不带 remark 字段。
-所以 A6 只验证了 3 类中的 2 类；要验第 3 类需要另找数据源
-（`profile_info.db` 或好友表），当前工具做不到。
+**过滤规则**（踩出来的）：
+
+- 拉丁候选 ≥3 字符（否则 `in`/`or`/`Ka`/`LY`/`ii` 这些普通子串会进来，语料各几百次）
+- 虚词表与「以『的』结尾」一律拒（`不是`、`来点`、`索琳家的`）
+- 纯数字候选一律拒（`🍚09 → 09` 在语料 463 次，全是哈希/ID）
+
+**结果**：1682 个含 emoji 的名字 → 36 条过闸 → 写图 36 条
+（`source='emoji_alias'`, scope=`global`）。
+
+验证：
+
+```
+whois '便携式' → 1 个账号（emoji_alias）
+whois '蛋糕'   → 1 个账号（emoji_alias，来自 🍰）
+whois '鸭腿'   → 0 个（语料只有 1 次且指食物，闸门拦下）
+```
+
+**诚实边界**：用户举的 `鸭腿` 这个具体例子在现有 12 个群的语料里验证不了
+（只出现 1 次「鸡腿/鸭腿」且是聊吃的）。机制建好了，等有语料自然会生效。
+
+**副作用**：`大肥鱼🐟 → 大肥鱼` 给一个**已有 34 个账号同名**的词又加了一个主人。
+`whois` 本来就带 `ambiguous` 标记，但这说明「去 emoji 后太短/太常见」时该跳过 ——
+当前闸门只按语料次数，没按**同名账号数**。已知未做。
+### 2026-11-17/18 · 验收与后续
+
+**A1–A8 真库全通过**（`harness/verify_047.py`）：
+
+```
+A1 群内 whois 往汐 → 2 账号 ambiguous=true   A5 跨 scope 不串（0 个）
+A2 全局 whois 潮间带 → 同 uid                A6 昵称/群名片各自可查
+A3 uid 反查名片：377/390                      A7 无匹配 → name_missing
+A4 同 uid 跨群多 scope（最多 8 个）            T6 TITLED 边 953 条
+```
+
+补写脚本（清空 namespace 会 `DETACH DELETE` 掉 Account/Alias，必须能重跑）：
+`harness/apply_display_names.py`（名片 3585 / 昵称 35914）、
+`harness/apply_titles.py`（头衔 953）。
+
+**已知限制**：`remark`（备注）数据源不可得 —— `list_contacts` 读
+`recent_contact_v3_table`，不带 remark 字段。A6 只验了 3 类中的 2 类。
