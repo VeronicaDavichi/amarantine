@@ -463,15 +463,16 @@ function bootstrap() {
         };
       });
     } else if (g.kind === "fragment") {
-      const opts = [["ok", "✅ 是同一人（并回 Person）"],
-                    ["bad", "❌ 不是人（别并）"],
-                    ["warn", "🤔 拿不准（先跳过）"]];
-      body += `<div class="row" style="margin-top:16px">`;
-      opts.forEach(([k, t]) => {
-        body += `<button class="sense" data-key="${k}">${t}</button>`;
+      // 碎片组用 .sense 三档按钮；这里只挂事件，**不要**在这里拼 HTML
+      document.querySelectorAll(".sense").forEach(b => {
+        b.onclick = () => {
+          state[item.id] = state[item.id] || {};
+          state[item.id].label = b.dataset.key;
+          state[item.id].at = new Date().toISOString();
+          save();
+          next();
+        };
       });
-      body += `</div>`;
-      if (lb.label) body += `<div class="hint done">已标：${esc(lb.label)}</div>`;
     } else if (g.kind === "coverage") {
       // 「这句实际有几条关系」：0–3。**之前漏了这段绑定**，
       // 按钮能点、选中样式也变，但状态没写进 state —— 人以为标了，导出却是空的。
