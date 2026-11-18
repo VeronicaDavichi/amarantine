@@ -133,7 +133,6 @@ function bootstrap() {
     { key: "behaviors", name: "关系行为", kind: "relation" },
     { key: "claims", name: "机器边核对", kind: "claim" },
     { key: "coverage", name: "关系覆盖", kind: "coverage" },
-    { key: "fragments", name: "人名碎片", kind: "fragment" },
     { key: "senses", name: "指称义项", kind: "sense" },
   ];
   const STORE = "amarantine-label-v6";
@@ -255,12 +254,18 @@ function bootstrap() {
         ? `<b>${esc(item.machine.head)}</b> --${esc(item.machine.predicate)}--> <b>${esc(item.machine.tail)}</b>`
         : `<b>未抽取</b>（规则漏掉）`) + `</div>`;
     } else if (item.kind === "fragment") {
+      // 不显示 uid：`u_435AB…` 对人没意义。人认 QQ 号和「在哪个群」。
+      const who = item.qq ? `QQ ${esc(item.qq)}` : "（没有 QQ 号记录）";
+      const card = item.card ? esc(item.card) : esc(item.nickname || "");
+      const groups = (item.groups || []).map(g => esc(g)).join("、");
       body += `<div class="machine">碎片：<b>${esc(item.frag)}</b>
         <span class="tag hit">${item.cards} 张卡</span></div>`;
       body += `<div class="hint" style="margin:8px 0">`
-           + `它出现在某账号的名字里：<b>${esc(item.alias)}</b>`
+           + `它出现在这个账号的名字里：<b>${esc(item.alias)}</b>`
            + `（多出的部分：<code>${esc(item.rest)}</code>）<br>`
-           + `uid：<code>${esc(item.uid)}</code></div>`;
+           + `账号：<b>${who}</b>${card ? ` 原名 <b>${card}</b>` : ""}<br>`
+           + (groups ? `所属群：<code>${groups}</code>` : "所属群：未知")
+           + `</div>`;
       body += `<div class="hint" style="margin-top:8px">`
            + `判断：<b>${esc(item.frag)}</b> 是不是这个账号的<b>另一种叫法</b>？</div>`;
     } else if (item.kind === "coverage") {

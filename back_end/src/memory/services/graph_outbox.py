@@ -456,6 +456,21 @@ def write_event_node(
             "time_month": f"{day.year:04d}-{day.month:02d}",
         }
         persons, entities = _split_entities(card)
+        # spec 044 T4：写图侧也要过滤 —— 重放用的是**卡上已存的 entities**，
+        # 不经过抽取器；只挡抽取侧的话，抑制过的名字会被重放又建回来。
+        if entities:
+            from memory.services.entity_suppress import rejected_names
+
+            drop = rejected_names(card.namespace, settings)
+            if drop:
+                kept = [e for e in entities if e["name"] not in drop]
+                if len(kept) != len(entities):
+                    logger.info(
+                        "写图侧抑制实体 | %s 丢 %d 个：%s",
+                        card.event_id, len(entities) - len(kept),
+                        [e["name"] for e in entities if e["name"] in drop][:5],
+                    )
+                entities = kept
         action_items = [
             {"verb": a.verb, "primary": a.primary, "patient": a.patient}
             for a in card.actions

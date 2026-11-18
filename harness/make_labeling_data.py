@@ -227,6 +227,32 @@ def _has_boundary(alias: str, frag: str) -> bool:
     return has_name_boundary(alias, frag)
 
 
+
+
+def _uid_identity_index() -> dict[str, dict]:
+    """`uid → {qq, groups, card, nickname}`，从本地成员表读。
+
+    为什么不在页面上显示 uid：`u_435AByFRA4uBemFD8Xbj6Q` 对人没有意义，
+    人认的是 **QQ 号** 和 **在哪个群**。所以碎片复核页只显示这两样。
+    """
+    idx: dict[str, dict] = {}
+    for f in sorted(IDENTITY_DIR.glob("group-*.json")):
+        try:
+            data = json.loads(f.read_text(encoding="utf-8"))
+        except Exception:  # noqa: BLE001
+            continue
+        gid = str(data.get("groupQq") or f.stem.replace("group-", ""))
+        for m in data.get("members") or []:
+            uid = str(m.get("uid") or "").strip()
+            if not uid:
+                continue
+            rec = idx.setdefault(uid, {"qq": m.get("qq"), "groups": [],
+                                       "card": m.get("card"), "nickname": m.get("nickname")})
+            if gid not in rec["groups"]:
+                rec["groups"].append(gid)
+    return idx
+
+
 def build_fragments(limit: int = 80) -> list[dict]:
     """找「像某个账号名字的一部分」的 topic 实体，交给人判断要不要并回 Person。
 
@@ -274,13 +300,20 @@ def build_fragments(limit: int = 80) -> list[dict]:
         if not _has_boundary(alias_hit, name):
             continue
         rest = alias_hit.replace(name, "", 1)
+        uid = next(iter(owners))
+        ident = _uid_identity_index().get(uid) or {}
         items.append({
             "kind": "fragment",
             "id": f"frag-{len(items)+1}",
             "frag": name,
             "alias": alias_hit,
             "rest": rest,
-            "uid": next(iter(owners)),
+            "uid": uid,
+            # 给人看的身份：QQ 号 + 所在群（uid 只留给程序用）
+            "qq": ident.get("qq"),
+            "groups": ident.get("groups") or [],
+            "card": ident.get("card") or "",
+            "nickname": ident.get("nickname") or "",
             "cards": cards,
             "source": "unique_owner",
         })
