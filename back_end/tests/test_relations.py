@@ -34,10 +34,17 @@ def test_verb_mapping(verb: str, predicate: str) -> None:
     assert R.predicate_for_verb(verb) == predicate
 
 
-def test_unknown_verb_not_mapped() -> None:
-    """`讨论`/`确认` 说明参与过，不说明负责 —— 不硬凑谓词。"""
-    assert R.predicate_for_verb("讨论") is None
-    assert R.predicate_for_verb("确认") is None
+def test_collab_verbs_get_weakest_predicate() -> None:
+    """`讨论`/`确认` 只说明「参与过」，不说明「负责」—— 所以给**最弱**的谓词。
+
+    2026-11-18 改：原断言是「完全不映射」，理由是「参与 ≠ 负责」（这条没错）。
+    但行为组人工标注把 `讨论`/`去` 判成 2 分（有关系·协作），说明该有谓词；
+    只是不该给 `OWNS`/`MAINTAINS`。所以改成映射到 `COLLABORATES_WITH`。
+    """
+    assert R.predicate_for_verb("讨论") == "COLLABORATES_WITH"
+    assert R.predicate_for_verb("确认") == "COLLABORATES_WITH"
+    # 关键不变式：不把「参与」升级成「负责」
+    assert R.predicate_for_verb("讨论") not in ("OWNS", "MAINTAINS")
 
 
 # ------------------------------------------------------------ A2 行为聚合
