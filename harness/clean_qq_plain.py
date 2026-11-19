@@ -49,39 +49,31 @@ DEFAULT_SRC_DIR = pathlib.Path(
     "/mnt/d/TencentData/Chats/Tencent Files/10000000001/nt_qq/nt_db")
 
 
-def find_plain_dir() -> pathlib.Path:
-    """定位 plain 目录（见模块头部的三条候选）。"""
-    import os
+def _paths():
+    """拿 `(plain 目录, 原库目录)` —— 解析逻辑在 services/local_paths。"""
+    import sys
 
-    raw = os.environ.get("QQ_MCP_PLAIN_DIR")
-    if raw:
-        return pathlib.Path(raw)
-    local = pathlib.Path.home() / ".qq-mcp" / "plain"
-    if local.is_dir():
-        return local
-    for cand in pathlib.Path("/mnt/c/Users").glob("*/.qq-mcp/plain"):
-        if cand.is_dir():
-            return cand
-    return local
+    sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]
+                           / "back_end" / "src"))
+    from memory.services.local_paths import (
+        load_settings_from_project,
+        nt_db_dir,
+        qq_plain_dir,
+    )
+
+    try:
+        settings = load_settings_from_project()
+    except Exception:  # noqa: BLE001 - 配置读不出来就退回环境变量/默认
+        settings = None
+    return qq_plain_dir(settings), (nt_db_dir(settings) or DEFAULT_SRC_DIR)
+
+
+def find_plain_dir() -> pathlib.Path:
+    return _paths()[0]
 
 
 def source_dir() -> pathlib.Path:
-    """原库目录。
-
-    解析顺序（都为环境变量，代码里只留占位符）：
-    1. `QQ_NT_DB_DIR` —— 直接给目录
-    2. `QQ_NT_MSG_DB` —— 给 `nt_msg.db` 的完整路径，取父目录
-    3. 兜底常量（开源仓库里的占位符，用户没配时会走到这条并拒绝删除）
-    """
-    import os
-
-    raw = os.environ.get("QQ_NT_DB_DIR")
-    if raw:
-        return pathlib.Path(raw)
-    msg_db = os.environ.get("QQ_NT_MSG_DB")
-    if msg_db:
-        return pathlib.Path(msg_db).parent
-    return DEFAULT_SRC_DIR
+    return _paths()[1]
 
 
 def candidates(plain_dir: pathlib.Path, *, older_than_s: float = 0.0) -> list[pathlib.Path]:

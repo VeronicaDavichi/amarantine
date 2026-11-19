@@ -27,9 +27,33 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 DB = ROOT / "back_end" / "data" / "memory.db"
 OUT = ROOT / "harness" / "corpus" / "qq-inc"
 #: 真实路径与账号**不进代码**（开源仓库里是占位符），用环境变量给：
-#:   QQ_NT_MSG_DB=/mnt/d/.../nt_msg.db  AMARANTINE_NAMESPACE=qq-你的号
-QQ_DB = pathlib.Path(os.environ.get("QQ_NT_MSG_DB", ""))
-NAMESPACE = os.environ.get("AMARANTINE_NAMESPACE", "qq-10000000001")
+#:   在 back_end/.env 里配：QQ_NT_MSG_DB=/mnt/d/.../nt_msg.db
+#:   以及 MEMORY_NAMESPACE=qq-你的号
+def _from_settings(name: str, default: str = "") -> str:
+    """优先读 `.env`（Settings），退回环境变量，再退回默认值。"""
+    try:
+        sys.path.insert(0, str(ROOT / "back_end" / "src"))
+        from memory.config import load_settings
+
+        val = getattr(load_settings(), name, "") or ""
+        if val:
+            return str(val)
+    except Exception:  # noqa: BLE001
+        pass
+    return os.environ.get(name, default)
+
+
+def _resolve_paths():
+    """从 `.env` 读原库路径（解析逻辑在 services/local_paths）。"""
+    sys.path.insert(0, str(ROOT / "back_end" / "src"))
+    from memory.services.local_paths import load_settings_from_project, nt_msg_db_path
+
+    try:
+        settings = load_settings_from_project()
+    except Exception:  # noqa: BLE001
+        settings = None
+    return nt_msg_db_path(settings), (getattr(settings, "MEMORY_NAMESPACE", None) or "")
+
 INACTIVE = ROOT / "back_end" / "config" / "inactive_sessions.json"
 
 
@@ -87,7 +111,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="按群增量导出 QQ 聊天")
     ap.add_argument("--list", action="store_true", help="只打印起点")
     ap.add_argument("--db", default=str(DB), help="memory.db 路径")
-    ap.add_argument("--qq-db", default=str(QQ_DB))
+    ap.add_argument("--qq-db", default="", help="默认取 .env 的 QQ_NT_MSG_DB")
     ap.add_argument("--out-dir", default=str(OUT))
     ap.add_argument("--overlap-hours", type=int, default=2,
                     help="从最后时间往前多导几小时（默认 2，防同一分钟漏消息）")
@@ -100,16 +124,21 @@ def main() -> int:
                     help="把本次导到 0 条新消息的群写进不活跃清单")
     args = ap.parse_args()
 
+    db_path, ns = _resolve_paths()
+    namespace = ns or "qq-10000000001"
+    if not args.qq_db:
+        args.qq_db = str(db_path or "")
+
     if not pathlib.Path(args.qq_db).is_file():
         print(f"✗ QQ 库不存在：{args.qq_db}")
         return 1
 
-    lt = last_times(pathlib.Path(args.db), NAMESPACE)
+    lt = last_times(pathlib.Path(args.db), namespace)
     if not lt:
         print("没有已导会话")
         return 1
 
-    dead = inactive_map(NAMESPACE)
+    dead = inactive_map(namespace)
     skipped = []
     if not args.include_inactive:
         for gid in list(lt):
@@ -199,7 +228,7 @@ def main() -> int:
             data.setdefault("_doc", "不活跃群：增量导出与导入默认跳过。"
                                     "要重新纳入用 --include-inactive。")
             data.setdefault("_how_to_update", "手工维护；某群重新活跃时删掉它那一行。")
-            bucket = data.setdefault(NAMESPACE, {})
+            bucket = data.setdefault(namespace, {})
             today = datetime.now(timezone(timedelta(hours=8))).strftime("%Y-%m-%d")
             for gid, _n in newly.items():
                 bucket[str(gid)] = {

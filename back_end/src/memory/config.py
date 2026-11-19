@@ -48,6 +48,17 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
+    # ---------- 外部工具路径（QQ 语料相关，可选）----------
+    #
+    # 这些原本是「跑脚本时临时 export 的环境变量」，用户要求统一放到 .env 里配。
+    # 全部可留空：留空时相关脚本自己找默认位置，或明确报错说「没配」。
+    #
+    # NT QQ 的消息库（`nt_msg.db` 的完整路径）。导出/清理脚本用它定位原库。
+    QQ_NT_MSG_DB: str = Field(default="")
+    # qq-mcp 解密副本目录（`plain/`）。留空时按
+    # `~/.qq-mcp/plain` → `/mnt/c/Users/*/.qq-mcp/plain` 顺序自动找。
+    QQ_MCP_PLAIN_DIR: str = Field(default="")
+
     # ---------- 身份与隔离 ----------
     MEMORY_NAMESPACE: str | None = Field(
         default=None,

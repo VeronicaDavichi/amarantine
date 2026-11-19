@@ -1,6 +1,6 @@
 # 配置项参考
 
-由 `harness/gen_config_doc.py` 从 `back_end/config.py` 自动生成，共 **86** 项。
+由 `harness/gen_config_doc.py` 从 `back_end/config.py` 自动生成，共 **88** 项。
 
 > **注释为空的项表示源码里没写说明** —— 不是这里漏了。
 > 修改任何一项前先读对应 spec；标「不要改」的项改动会破坏数据一致性。
@@ -125,7 +125,7 @@
 |---|---|---|
 | `CONTEXT_TOKEN_BUDGET` | `3000` |  |
 
-## 其他（36 项）
+## 其他（38 项）
 
 | 配置项 | 默认值 | 说明 |
 |---|---|---|
@@ -157,6 +157,8 @@
 | `LOG_FILE` | `'logs/memory.log'` |  |
 | `LOG_LEVEL` | `'INFO'` |  |
 | `PROTECT_IMPORTANCE_REVIEW` | `0.7` |  |
+| `QQ_MCP_PLAIN_DIR` | `Field(default='')` | qq-mcp 解密副本目录（`plain/`）。留空时按；`~/.qq-mcp/plain` → `/mnt/c/Users/*/.qq-mcp/plain` 顺序自动找。 |
+| `QQ_NT_MSG_DB` | `Field(default='')` | ---------- 外部工具路径（QQ 语料相关，可选）----------；；这些原本是「跑脚本时临时 export 的环境变量」，用户要求统一放到 .env 里配。；全部可留空：留空时相关脚本自己找默认位置，或明确报错说「没配」。；；NT QQ 的消息库（`nt_msg.db` 的完整路径）。导出/清理脚本用它定位原库。 |
 | `RECENCY_HALF_LIFE_DAYS` | `180` |  |
 | `SQLITE_WAL` | `True` |  |
 | `TOKENIZER` | `'cl100k_base'` |  |

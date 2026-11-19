@@ -2569,9 +2569,19 @@ python3 harness/clean_qq_plain.py --apply --older-than 600   # 只删 10 分钟�
 > ⚠️ 这些是**未加密**的聊天记录，比原库更敏感。用完就删是好习惯
 > —— 实测累积到 3.3 GB（197 个文件，同一库留了多份）。
 
-**路径怎么找**：qq-mcp 是 Windows 侧进程，所以副本在
-`C:\Users\<用户>\.qq-mcp\plain`（不是 WSL 的 `~`）。脚本会按
-`QQ_MCP_PLAIN_DIR` → `~/.qq-mcp/plain` → `/mnt/c/Users/*/.qq-mcp/plain` 顺序找。
+**路径在 `.env` 里配**（不用每次 shell export）：
+
+```dotenv
+# back_end/.env
+QQ_NT_MSG_DB=/mnt/d/TencentData/.../nt_qq/nt_db/nt_msg.db
+QQ_MCP_PLAIN_DIR=/mnt/c/Users/<你>/.qq-mcp/plain
+```
+
+两项都可留空：留空时脚本自动找（`QQ_MCP_PLAIN_DIR` 会按
+`~/.qq-mcp/plain` → `/mnt/c/Users/*/.qq-mcp/plain` 探测）。
+
+> qq-mcp 是 Windows 侧 node 进程，它的 `~` 是 `C:\Users\<用户>`，
+> 不是 WSL 的 `/home/<用户>` —— 所以副本常出现在 `/mnt/c/Users/...`。
 
 ## 实体抑制（哪些名字不再建节点）
 
