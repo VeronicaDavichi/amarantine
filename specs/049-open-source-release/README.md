@@ -34,8 +34,8 @@ updated_at: 2026-11-19T02:48:57.237087765Z
 - [x] `docker-compose.yml` 已有四依赖（admin 由 `harness/up_local.sh` 起，见 G1 待办）
 - [x] `GET /health` 汇总四依赖（`degraded`/`deps`/`down`，5s 缓存、3s 超时）
 - [ ] 首次启动自动建表/建 collection，无需手工脚本
-- [ ] `.env.example` 覆盖所有**必填**项，并标注哪些可留空
-- [ ] 冷启动文档：从 clone 到第一次 `memory_remember` 成功，全程可复现
+- [x] `.env.example` 与 `Settings` **完全对齐**（86/86，`check_env_coverage.py` 绿）
+- [x] 冷启动文档 `docs/quickstart.md`（compose → 后端 → 写入 → 召回 → 接 MCP）
 
 ### G2 数据安全（不丢、可迁）
 
@@ -48,7 +48,7 @@ updated_at: 2026-11-19T02:48:57.237087765Z
 
 - [x] 配置清单 `docs/config-reference.md`（`harness/gen_config_doc.py` 生成，86 项分组 + 默认值 + 源码注释）
 - [ ] 结构化日志（JSON 行）或至少统一前缀，便于 grep 与采集
-- [ ] 错误路径清单：LLM 不可用 / 向量库不可用 / 图库不可用 三种降级行为写清楚
+- [x] 降级行为 `docs/degradation.md`（五类依赖逐一写「谁挂 → 什么坏 → 怎么恢复」）
 
 ### G4 可协作（开源合规）
 
@@ -208,3 +208,28 @@ git rev-list --objects --all | 按 blob 大小排序
 **脱敏脚本自己的泄露也修了**：第一版把真实姓名写在映射表里，等于换个地方泄露。
 现在真实映射放 `harness/.privacy-map.json`（gitignored），仓库只留
 `privacy-map.example.json`（占位符之间互相替换）。
+
+### 2026-11-19 · G1 收尾两项 + G3 降级文档
+
+**.env.example 完全对齐**：`harness/check_env_coverage.py` 从 49/86 补到 **86/86**。
+补齐时只写「默认值」（从 `config.py` 机械取），不编造用途说明。
+顺带标出两项历史遗留：`EMBEDDING_PRELOAD` / `RERANK_PRELOAD` **不是 Settings 字段**，
+配了不生效 —— 保留但标注，不删（删了会让人以为没这回事）。
+
+**冷启动文档** `docs/quickstart.md`：compose → `uv sync` → `.env` 最少三项 →
+起服务 → `/health` 自检 → 写入（`/admin/ingest`）→ 召回（`/admin/recall`）→ 接 MCP，
+最后六条「常见卡点」。
+
+> 写这份文档时抓到自己一个错：原本写「`POST /admin/remember`」，
+> 但代码里**没有这个接口** —— 写入走 MCP 的 `memory_remember` 或批量入口
+> `/admin/ingest`。已改成实际存在的路径。
+
+**降级文档** `docs/degradation.md`：LLM / embedding / Weaviate / rerank / Neo4j
+五类，逐项写「挂掉后的表现 / 是否丢数据 / 恢复方式」。要点：
+
+- 图库挂了最轻（派生层，可重建）
+- 向量库或 embedding 挂了 → 召回 **503**（不是空结果，空结果会误导成「没这段记忆」）
+- LLM 挂了 → 写入降级成原文卡，记忆变粗糙但不断
+
+**G1 只剩一项**：admin 进 compose。这需要先有 `Dockerfile`（镜像化后端），
+属「新增交付物」，比改文档重，留到下一轮或由你确认后再做。
