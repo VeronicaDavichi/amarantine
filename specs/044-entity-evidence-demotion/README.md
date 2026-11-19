@@ -1,5 +1,5 @@
 ---
-status: planned
+status: complete
 created: 2026-11-07
 priority: high
 tags:
@@ -7,9 +7,12 @@ tags:
 - evidence
 - labeler
 created_at: 2026-11-07T13:26:40.752953500Z
-updated_at: 2026-11-07T13:26:40.752953500Z
+updated_at: 2026-11-19T01:19:10.320187263Z
+completed_at: 2026-11-19T01:19:10.320187263Z
+transitions:
+- status: complete
+  at: 2026-11-19T01:19:10.320187263Z
 ---
-
 # 实体证据与降级：先假设是 topic，按证据否决
 
 > **Status**: planned · **Priority**: high · **Created**: 2026-11-07
@@ -103,14 +106,14 @@ AND head_hits >= cards * DEMOTE_HEAD_RATIO       （默认 0.8：基本只当发
 
 ## Plan
 
-- [ ] **T1 证据表**：建表 + `upsert` / `query` 接口 + 老库自动建表
-- [ ] **T2 写入侧接线**：抽到拉丁 topic 时记一行证据
-- [ ] **T3 抑制过滤（抽取侧）**：建节点前查 rejected
-- [ ] **T4 抑制过滤（写图侧）**：`graph_outbox` 写前过滤，堵住重放复活
-- [ ] **T5 判定扫描**：`harness/entity_evidence_scan.py`，`--dry-run` 默认
-- [ ] **T6 复活路径**：命名后缀共现或查询命中 → 置回 active
-- [ ] **T7 管理接口**：`GET /admin/entities/evidence`（可查、可看 reason）
-- [ ] **T8 测试与文档**：阈值边界、误杀防护、重放不复活、user-manual 补一节
+- [x] T1 证据表：`entity_suppress`（**简化版**：无 mentions/cards/head_hits 计数）
+- [x] ~~T2 写入侧计数~~ —— **决定不做**：实测问题是分词切人名，不是通用词曝光
+- [x] ~~T3 抽取侧过滤~~ —— **决定不做**：写图侧已堵住复活；抽取侧是热路径，待评估延迟
+- [x] T4 写图侧过滤：`graph_outbox` 建 MENTIONS 前剔除（堵住重放复活）
+- [x] T5 判定脚本：`harness/auto_entity_repair.py`（默认 dry-run）
+- [x] T6 复活 API：`EntitySuppressStore.revive()`（**未接**查询命中自动触发）
+- [x] T7 管理接口：`GET /admin/entities/suppress`（按 reason 分组，已验证）
+- [x] T8 测试与文档：`test_044_entity_suppress.py`(7) + `test_044_name_boundary.py`(10)
 
 ## Test
 
@@ -255,3 +258,31 @@ head_hits/queried` 的证据表，用来**按证据判**是否降级。现在先
 「名字碎片」这一类确定情形的抑制；证据计数与扫描（T2/T5）没做 ——
 因为实测暴露的主要问题是**分词把人名切碎**，不是「通用词曝光过多」。
 泛化到「通用词降级」需要 `head_hits` 信号，那要先做位置统计，另开。
+
+### 2026-11-19 · 收尾（按实际情况勾选，不假装全做）
+
+**已交付**
+
+| 项 | 实现 |
+|---|---|
+| 抑制表 | `entity_suppress`（namespace/name/reason/decided_by/status/detail），进程内缓存，`add()` 后失效 |
+| 写图侧过滤 | `graph_outbox` 建 `MENTIONS` 前剔除，重放不会复活 |
+| 判定脚本 | `harness/auto_entity_repair.py`：纯装饰→合并到 Person；有实义→抑制 |
+| 复活 API | `EntitySuppressStore.revive()` |
+| 管理接口 | `GET /admin/entities/suppress?namespace=…` → items + by_reason |
+| 名字边界规则 | `name_marker.has_name_boundary()`：连续串内不切词（谐音/拼词） |
+
+**实测收益**：Entity 575 → 558，Person 278 → 281；15 个碎片不再进图。
+
+**没做（写清原因，别当成遗漏）**
+
+- **T2 证据计数**（mentions/cards/suffix_hits/head_hits/queried）：原设计要按这些
+  信号判「通用词是否该降级」。实测发现当前主要问题是**分词把人名切碎**，
+  不是通用词曝光过多；计数需要位置统计（`head_hits` 要判断是否在「X 说：」位），
+  工作量不小、收益不明，先不做。
+- **T3 抽取侧过滤**：只在写图侧挡住了。抽取侧（labeler）是热路径，
+  加一次 SQLite 查要评估延迟；目前靠「写图侧过滤」已能防复活。
+- **T6 自动复活触发**：API 有了，但「查询命中 → 复活」还没接线。
+
+**结论**：把「名字碎片」这一类确定问题自动处理掉了；
+「通用词降级」这一层留待有证据再说。

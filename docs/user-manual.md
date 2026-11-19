@@ -2455,3 +2455,24 @@ python3 harness/emoji_alias_scan.py --namespace qq-505456846 --apply
 
 **必须有语料验证**：替词很容易臆造 —— `便携式鸭腿` 在 4383 张卡里 0 次出现，
 而 `便携式` 有 139 次。所以候选词要在原文里出现 ≥3 次才写进图。
+## 实体抑制（哪些名字不再建节点）
+
+分词会把带空格/emoji 的显示名切碎（`Veronica ⊂ Veronica Davichi`、
+`瓦一 ⊂ 新机子瓦一兔子`），这些碎片不该是独立实体。
+
+```bash
+# 报告（默认 dry-run）
+python3 harness/auto_entity_repair.py --namespace qq-505456846
+# 落库 + 改图
+python3 harness/auto_entity_repair.py --namespace qq-505456846 --apply
+# 查看抑制清单
+curl -s -H "Authorization: Bearer $ADMIN_TOKEN" \
+  "http://127.0.0.1:8765/admin/entities/suppress?namespace=qq-505456846"
+```
+
+判定：`frag ⊂ alias` 且 alias 只属一个账号时，
+- 多出部分是**纯装饰**（emoji/标点/数字）→ 合并到该账号的 `Person`
+- 多出部分是**实义词** → 进抑制表，之后写入自动跳过（重放也不会复活）
+
+**连续串内不切词**：`新机子瓦一兔子` 是「真相只有一个」的谐音，
+整串才算名字；`传讯员8号`、`扑街少年MIKA` 同理。

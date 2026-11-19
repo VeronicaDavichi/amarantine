@@ -317,6 +317,24 @@ class AliasRejectListResponse(BaseModel):
     by_reason: dict[str, int]
 
 
+class EntitySuppressEntry(BaseModel):
+    """一条被抑制的实体名（spec 044）。"""
+
+    name: str
+    reason: str
+    decided_by: str
+    status: str
+    detail: str = ""
+    updated_at: str
+
+
+class EntitySuppressListResponse(BaseModel):
+    items: list[EntitySuppressEntry]
+    total: int
+    #: 按 reason 分组 —— 某类突然涨起来说明规则误伤了整类名字
+    by_reason: dict[str, int]
+
+
 class AliasRejectResolveRequest(BaseModel):
     event_id: str
     alias: str
@@ -1185,6 +1203,41 @@ def create_app(
     # 别名声明从原话到图上一条边有两道判据，两侧都可能被拒。原来两边
     # 都不留痕迹 —— `印度人`、`科学家`、`种师道` 三次都是这么藏起来的。
     # 这两个接口把「为什么那条边没建」变成可以查、可以裁决的事。
+
+    @app.get(
+        "/admin/entities/suppress",
+        response_model=EntitySuppressListResponse,
+        dependencies=[Depends(require_token)],
+    )
+    def list_entity_suppress(
+        namespace: str | None = Query(default=None),
+        status: str | None = Query(default=None),
+    ) -> EntitySuppressListResponse:
+        """列出被抑制的实体名（spec 044）。
+
+        这些名字**不会**再被建成 `Entity` 节点 —— 主要是分词把带空格/emoji 的
+        显示名切碎留下的产物（`Veronica ⊂ Veronica Davichi`）。
+
+        `by_reason` 用来看「是不是整类被误杀」。
+        """
+        from memory.services.entity_suppress import store_for
+
+        ns = _namespace(namespace)
+        rows = store_for(cfg).list_all(ns, status=status)
+        items = [
+            EntitySuppressEntry(
+                name=r["name"], reason=r["reason"], decided_by=r["decided_by"],
+                status=r["status"], detail=r.get("detail") or "",
+                updated_at=r.get("updated_at") or "",
+            )
+            for r in rows
+        ]
+        by_reason: dict[str, int] = {}
+        for it in items:
+            by_reason[it.reason] = by_reason.get(it.reason, 0) + 1
+        return EntitySuppressListResponse(
+            items=items, total=len(items), by_reason=by_reason
+        )
 
     @app.get(
         "/admin/alias-rejects",
