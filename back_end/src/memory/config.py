@@ -67,6 +67,14 @@ class Settings(BaseSettings):
     QQ_MCP_PASSPHRASE_FILE: str = Field(default="")
     QQ_MCP_PASSPHRASE: str = Field(default="")
 
+    # ---------- 「我是谁」 ----------
+    #
+    # 登录语料用的账号（QQ 号）。设了它，系统才知道记忆里哪个账号是「本人」：
+    # 群名片天天变，只有 uid 是稳的，所以这里给 QQ 号、由成员表反查 uid。
+    SELF_QQ: str = Field(default="")
+    # 权威成员表目录（`export_qq_identities.py` 的产物）。留空用默认位置。
+    IDENTITY_DIR: str = Field(default="")
+
     # ---------- 身份与隔离 ----------
     MEMORY_NAMESPACE: str | None = Field(
         default=None,

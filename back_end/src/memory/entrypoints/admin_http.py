@@ -318,6 +318,23 @@ class AliasRejectListResponse(BaseModel):
     by_reason: dict[str, int]
 
 
+class WhoAmIResponse(BaseModel):
+    """「我是谁」：登录语料用的账号解析结果。"""
+
+    configured: bool
+    qq: str
+    uid: str
+    uids: list[str] = []
+    names: list[str] = []
+    nicknames: list[str] = []
+    #: 账号昵称（全局名）—— 比群名片稳定，适合当「我」的显示名
+    canonical: str = ""
+    namespaces_seen: list[str] = []
+    namespace: str = ""
+    #: 没配 / 查不到时说明原因（别让人猜）
+    reason: str = ""
+
+
 class NamespaceInfo(BaseModel):
     namespace: str
     cards: int
@@ -1345,6 +1362,22 @@ def create_app(
     # 别名声明从原话到图上一条边有两道判据，两侧都可能被拒。原来两边
     # 都不留痕迹 —— `印度人`、`科学家`、`种师道` 三次都是这么藏起来的。
     # 这两个接口把「为什么那条边没建」变成可以查、可以裁决的事。
+
+    @app.get(
+        "/admin/whoami",
+        response_model=WhoAmIResponse,
+        dependencies=[Depends(require_token)],
+    )
+    def whoami(namespace: str | None = Query(default=None)) -> WhoAmIResponse:
+        """回答「我是谁」：`SELF_QQ` → uid → 各群显示名。
+
+        为什么要这个接口：群名片天天变，只有 uid 稳。关系层抽出的主语可能是
+        本人的某个群名片，没有这个锚点就分不清「我」和「别人」。
+        """
+        from memory.services.self_identity import resolve_self
+
+        got = resolve_self(cfg, namespace=_namespace(namespace))
+        return WhoAmIResponse(**got)
 
     @app.get(
         "/admin/namespaces",

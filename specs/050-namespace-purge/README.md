@@ -72,6 +72,8 @@ transitions:
 - [x] T4 测试 9 条：字面校验 / 确认语 / 预演免确认 / 残留必报
 - [x] T5 文档：user-manual 补一节（含 qq-mcp `plain/` 清理与三道闸说明）
 - [x] T6 用后即删：`harness/clean_qq_plain.py` + 导出脚本默认清理（`--keep-plain` 保留）
+- [x] T7 MCP 工具名按能力解析：`harness/mcp_client.mjs`（换实现只改配置）
+- [x] T8 「我是谁」：`SELF_QQ` → uid → canonical + `GET /admin/whoami` + `mark_self.py`
 
 ## Test
 
@@ -143,3 +145,36 @@ transitions:
 `QQ_MCP_PLAIN_DIR` → `~/.qq-mcp/plain` → `/mnt/c/Users/*/.qq-mcp/plain` 顺序找。
 
 **测试**：6 条（只选 plain 副本 / 原库缺失拒删 / older-than / apply 计数 / 预演不删 / 目录不存在）。
+
+### 2026-11-19 · T7 工具名自动解析 + T8「我是谁」
+
+**T7 换 MCP 实现不用改代码**
+
+`harness/mcp_client.mjs`：能力 → 工具名别名表。脚本调用
+`callCap("list_contacts", …)`，名字由别名表匹配；不匹配时报错**并列出实际可用工具**。
+
+实测 `node harness/export_qq.mjs --list` 打印：
+
+```
+可用工具(18): list_qq_databases, capture_offline_key, verify_offline_key,
+decrypt_qq_database, query_chat_messages, …, list_contacts, list_group_members, get_db_schema
+```
+
+**T8 我是谁**
+
+配置 `SELF_QQ`（登录用的 QQ 号）→ 从权威成员表反查 uid（spec 043 的账号锚定）
+→ 得出：
+
+| 字段 | 实测值（qq 505456846） |
+|---|---|
+| uid | `u_7zrOQx_TiNIGvZcyFZipCA`（唯一） |
+| 账号昵称 | **Veronica Davichi** |
+| 群名片 | 19–20 个（`海嗣`、`苏苏大可爱`、整活名…） |
+| 出现在 | 64 个群的成员表里 |
+
+**踩到的坑**：第一版 `preferred_name` 从**群名片**里挑，挑成了「海嗣」
+（同分取较短）。正确做法是 **canonical 取账号昵称**，群名片只当别名。
+`mark_self.py` 现在会无条件把本人 Person 的 name 设为 canonical，
+并写 `is_self=true`（Account 与 Person 各一份）。
+
+接口：`GET /admin/whoami?namespace=…`（已验证返回上述字段）。

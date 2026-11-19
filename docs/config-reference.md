@@ -1,6 +1,6 @@
 # 配置项参考
 
-由 `harness/gen_config_doc.py` 从 `back_end/config.py` 自动生成，共 **91** 项。
+由 `harness/gen_config_doc.py` 从 `back_end/config.py` 自动生成，共 **93** 项。
 
 > **注释为空的项表示源码里没写说明** —— 不是这里漏了。
 > 修改任何一项前先读对应 spec；标「不要改」的项改动会破坏数据一致性。
@@ -125,7 +125,7 @@
 |---|---|---|
 | `CONTEXT_TOKEN_BUDGET` | `3000` |  |
 
-## 其他（41 项）
+## 其他（43 项）
 
 | 配置项 | 默认值 | 说明 |
 |---|---|---|
@@ -148,6 +148,7 @@
 | `GRAPH_HUB_DEGREE` | `8` |  |
 | `GRAPH_TIMEOUT_MS` | `200` | ---------- 召回：超时 ----------；: 图通道超时。 |
 | `GUIDE_CHECK_CRON` | `'0 9 * * 1'` | ---------- 运维 ---------- |
+| `IDENTITY_DIR` | `Field(default='')` | 权威成员表目录（`export_qq_identities.py` 的产物）。留空用默认位置。 |
 | `ISLAND_MAX_NEIGHBORS` | `0` | : 孤岛判定（spec 022）：事件级邻域 <= 此值视为孤立子图。；:；: **0 = 关闭（默认）**，与 `GRAPH_HUB_DEGREE` 的 `0=关` 惯例一致。；: 关闭的理由不是「没做完」，是「冷启动阶段数据少，孤立是常态而非异常」——；: 建议等 namespace 有 50+ 条真实记忆后再设为 2。 |
 | `ISLAND_MIN_EVENTS` | `50` | : 孤岛判定的数据量门槛：namespace 事件数低于此值时不判孤岛。；: 没有它，只有 3 条记忆时会把全部判成孤岛并一起加速淘汰。 |
 | `LABEL_DUAL_RUN` | `True` |  |
@@ -163,6 +164,7 @@
 | `QQ_MCP_PLAIN_DIR` | `Field(default='')` | qq-mcp 解密副本目录（`plain/`）。留空时按；`~/.qq-mcp/plain` → `/mnt/c/Users/*/.qq-mcp/plain` 顺序自动找。 |
 | `QQ_NT_MSG_DB` | `Field(default='')` | ---------- 外部工具路径（QQ 语料相关，可选）----------；；这些原本是「跑脚本时临时 export 的环境变量」，用户要求统一放到 .env 里配。；全部可留空：留空时相关脚本自己找默认位置，或明确报错说「没配」。；；NT QQ 的消息库（`nt_msg.db` 的完整路径）。导出/清理脚本用它定位原库。 |
 | `RECENCY_HALF_LIFE_DAYS` | `180` |  |
+| `SELF_QQ` | `Field(default='')` | ---------- 「我是谁」 ----------；；登录语料用的账号（QQ 号）。设了它，系统才知道记忆里哪个账号是「本人」：；群名片天天变，只有 uid 是稳的，所以这里给 QQ 号、由成员表反查 uid。 |
 | `SQLITE_WAL` | `True` |  |
 | `TOKENIZER` | `'cl100k_base'` |  |
 | `TYPES_VOCAB` | `Field(default_factory=list)` | ---------- 标签 ---------- |

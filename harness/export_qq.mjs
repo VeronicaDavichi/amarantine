@@ -17,6 +17,7 @@
  */
 
 import { env, childEnv, passphrase, resolvePath } from "./load_env.mjs";
+import { attach, callCap, loadTools } from "./mcp_client.mjs";
 import { writeFileSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -89,6 +90,9 @@ console.log(`时间窗: ${new Date(sinceEpoch * 1000).toISOString()} → ${new D
   });
   const client = new Client({ name: "amarantine-export", version: "0.1.0" });
   await client.connect(transport);
+  attach(client);
+  const tools = await loadTools();
+  if (args.list || args.raw) console.log(`可用工具(${tools.length}): ${tools.join(', ')}`);
 
   const call = async (name, a) => {
     const res = await client.callTool({ name, arguments: a });
@@ -103,7 +107,7 @@ console.log(`时间窗: ${new Date(sinceEpoch * 1000).toISOString()} → ${new D
     // 2.6GB 的库里 5000 条会被前几个大群全吃掉，其余群一条不剩。
     if (args.perGroupLimit) {
       if (!args.outDir) throw new Error("--per-group-limit 需要 --out-dir");
-      const contacts = await call("list_contacts", { dbPath: args.db, limit: 2000 });
+      const contacts = await callCap("list_contacts", { dbPath: args.db, limit: 2000 });
       let groups = (contacts.groups ?? []).map((g) => ({ qq: Number(g.qq), name: g.name }));
       if (args.groups?.length) {
         const keep = new Set(args.groups);
@@ -124,7 +128,7 @@ console.log(`时间窗: ${new Date(sinceEpoch * 1000).toISOString()} → ${new D
         const PAGE = 2000;
         try {
           for (let guard = 0; guard < 50 && collected.length < args.perGroupLimit; guard++) {
-            const page = await call("query_chat_messages", {
+            const page = await callCap("query_messages", {
               dbPath: args.db, chat: "group", groupQq: g.qq,
               limit: PAGE, since: sinceEpoch, until: cursorUntil,
               order: args.oldest ? "asc" : "desc",
@@ -174,10 +178,10 @@ console.log(`时间窗: ${new Date(sinceEpoch * 1000).toISOString()} → ${new D
     // 一次导出全部群，每个群一个 corpus 文件（seed 脚本一次吃一个会话）
     if (args.allGroups) {
       if (!args.outDir) throw new Error("--all-groups 需要 --out-dir");
-      const contacts = await call("list_contacts", { dbPath: args.db, limit: 500 });
+      const contacts = await callCap("list_contacts", { dbPath: args.db, limit: 500 });
       const names = new Map((contacts.groups ?? []).map((g) => [Number(g.qq), g.name]));
 
-      const res = await call("query_chat_messages", {
+      const res = await callCap("query_messages", {
         dbPath: args.db,
         chat: "group",
         limit: 5000,
@@ -209,7 +213,7 @@ console.log(`时间窗: ${new Date(sinceEpoch * 1000).toISOString()} → ${new D
     }
 
     if (args.list || (!args.group && !args.c2c)) {
-      const contacts = await call("list_contacts", { dbPath: args.db, limit: 500 });
+      const contacts = await callCap("list_contacts", { dbPath: args.db, limit: 500 });
       console.log(
         JSON.stringify(
           { groups: contacts.groups ?? [], friends: contacts.friends ?? [] },
@@ -230,7 +234,7 @@ console.log(`时间窗: ${new Date(sinceEpoch * 1000).toISOString()} → ${new D
     };
     if (args.group) query.groupQq = Number(args.group);
 
-    const res = await call("query_chat_messages", query);
+    const res = await callCap("query_messages", query);
     if (args.raw) {
       console.log(JSON.stringify(res, null, 2));
       return;

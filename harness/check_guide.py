@@ -121,6 +121,8 @@ def main() -> int:
         "OWNS", "MAINTAINS", "COLLABORATES_WITH", "DEPENDS_ON",
         # 非配置项：脚本级环境变量（harness/clean_qq_plain.py 用，不在 Settings 里）
         "QQ_MCP_PLAIN_DIR", "QQ_NT_DB_DIR", "QQ_NT_MSG_DB",
+        # 非配置项：mcp_client.mjs 里的「能力 → 工具名」别名表
+        "CAPABILITY_ALIASES",
     }
     unknown = [v for v in unknown if v not in allowed_extra]
     for v in unknown:

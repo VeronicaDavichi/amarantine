@@ -2533,6 +2533,52 @@ QQ_MCP_PKG=/别的/实现 node harness/export_qq.mjs --list
 > `list_contacts` / `query_chat_messages` 这些具体工具名。
 > `im-mcp` 若不同名，需要在脚本里改调用，不是只改配置就行。
 
+### 换 MCP 实现不用改代码（工具名自动解析）
+
+脚本只声明「我要什么能力」，工具名由 `harness/mcp_client.mjs` 的别名表匹配：
+
+```js
+CAPABILITY_ALIASES = {
+  list_contacts:  ["list_contacts", "listContacts", "get_contacts", "list_friends"],
+  query_messages: ["query_chat_messages", "queryChatMessages", "query_messages"],
+  ...
+}
+```
+
+换实现（`qq-mcp` → `im-mcp`）只改 `.env` 的 `QQ_MCP_PKG`；名字不匹配时会直接报错
+**并列出实际可用工具**，不用猜。
+
+```bash
+node harness/export_qq.mjs --list     # 第一行会打印「可用工具(N): …」
+```
+
+### 我是谁（`SELF_QQ` → uid → 规范名）
+
+```dotenv
+# back_end/.env
+SELF_QQ=你的QQ号
+```
+
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "http://127.0.0.1:8765/admin/whoami?namespace=<ns>"
+```
+
+返回：`qq`、`uid`、`nicknames`（账号昵称）、`names`（各群名片）、
+`canonical`（**规范名**）、`namespaces_seen`（在哪些群出现过）。
+
+**为什么 canonical 取账号昵称而不是群名片**：实测同一个号有 **20 个群名片**
+（`海嗣`、`苏苏大可爱`、`.........大........群......呼....唤..........我........` …），
+按群名片挑会把「我」的名字设成随手改的那个；账号昵称（`Veronica Davichi`）
+才是全局稳定名。
+
+把「本人」标进图（之后查询能区分「我说的话」与「别人的话」）：
+
+```bash
+python3 harness/mark_self.py --namespace <ns>            # 预演
+python3 harness/mark_self.py --namespace <ns> --apply    # 写 is_self=true
+```
+
 ## 删掉导入的聊天记录（清理某个域）
 
 导入的数据散在**三处**：SQLite 原文 / Weaviate 卡片 / Neo4j 图。
