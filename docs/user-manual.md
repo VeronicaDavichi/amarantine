@@ -2549,13 +2549,29 @@ group_msg_fts.db.603980800.…plain.db               576 MB × 2
 group_info.db.23069696.…plain.db                    22 MB × 3
 ```
 
-原库还在，随时能重新解密，所以可以直接删：
+**已经自动化**：`harness/export_qq_incremental.py` 默认**导出完就删**
+（`--keep-plain` 可保留，排查解密问题时才需要）。也可以手动跑：
 
 ```bash
-rm -rf ~/.qq-mcp/plain        # 省 3.3 GB；qqkey 要留着（16 字节）
+python3 harness/clean_qq_plain.py              # 预演：列出会删什么、共多少 MB
+python3 harness/clean_qq_plain.py --apply      # 真删
+python3 harness/clean_qq_plain.py --apply --older-than 600   # 只删 10 分钟前的
 ```
 
-> ⚠️ 这些是**未加密**的聊天记录，比原库更敏感。导完就删是好习惯。
+三道保护：
+
+| 保护 | 作用 |
+|---|---|
+| 只删 `.plain.db` / `-wal` / `-shm` 结尾的文件 | 不碰 `qqkey`、不碰别的文件 |
+| **原库目录不存在就拒绝删** | 原库没了，副本就是唯一数据源 |
+| 默认预演 | 先看会删多少 |
+
+> ⚠️ 这些是**未加密**的聊天记录，比原库更敏感。用完就删是好习惯
+> —— 实测累积到 3.3 GB（197 个文件，同一库留了多份）。
+
+**路径怎么找**：qq-mcp 是 Windows 侧进程，所以副本在
+`C:\Users\<用户>\.qq-mcp\plain`（不是 WSL 的 `~`）。脚本会按
+`QQ_MCP_PLAIN_DIR` → `~/.qq-mcp/plain` → `/mnt/c/Users/*/.qq-mcp/plain` 顺序找。
 
 ## 实体抑制（哪些名字不再建节点）
 

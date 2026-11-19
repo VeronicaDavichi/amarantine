@@ -92,6 +92,8 @@ def main() -> int:
     ap.add_argument("--overlap-hours", type=int, default=2,
                     help="从最后时间往前多导几小时（默认 2，防同一分钟漏消息）")
     ap.add_argument("--limit", type=int, default=5000, help="每群最多导出条数")
+    ap.add_argument("--keep-plain", action="store_true",
+                    help="导出后**保留** qq-mcp 的解密副本（默认用完就删）")
     ap.add_argument("--include-inactive", action="store_true",
                     help="连不活跃群一起导（默认跳过）")
     ap.add_argument("--mark-inactive", action="store_true",
@@ -213,6 +215,24 @@ def main() -> int:
             print(f"\n已标记不活跃 {len(newly)} 个：{sorted(newly)}")
         else:
             print("\n本次没有 0 新消息的群，清单未改")
+
+    # 用完就删：qq-mcp 每次读库都会留**明文**副本（实测累积 3.3 GB），
+    # 原库还在、随时能重新解密，所以默认清掉。
+    if not args.keep_plain:
+        try:
+            sys.path.insert(0, str(ROOT / "harness"))
+            from clean_qq_plain import clean
+
+            rep = clean(apply=True)
+            if rep["skipped_reason"]:
+                print(f"\n⚠ 未清理解密副本：{rep['skipped_reason']}")
+            elif rep["files"]:
+                print(f"\n已清理解密副本 {len(rep['files'])} 个，"
+                      f"释放 {rep['freed_bytes'] / 1024 / 1024:.1f} MB")
+            else:
+                print("\n解密副本：无需清理")
+        except Exception as exc:  # noqa: BLE001 - 清理失败不该让导出失败
+            print(f"\n⚠ 清理解密副本失败（忽略）：{exc}")
 
     print(f"\n完成 {len(written)}/{len(plan)} 个群；groups={groups_arg} since_min={since_arg}")
     print(f"语料目录：{out_dir}")

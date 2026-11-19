@@ -119,6 +119,8 @@ def main() -> int:
         "DESCRIPTIVE_BEFORE_REN",
         # 非配置项：关系谓词名（spec 039，文档里讲关系层时会提到）
         "OWNS", "MAINTAINS", "COLLABORATES_WITH", "DEPENDS_ON",
+        # 非配置项：脚本级环境变量（harness/clean_qq_plain.py 用，不在 Settings 里）
+        "QQ_MCP_PLAIN_DIR", "QQ_NT_DB_DIR", "QQ_NT_MSG_DB",
     }
     unknown = [v for v in unknown if v not in allowed_extra]
     for v in unknown:

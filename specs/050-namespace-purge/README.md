@@ -71,6 +71,7 @@ transitions:
 - [x] T3 CLI `harness/purge_namespace.py`（`--list` / 预演 / `--apply`）
 - [x] T4 测试 9 条：字面校验 / 确认语 / 预演免确认 / 残留必报
 - [x] T5 文档：user-manual 补一节（含 qq-mcp `plain/` 清理与三道闸说明）
+- [x] T6 用后即删：`harness/clean_qq_plain.py` + 导出脚本默认清理（`--keep-plain` 保留）
 
 ## Test
 
@@ -117,3 +118,28 @@ transitions:
 **顺带记录（不属于本 spec 管辖但用户在问）**：
 `~/.qq-mcp/plain/` 是外部工具的解密副本，实测 **3.3 GB**（同一库多份、旧的不清）。
 已在 user-manual 写清「原库还在，可直接 `rm -rf ~/.qq-mcp/plain`；`qqkey` 要留」。
+
+### 2026-11-19 · T6 用后即删（用户要求：用过后就删掉）
+
+**问题**：qq-mcp 每次读库都在 `~/.qq-mcp/plain/` 留**明文**副本，
+累积实测 **3.3 GB / 197 个文件**（同一库多份、旧的不清）。靠人记得清 = 迟早忘。
+
+**做法**
+
+| 组件 | 行为 |
+|---|---|
+| `harness/clean_qq_plain.py` | 独立清理：默认预演，`--apply` 真删，`--older-than` 只删旧的 |
+| `export_qq_incremental.py` | 导出结束**自动清理**；`--keep-plain` 保留 |
+
+**三道保护**
+
+1. 只删 `.plain.db` / `-wal` / `-shm` —— 不碰 `qqkey`（删了要重新 frida 抓）、不碰别的文件
+2. **原库目录不在就拒绝删**（原库没了，副本就是唯一数据源）
+3. 默认预演；删完打印释放多少 MB
+
+**踩到的路径坑**：qq-mcp 是 Windows 侧 node 进程，`Path.home()` 在 WSL 里是
+`/home/veronica`，而实际目录在 `/mnt/c/Users/EDY/.qq-mcp/plain` ——
+第一次跑「将删 0 个文件」就是这个原因。现在按
+`QQ_MCP_PLAIN_DIR` → `~/.qq-mcp/plain` → `/mnt/c/Users/*/.qq-mcp/plain` 顺序找。
+
+**测试**：6 条（只选 plain 副本 / 原库缺失拒删 / older-than / apply 计数 / 预演不删 / 目录不存在）。
