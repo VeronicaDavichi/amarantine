@@ -154,7 +154,7 @@ AND head_hits >= cards * DEMOTE_HEAD_RATIO       （默认 0.8：基本只当发
 | 与 043 冲突（人名被当 topic 再判） | 043 落地后人名走 Person，本 spec 只兜剩余的 |
 ### 2026-11-18 · 可行性实测：降级会误杀真人，得先拆「人名碎片」
 
-在 qq-505456846（4383 卡 / Entity 575 / Person 278）上量了一遍：
+在 qq-10000000001（4383 卡 / Entity 575 / Person 278）上量了一遍：
 
 | 事实 | 数值 |
 |---|---|
@@ -232,7 +232,7 @@ RVC 6 / DSH 6 / 排球少年 5 / 群里多次 5 / Skylark 5 / Fuga 5
 
 脚本：`harness/auto_entity_repair.py`（默认 dry-run，`--apply` 才落库改图）。
 
-**已落地（qq-505456846）**
+**已落地（qq-10000000001）**
 
 ```
 人名碎片 17 个 → 自动合并 3（NotFound-404- / Heat？ / Ester☆）

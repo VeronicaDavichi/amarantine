@@ -110,7 +110,7 @@ contact_friend        0 行  remark 字段存在但无数据
 | 验收 | 结果 | 证据 |
 |---|---|---|
 | A1 备注解析出姓名/说明 | ✅ | `parse_remark("王晓虹 - 加班问题人事")` → `("王晓虹","加班问题人事")`；括号形 `王晓虹（合规）` → `("王晓虹","合规")` |
-| A2 两字昵称成为 `Person` | ✅ | 真库：`王伟民` / `孙柏林` / `刘阅` 三个名册成员全部落成 `Person` |
+| A2 两字昵称成为 `Person` | ✅ | 真库：`王伟民` / `陈柏林` / `刘阅` 三个名册成员全部落成 `Person` |
 | A3 名册外名字降级 `topic` | ✅ | 035 的既有行为未变（回归用例仍绿） |
 | A4 同 uid 改名 → 1 个 Person | ✅ **已由 045 收口** | 045 把 Person 键改成 `uid:<uid>`；真库验证「同 uid 两次写入 → 1 个 Person，旧名进 `previous_names`」 |
 | A5 同名不同 uid → 2 个 Account | ✅ | 单测 `test_same_nick_different_uid_creates_two_accounts` |
@@ -208,7 +208,7 @@ person 451 / service 20 / placeholder 3 / ethnic_name 0
 **测试**：新增 22 条（服务号/修饰名/纯英文/占位/原因）；`test_identity.py` 49 passed；
 全量 **1314 passed**。
 
-**端到端**：真库临时 ns `verify043b` 灌 4 条 → Account 3 个（刘阅/孙柏林/王伟民）、
+**端到端**：真库临时 ns `verify043b` 灌 4 条 → Account 3 个（刘阅/陈柏林/王伟民）、
 Person 3 个，与名册一致；已清理。
 
 ### 2026-11-09 · 收尾

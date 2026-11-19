@@ -17,7 +17,7 @@ sys.path.insert(0, "/mnt/e/PycharmProjects/amarantine/harness")
 sys.path.insert(0, "/mnt/e/PycharmProjects/amarantine/back_end/src")
 sys.stdout.reconfigure(encoding="utf-8")
 
-NS = "qq-505456846"
+NS = "qq-10000000001"
 NEO = "http://127.0.0.1:7474/db/neo4j/tx/commit"
 PREDS = ["OWNS", "MAINTAINS", "COLLABORATES_WITH", "DEPENDS_ON"]
 LOG = "/tmp/rel_nomk.log"

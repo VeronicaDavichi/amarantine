@@ -43,12 +43,12 @@ ready "rerank   (8083)" "http://127.0.0.1:8083/health" || echo "  · rerank 同�
 
 if [ "${1:-}" = "--relay" ]; then
   echo "=== LLM 中继（Windows 侧 3001）==="
-  if timeout 3 bash -c ':</dev/tcp/172.20.192.1/3001' 2>/dev/null; then
+  if timeout 3 bash -c ':</dev/tcp/198.51.100.1/3001' 2>/dev/null; then
     echo "  ✓ 3001 可连"
   else
     echo "  ✗ 3001 不通；在 Windows 侧执行："
     echo '     cd E:\PycharmProjects\amarantine'
-    echo '     .\back_end\.venv\Scripts\python.exe harness\vpn_relay.py --listen 3001 --target 192.168.0.58:3000'
+    echo '     .\back_end\.venv\Scripts\python.exe harness\vpn_relay.py --listen 3001 --target 198.51.100.58:3000'
     FAIL=1
   fi
 fi

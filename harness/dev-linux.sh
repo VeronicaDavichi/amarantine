@@ -25,7 +25,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${REPO_ROOT}/back_end"
 
 # ---------- LLM 网关走 Windows 侧转发 ----------
-# 网关（如 192.168.0.58:3000）只在 Windows 的 aTrust VPN 后面，WSL 的 NAT 网络
+# 网关（如 198.51.100.58:3000）只在 Windows 的 aTrust VPN 后面，WSL 的 NAT 网络
 # 继承不到那条路由，直连必然超时。
 #
 # `harness/vpn_relay.py` 是 **Windows 侧** 的裸 TCP 转发：它监听 3001，
@@ -36,7 +36,7 @@ cd "${REPO_ROOT}/back_end"
 #
 # WSL 网关 IP 每次 `wsl --shutdown` 会变，所以每次动态取。
 RELAY_PORT="${RELAY_PORT:-3001}"
-RELAY_TARGET="${RELAY_TARGET:-192.168.0.58:3000}"
+RELAY_TARGET="${RELAY_TARGET:-198.51.100.58:3000}"
 _wsl_gw="$(ip route show default 2>/dev/null | awk '{print $3; exit}')"
 
 if [[ -n "${_wsl_gw}" ]]; then

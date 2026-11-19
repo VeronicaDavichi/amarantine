@@ -59,8 +59,7 @@ updated_at: 2026-11-19T02:48:57.237087765Z
 - [ ] README 重写：这是什么 / 解决什么问题 / 30 秒快速开始 / 架构图 / 已知限制
 - [ ] CONTRIBUTING.md（开发环境、测试、spec 流程）
 - [ ] SECURITY.md（如何报漏洞；明确「自托管、单租户」的安全边界）
-- [ ] 隐私说明：本项目会处理个人聊天记录，写清**不内置任何数据集**、
-      `data/` 与 `corpus/` 永不入库（`.gitignore` 已覆盖，需在文档里说明）
+- [x] 隐私说明：`data/`、`corpus/`、`backups/`、`docs/labeling-data.js` 均已在 `.gitignore`
 
 ### G5 可验证（可持续）
 
@@ -142,3 +141,41 @@ embedding ok(476ms) rerank ok(476ms)
 **`backups/` 已加进 `.gitignore`** —— 备份里是真实聊天数据，开源仓库绝不能进。
 
 **G2 剩余**：恢复脚本 + 还原后条数校验（A3）；schema 版本迁移（A4）。
+
+### 2026-11-19 · A5 历史检查通过 + 工作区脱敏完成
+
+**A5 历史检查（命令与结果）**
+
+```
+git log --all --name-only --diff-filter=A -- "*corpus*" "*data/*" "*.db" ".env" "backups/*"
+→ 只命中 specs/021-…、specs/034-… 两个 README 路径（文件名里含 corpus/data），无真实数据
+
+git rev-list --objects --all | 按 blob 大小排序
+→ 最大是 back_end/uv.lock (115KB) 与 docs/user-manual.md (110KB)，没有语料/备份
+```
+
+**工作区脱敏（96 处 / 33 个文件）**
+
+`harness/scrub_privacy.py`（dry-run 默认）用**项目已有的**映射，不造第三套假名：
+
+| 真实 | 替换为 |
+|---|---|
+| `505456846` | `10000000001` |
+| `192.168.0.58` | `198.51.100.58` |
+| `172.20.192.1` | `198.51.100.1` |
+| 孙柏林 / 任泽昂 / 王婕 | 陈柏林 / 任泽安 / 王洁 |
+
+复查：六个模式在 `git ls-files` 里**全部 0 命中**（`check_scrub.py`）。
+脱敏后全量测试仍 1607 passed（改到了测试里的固定数据）。
+
+**顺手把评测数据移出仓库**
+
+`docs/labeling-data.js` 是 `make_labeling_data.py` 的产物，内含真实聊天摘要 →
+加入 `.gitignore` 并 `git rm --cached`（工作区文件保留，页面照常能开）。
+
+**仍待你拍板的一处**：`back_end/config/inactive_sessions.json` 里有**真实群号**。
+两种做法：
+1. 改成 `.example.json` 示例 + 真实文件 gitignore（加载器加 fallback）
+2. 保留现状（群号本身不含内容，但仍能暴露「你在哪些群」）
+
+我倾向 1，但它会改运行时行为，属「需确认的改动」，等你定。

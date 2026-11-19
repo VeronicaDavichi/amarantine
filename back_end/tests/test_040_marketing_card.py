@@ -24,7 +24,7 @@ def test_marketing_cards_detected(text: str) -> None:
 
 
 @pytest.mark.parametrize("text", [
-    "任泽昂询问老师们现在是否有空一起线上交流反洗钱智能体的方案",
+    "任泽安询问老师们现在是否有空一起线上交流反洗钱智能体的方案",
     "远望打算本地部署小模型来做对话bot",
     "克劳德负责写门牌号并把尘霜记为第二号",
     "乌角鲨最终称没钱养服务器，劝大家别让他实现以免无法debug",

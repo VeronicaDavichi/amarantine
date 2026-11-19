@@ -242,7 +242,7 @@ document.css / nbnhhsh.user.js / nbnhhsh.meta.js / sponsor.png
 result = _merge_expanded(result)   # 只在该次查询命中别名时执行
 ```
 
-**实测对比（qq-505456846，query = 恋与深空）**
+**实测对比（qq-10000000001，query = 恋与深空）**
 
 ```
 ABBR_EXPAND_ENABLED=False → 5 条（全是全称卡）

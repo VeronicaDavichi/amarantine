@@ -69,7 +69,7 @@ def test_validate_rejects_hallucination() -> None:
     ok, reason = R.validate_relation(
         "张老师", "MCP", 2,
         candidates=["MCP"],
-        text="任泽昂和老师一起看产品",
+        text="任泽安和老师一起看产品",
     )
     assert not ok
     assert "不在原文" in reason
@@ -78,10 +78,10 @@ def test_validate_rejects_hallucination() -> None:
 def test_validate_tolerates_substring_tail() -> None:
     """`老师` ⊂ 候选 `老师五点`，容忍。"""
     ok, reason = R.validate_relation(
-        "任泽昂", "老师", 2,
-        candidates=["任泽昂", "老师五点", "产品"],
-        text="任泽昂和老师一起看产品",
-        evidence="任泽昂和老师一起",
+        "任泽安", "老师", 2,
+        candidates=["任泽安", "老师五点", "产品"],
+        text="任泽安和老师一起看产品",
+        evidence="任泽安和老师一起",
     )
     assert ok, reason
 
@@ -89,9 +89,9 @@ def test_validate_tolerates_substring_tail() -> None:
 def test_validate_rejects_missing_evidence() -> None:
     """没有 evidence 就不建边（防止「同处一句」被当关系）。"""
     ok, reason = R.validate_relation(
-        "任泽昂", "产品", 4,
-        candidates=["任泽昂", "产品"],
-        text="任泽昂看产品",
+        "任泽安", "产品", 4,
+        candidates=["任泽安", "产品"],
+        text="任泽安看产品",
     )
     assert not ok
     assert "缺少 evidence" in reason

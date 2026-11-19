@@ -3,7 +3,7 @@
 
 用法：
 
-    python3 harness/resolve_abbr.py --session qq-876081394 --namespace qq-505456846 --apply
+    python3 harness/resolve_abbr.py --session qq-876081394 --namespace qq-10000000001 --apply
     python3 harness/resolve_abbr.py --session qq-876081394            # 只看结果
 
 流程：
@@ -63,7 +63,7 @@ def load_texts(session: str, namespace: str) -> list[str]:
 def main() -> int:
     ap = argparse.ArgumentParser(description="拼音缩写解析（spec 048）")
     ap.add_argument("--session", required=True)
-    ap.add_argument("--namespace", default="qq-505456846")
+    ap.add_argument("--namespace", default="qq-10000000001")
     ap.add_argument("--min-freq", type=int, default=1)
     ap.add_argument("--apply", action="store_true", help="写 SAME_SENSE 边")
     ap.add_argument(

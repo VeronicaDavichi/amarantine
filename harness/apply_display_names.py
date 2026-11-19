@@ -14,8 +14,8 @@
 
 用法：
 
-    python3 harness/apply_display_names.py --namespace qq-505456846            # dry-run
-    python3 harness/apply_display_names.py --namespace qq-505456846 --apply
+    python3 harness/apply_display_names.py --namespace qq-10000000001            # dry-run
+    python3 harness/apply_display_names.py --namespace qq-10000000001 --apply
 """
 
 from __future__ import annotations

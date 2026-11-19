@@ -16,7 +16,7 @@ Neo4j（图）。只备一处会出现「有卡没图」「有原文没卡」这
 
 用法：
 
-    python3 harness/backup_state.py --namespace qq-505456846 --out backups/2026-11-19
+    python3 harness/backup_state.py --namespace qq-10000000001 --out backups/2026-11-19
 """
 
 from __future__ import annotations

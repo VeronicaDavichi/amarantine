@@ -14,9 +14,9 @@
 
 用法：
 
-    python3 harness/emoji_alias_scan.py --namespace qq-505456846            # 报告
-    python3 harness/emoji_alias_scan.py --namespace qq-505456846 --apply
-    python3 harness/emoji_alias_scan.py --namespace qq-505456846 --min-hits 5
+    python3 harness/emoji_alias_scan.py --namespace qq-10000000001            # 报告
+    python3 harness/emoji_alias_scan.py --namespace qq-10000000001 --apply
+    python3 harness/emoji_alias_scan.py --namespace qq-10000000001 --min-hits 5
 """
 
 from __future__ import annotations

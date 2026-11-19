@@ -59,7 +59,7 @@ def test_build_turns_resolves_sender_by_uid() -> None:
     mod = _import_chat()
     data = {
         "messages": [
-            {"sender_uid": "u1", "sender": "505456846", "text": "蓝色键帽还有货吗各位", "ts": "2026-05-01 10:00:00"},
+            {"sender_uid": "u1", "sender": "10000000001", "text": "蓝色键帽还有货吗各位", "ts": "2026-05-01 10:00:00"},
             {"sender_name": "已知昵称", "text": "有的有的，今天发货", "ts": "2026-05-01 10:01:00"},
         ]
     }
@@ -115,7 +115,7 @@ class _Driver:
 def test_ensure_display_names_writes_items() -> None:
     drv = _Driver()
     stats = I.ensure_display_names(
-        namespace="qq-505456846", scope="group:485490399",
+        namespace="qq-10000000001", scope="group:485490399",
         records=[{"uid": "u1", "name": "往汐（北瑀家的鱼）", "source": "group_card"}],
         settings=object(), driver=drv,
     )

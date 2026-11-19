@@ -26,7 +26,7 @@ import { pathToFileURL } from "node:url";
 import { writeFileSync, mkdirSync } from "node:fs";
 
 const PKG = process.env.QQ_MCP_PKG ?? "D:/nodejs/node_modules/@powercess/qq-mcp";
-const DEFAULT_DB = "D:/TencentData/Chats/Tencent Files/505456846/nt_qq/nt_db/nt_msg.db";
+const DEFAULT_DB = "D:/TencentData/Chats/Tencent Files/10000000001/nt_qq/nt_db/nt_msg.db";
 
 const require = createRequire(import.meta.url);
 const resolveSdk = (sub) =>

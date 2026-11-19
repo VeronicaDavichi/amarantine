@@ -18,8 +18,8 @@
 
 用法：
 
-    python3 harness/eval_recall.py --namespace qq-505456846 --sample 60
-    python3 harness/eval_recall.py --namespace qq-505456846 --sample 60 --json out.json
+    python3 harness/eval_recall.py --namespace qq-10000000001 --sample 60
+    python3 harness/eval_recall.py --namespace qq-10000000001 --sample 60 --json out.json
 """
 
 from __future__ import annotations

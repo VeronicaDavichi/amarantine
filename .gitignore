@@ -45,3 +45,6 @@ harness/corpus/
 
 # 备份包含真实聊天数据，永不入库（spec 049 G2）
 backups/
+
+# 评测数据（含真实聊天摘要），由 make_labeling_data.py 生成（spec 049 G4）
+docs/labeling-data.js

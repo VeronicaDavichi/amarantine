@@ -1504,11 +1504,11 @@ node harness/export_qq_members.mjs --all --out-dir back_end/data/corpus/qq-ident
 ### 2. 导出消息
 
 ```powershell
-node harness/export_qq.mjs --db "D:/TencentData/Chats/Tencent Files/505456846/nt_qq/nt_db/nt_msg.db" `
+node harness/export_qq.mjs --db "D:/TencentData/Chats/Tencent Files/10000000001/nt_qq/nt_db/nt_msg.db" `
   --per-group-limit 1000 --groups 485490399 --out-dir back_end/data/corpus/qq-import
 ```
 
-路径里的 `505456846` 是**登录账号的 QQ 号**（数据目录按账号分）。要导别的账号，
+路径里的 `10000000001` 是**登录账号的 QQ 号**（数据目录按账号分）。要导别的账号，
 先登录它，再把路径换掉。
 
 预期输出：
@@ -1541,7 +1541,7 @@ node harness/export_qq.mjs --db "D:/TencentData/Chats/Tencent Files/505456846/nt
 cd /mnt/e/PycharmProjects/amarantine
 ./harness/dev-linux.sh python ../harness/import_chat.py \
   --corpus-dir data/corpus/qq-import \
-  --namespace qq-505456846 --window 30 \
+  --namespace qq-10000000001 --window 30 \
   --gate-marketing --gate-namespaces njzq-dingtalk \
   --prefix qq
 ```
@@ -1617,11 +1617,11 @@ python3 -c "import json;d=json.load(open('back_end/data/import_report.json'));pr
 
 ```bash
 curl -s -X POST http://127.0.0.1:8081/v1/graphql -H "Content-Type: application/json" \
-  -d '{"query":"{ Aggregate { MemoryEvent(where: {path: [\"namespace\"], operator: Equal, valueText: \"qq-505456846\"}) { meta { count } } } }"}'
+  -d '{"query":"{ Aggregate { MemoryEvent(where: {path: [\"namespace\"], operator: Equal, valueText: \"qq-10000000001\"}) { meta { count } } } }"}'
 # {"data":{"Aggregate":{"MemoryEvent":[{"meta":{"count":1659}}]}}}
 
 curl -s -X POST http://127.0.0.1:8081/v1/graphql -H "Content-Type: application/json" \
-  -d '{"query":"{ Aggregate { MemoryEvent(where: {path: [\"namespace\"], operator: Equal, valueText: \"qq-505456846\"}, groupBy: [\"time_source\"]) { groupedBy { value } meta { count } } } }"}'
+  -d '{"query":"{ Aggregate { MemoryEvent(where: {path: [\"namespace\"], operator: Equal, valueText: \"qq-10000000001\"}, groupBy: [\"time_source\"]) { groupedBy { value } meta { count } } } }"}'
 # msg_ts 1656 / relative 3（imported 0）
 ```
 
@@ -1635,7 +1635,7 @@ curl -s -X POST http://127.0.0.1:8081/v1/graphql -H "Content-Type: application/j
 cd /mnt/e/PycharmProjects/amarantine/back_end
 TOKEN=$(grep '^ADMIN_TOKEN=' .env | cut -d= -f2-)
 curl -s -H "Authorization: Bearer $TOKEN" \
-  "http://127.0.0.1:8765/admin/whois?name=%E5%BE%80%E6%B1%90&scope=group:485490399&base=true&namespace=qq-505456846"
+  "http://127.0.0.1:8765/admin/whois?name=%E5%BE%80%E6%B1%90&scope=group:485490399&base=true&namespace=qq-10000000001"
 ```
 
 返回 2 个账号且 `ambiguous:true` 就对了（完整返回见下文「名字标记」）。
@@ -1644,7 +1644,7 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 
 ```bash
 ./harness/dev-linux.sh python ../harness/import_chat.py \
-  --corpus-dir data/corpus/qq-import --namespace qq-505456846 --resume \
+  --corpus-dir data/corpus/qq-import --namespace qq-10000000001 --resume \
   --selftest ../back_end/data/corpus/selftest_040.json
 ```
 
@@ -1712,7 +1712,7 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 > 补救：
 >
 > ```bash
-> python3 harness/apply_display_names.py --namespace qq-505456846 --apply
+> python3 harness/apply_display_names.py --namespace qq-10000000001 --apply
 > # 实测：113 个群 → 名片 3585 条、昵称 35914 条
 > ```
 
@@ -1730,7 +1730,7 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 ```bash
 python3 harness/export_qq_identities.py --plain <解密后的 group_info.db> \
   --out-dir back_end/data/corpus/qq-identities
-python3 harness/apply_titles.py --namespace qq-505456846 --apply
+python3 harness/apply_titles.py --namespace qq-10000000001 --apply
 # 实测：38 个群 / 956 条头衔 → 写 953 条 TITLED 边
 ```
 
@@ -1794,7 +1794,7 @@ python3 harness/apply_titles.py --namespace qq-505456846 --apply
 
 ```bash
 curl -s -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
-  -d '{"namespace":"qq-505456846","scope":"global","records":[
+  -d '{"namespace":"qq-10000000001","scope":"global","records":[
         {"uid":"u_oZvYzRujHn5KleWUi8o--Q","name":"潮间带","source":"nick"}]}' \
   http://127.0.0.1:8765/admin/display-names
 # → {"scope":"global","written":1,"failed":0}
@@ -1808,18 +1808,18 @@ curl -s -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/
 ```bash
 # 精确查（字节完全相同）
 curl -s -H "Authorization: Bearer $TOKEN" \
-  "http://127.0.0.1:8765/admin/whois?name=往汐（北瑀家的鱼）&scope=group:485490399&namespace=qq-505456846"
+  "http://127.0.0.1:8765/admin/whois?name=往汐（北瑀家的鱼）&scope=group:485490399&namespace=qq-10000000001"
 # → 1 个账号，ambiguous:false
 
 # 按基础名查（去括号 + 去小号后缀）
 curl -s -H "Authorization: Bearer $TOKEN" \
-  "http://127.0.0.1:8765/admin/whois?name=往汐&scope=group:485490399&base=true&namespace=qq-505456846"
+  "http://127.0.0.1:8765/admin/whois?name=往汐&scope=group:485490399&base=true&namespace=qq-10000000001"
 ```
 
 真实返回（`base=true`）：
 
 ```json
-{"name":"往汐","scope":"group:485490399","namespace":"qq-505456846","base":true,
+{"name":"往汐","scope":"group:485490399","namespace":"qq-10000000001","base":true,
  "accounts":[
    {"uid":"u_Z0cEqOYSuNMwk8uyXXFgtQ","name":"往汐（北瑀家的鱼）复活版","source":"group_card"},
    {"uid":"u_oZvYzRujHn5KleWUi8o--Q","name":"往汐（北瑀家的鱼）","source":"group_card"}],
@@ -1966,7 +1966,7 @@ node harness/export_qq.mjs --db <nt_msg.db> --per-group-limit 1000 `
 ```bash
 ./harness/dev-linux.sh python ../harness/import_chat.py \
   --corpus data/corpus/qq-import/qq-485490399.json \
-  --namespace qq-505456846 --window 30 --prefix qq
+  --namespace qq-10000000001 --window 30 --prefix qq
 ```
 
 单群同样会读 `--identity-dir` 里的成员表（按 `cid` 找 `group-<gid>.json`）。
@@ -1995,17 +1995,17 @@ export NEO4J_PASSWORD=$(grep '^NEO4J_PASSWORD=' .env | cut -d= -f2-)
 ```bash
 # 1) 图（派生层，可重建）
 curl -s -u neo4j:$NEO4J_PASSWORD -H 'Content-Type: application/json' \
-  -d '{"statements":[{"statement":"MATCH (n) WHERE n.namespace = $ns DETACH DELETE n","parameters":{"ns":"qq-505456846"}}]}' \
+  -d '{"statements":[{"statement":"MATCH (n) WHERE n.namespace = $ns DETACH DELETE n","parameters":{"ns":"qq-10000000001"}}]}' \
   http://127.0.0.1:7474/db/neo4j/tx/commit
 
 # 2) 向量（事实层，删了只能重灌）
 curl -s -X DELETE http://127.0.0.1:8081/v1/batch/objects -H 'Content-Type: application/json' \
-  -d '{"match":{"class":"MemoryEvent","where":{"path":["namespace"],"operator":"Equal","valueText":"qq-505456846"}},"output":"minimal"}'
+  -d '{"match":{"class":"MemoryEvent","where":{"path":["namespace"],"operator":"Equal","valueText":"qq-10000000001"}},"output":"minimal"}'
 
 # 3) SQLite：job 记录 + 原文
 sqlite3 back_end/data/memory.db \
-  "DELETE FROM ingest_job WHERE namespace='qq-505456846';
-   DELETE FROM raw_quote WHERE namespace='qq-505456846';"
+  "DELETE FROM ingest_job WHERE namespace='qq-10000000001';
+   DELETE FROM raw_quote WHERE namespace='qq-10000000001';"
 ```
 
 > **向量删了必须连 `ingest_job` 一起删。** 只删向量、留着 `done` 的 job，
@@ -2310,12 +2310,12 @@ bash harness/verify_all.sh --static   # 只跑静态检查（不需要 WSL 容�
 ```bash
 # 列出待办（reason=candidate_ambiguous 就是候选池）
 curl -s -H "Authorization: Bearer $ADMIN_TOKEN" \
-  "http://127.0.0.1:8765/admin/alias-rejects?namespace=qq-505456846&reason=candidate_ambiguous"
+  "http://127.0.0.1:8765/admin/alias-rejects?namespace=qq-10000000001&reason=candidate_ambiguous"
 
 # 裁决：accepted = 判据错了，这两个是同一个 → 顺手补建别名边
 curl -s -X POST -H "Authorization: Bearer $ADMIN_TOKEN" \
   -H 'Content-Type: application/json' \
-  -d '{"namespace":"qq-505456846","event_id":"evt_...","alias":"张三丰","canonical":"张三","side":"candidate","resolution":"accepted"}' \
+  -d '{"namespace":"qq-10000000001","event_id":"evt_...","alias":"张三丰","canonical":"张三","side":"candidate","resolution":"accepted"}' \
   "http://127.0.0.1:8765/admin/alias-rejects/resolve"
 ```
 
@@ -2343,7 +2343,7 @@ curl -s -X POST -H "Authorization: Bearer $ADMIN_TOKEN" \
 bash harness/wake.sh                      # 先唤醒容器
 cd back_end
 .venv-linux/bin/python3 ../harness/build_relations.py \
-    --namespace qq-505456846 --statements --use-llm --apply
+    --namespace qq-10000000001 --statements --use-llm --apply
 ```
 
 默认只处理**含关系词**的卡（约 257/2546），全扫加 `--all-cards`。
@@ -2352,7 +2352,7 @@ cd back_end
 **查询**
 
 ```cypher
-MATCH (p:Person {namespace:'qq-505456846', name:'kk'})-[r]->(t)
+MATCH (p:Person {namespace:'qq-10000000001', name:'kk'})-[r]->(t)
 RETURN type(r) AS 谓词, t.name AS 对象
 ```
 
@@ -2383,14 +2383,14 @@ python3 harness/export_qq_incremental.py
 # 3) 灌进记忆（--resume 跳过已 done 的片）
 cd back_end
 .venv-linux/bin/python3 ../harness/import_chat.py \
-    --corpus-dir ../harness/corpus/qq-inc --namespace qq-505456846 \
-    --prefix dt --window 30 --resume --gate-marketing --gate-namespaces qq-505456846
+    --corpus-dir ../harness/corpus/qq-inc --namespace qq-10000000001 \
+    --prefix dt --window 30 --resume --gate-marketing --gate-namespaces qq-10000000001
 
 # 4) 补名字标记（新成员）+ 重算关系层
 .venv-linux/bin/python3 ../harness/apply_display_names.py \
-    --namespace qq-505456846 --apply
+    --namespace qq-10000000001 --apply
 .venv-linux/bin/python3 ../harness/build_relations.py \
-    --namespace qq-505456846 --statements --use-llm --apply
+    --namespace qq-10000000001 --statements --use-llm --apply
 ```
 
 **为什么按群各导**：12 个群的最新消息时间可能差 8 个月。
@@ -2445,9 +2445,9 @@ python3 harness/export_qq_incremental.py --mark-inactive        # 把 0 条新�
 
 ```bash
 # 报告：候选 + 语料出现次数（不写图）
-python3 harness/emoji_alias_scan.py --namespace qq-505456846
+python3 harness/emoji_alias_scan.py --namespace qq-10000000001
 # 写图（默认 ≥3 次才采纳）
-python3 harness/emoji_alias_scan.py --namespace qq-505456846 --apply
+python3 harness/emoji_alias_scan.py --namespace qq-10000000001 --apply
 ```
 
 两条规则：**去 emoji**（`便携式🦆🍗 → 便携式`，最有效）和 **emoji 替词**
@@ -2462,12 +2462,12 @@ python3 harness/emoji_alias_scan.py --namespace qq-505456846 --apply
 
 ```bash
 # 报告（默认 dry-run）
-python3 harness/auto_entity_repair.py --namespace qq-505456846
+python3 harness/auto_entity_repair.py --namespace qq-10000000001
 # 落库 + 改图
-python3 harness/auto_entity_repair.py --namespace qq-505456846 --apply
+python3 harness/auto_entity_repair.py --namespace qq-10000000001 --apply
 # 查看抑制清单
 curl -s -H "Authorization: Bearer $ADMIN_TOKEN" \
-  "http://127.0.0.1:8765/admin/entities/suppress?namespace=qq-505456846"
+  "http://127.0.0.1:8765/admin/entities/suppress?namespace=qq-10000000001"
 ```
 
 判定：`frag ⊂ alias` 且 alias 只属一个账号时，

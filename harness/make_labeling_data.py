@@ -36,7 +36,7 @@ from memory.services.reference import (  # noqa: E402
 from memory.services.relations import extract_statements  # noqa: E402
 
 NEO4J = "http://127.0.0.1:7474/db/neo4j/tx/commit"
-NS_QQ = "qq-505456846"
+NS_QQ = "qq-10000000001"
 NS_DING = "njzq-dingtalk"
 STMT_HINT = re.compile(r"(负责|维护|对接|协作|依赖|一起|分管|管着)")
 

@@ -26,8 +26,8 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 DB = ROOT / "back_end" / "data" / "memory.db"
 OUT = ROOT / "harness" / "corpus" / "qq-inc"
 QQ_DB = pathlib.Path(
-    "/mnt/d/TencentData/Chats/Tencent Files/505456846/nt_qq/nt_db/nt_msg.db")
-NAMESPACE = "qq-505456846"
+    "/mnt/d/TencentData/Chats/Tencent Files/10000000001/nt_qq/nt_db/nt_msg.db")
+NAMESPACE = "qq-10000000001"
 INACTIVE = ROOT / "back_end" / "config" / "inactive_sessions.json"
 
 

@@ -15,7 +15,7 @@ import urllib.request
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "back_end" / "src"))
 
-NS = "qq-505456846"
+NS = "qq-10000000001"
 GID = "485490399"
 NEO = "http://127.0.0.1:7474/db/neo4j/tx/commit"
 

@@ -279,19 +279,19 @@ daocloud 卡在 r2 blob、1ms.run 卡在同一层，重试 8 轮都没拉全。�
 ### 网络：WSL 用 NAT，LLM 网关在 VPN 后面
 
 `.wslconfig` 用 `networkingMode=nat`（默认）。**模型推理完全不依赖网络**；
-只有「灌库时让 LLM 切分/打标」才需要 `192.168.0.58:3000` 那个网关，
+只有「灌库时让 LLM 切分/打标」才需要 `198.51.100.58:3000` 那个网关，
 而 NAT 下 WSL 到宿主机的入站被 Windows 防火墙挡着（`172.22.192.1:3001` 超时）。
 
 要用 LLM 时，二选一：
 
 1. **relay 转发（默认，已自动化）**：`harness/dev-linux.sh` 每次启动会先探
    `<WSL 网关>:3001`；不可达就用 `powershell.exe` 在 Windows 侧拉起
-   `harness\vpn_relay.py --listen 3001 --target 192.168.0.58:3000`，
+   `harness\vpn_relay.py --listen 3001 --target 198.51.100.58:3000`，
    等端口就绪后再执行命令。WSL 侧 `LLM_BASE_URL` 自动填成
    `http://<WSL 网关>:3001`，**不需要改 `.env`**。
    手工排查时：
    ```
-   .\back_end\.venv\Scripts\python.exe harness\vpn_relay.py --listen 3001 --target 192.168.0.58:3000
+   .\back_end\.venv\Scripts\python.exe harness\vpn_relay.py --listen 3001 --target 198.51.100.58:3000
    ```
    > 端口别搞混：**3001 是 relay**，3000 是网关。WSL 连 3000 会一直超时，
    > 表现为「切分 60s 后降级成整段原文卡」——2026-11-09 就是踩了这个。
@@ -331,7 +331,7 @@ node harness/export_qq.mjs --db <nt_msg.db> --groups 485490399 \
 重灌前先探活：
 
 ```bash
-timeout 3 bash -c ':</dev/tcp/172.20.192.1/3001' && echo ok
+timeout 3 bash -c ':</dev/tcp/198.51.100.1/3001' && echo ok
 ```
 
 ## WSL 空闲会自动关闭 → 容器停（不是故障）

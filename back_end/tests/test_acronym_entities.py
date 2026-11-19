@@ -62,7 +62,7 @@ def test_proper_nouns_become_topic(text: str, expected: str) -> None:
         ("3217017791发送图片50550779A7B77451877B7562B4FFD918.jpg", "jpg"),
         ("423124659发了一张图片 5FDEB3AD54E7483E04A9F6F48389E8D3.png", "png"),
         ("逐风之旅发送图片FDA74A63E3E67CFA8489F9B7570ABEAE.jpeg", "jpeg"),
-        ("505456846发送文件0ed9921f795c09f3aab10a4cc49f8a29.amr", "amr"),
+        ("10000000001发送文件0ed9921f795c09f3aab10a4cc49f8a29.amr", "amr"),
         ("逐风之旅发送聊天记录（m_fileName=a4adda39-682b-4178-a4c8-db44d2d48145）", "m_fileName"),
         ("图片文件 {252FEE87-F439-2708-1940-B8BB6E6F5281}", "F439"),
         ("图片文件 {252FEE87-F439-2708-1940-B8BB6E6F5281}", "B8BB6E6F5281"),

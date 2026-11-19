@@ -21,7 +21,7 @@ import { pathToFileURL } from "node:url";
 import { readFileSync } from "node:fs";
 
 const PKG = process.env.QQ_MCP_PKG ?? "D:/nodejs/node_modules/@powercess/qq-mcp";
-const DB_DIR = process.env.QQ_DB_DIR ?? "D:/TencentData/Chats/Tencent Files/505456846/nt_qq/nt_db";
+const DB_DIR = process.env.QQ_DB_DIR ?? "D:/TencentData/Chats/Tencent Files/10000000001/nt_qq/nt_db";
 const MSG_DB = `${DB_DIR}/nt_msg.db`;
 const FTS_DB = `${DB_DIR}/group_msg_fts.db`;
 

@@ -15,8 +15,8 @@
 
 用法：
 
-    python3 harness/auto_entity_repair.py --namespace qq-505456846            # 报告
-    python3 harness/auto_entity_repair.py --namespace qq-505456846 --apply    # 落库+改图
+    python3 harness/auto_entity_repair.py --namespace qq-10000000001            # 报告
+    python3 harness/auto_entity_repair.py --namespace qq-10000000001 --apply    # 落库+改图
 """
 
 from __future__ import annotations

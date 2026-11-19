@@ -36,7 +36,7 @@ def test_empty_tail_rejected() -> None:
 
 def test_valid_relation_not_junk() -> None:
     for head, tail in (("运营", "商品"), ("传讯员8号", "部屋"),
-                       ("克劳德", "门牌号"), ("王婕", "Oracle")):
+                       ("克劳德", "门牌号"), ("王洁", "Oracle")):
         assert R.is_junk_relation(head, tail) == "", (head, tail)
 
 

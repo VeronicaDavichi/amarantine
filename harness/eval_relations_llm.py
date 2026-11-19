@@ -53,7 +53,7 @@ def parse_note_relations(note: str) -> list[tuple[str, str, int]]:
     """把备注里写的关系解析成 `[(head, tail, intensity)]`。
 
     备注是用户手写的自由文本，例：
-    `任泽昂 有关系 老师们         任泽昂 负责 方案          老师们 维护 方案`
+    `任泽安 有关系 老师们         任泽安 负责 方案          老师们 维护 方案`
     解析不出来的片段直接跳过 —— 宁可少算真值，也不要把噪声当真值。
     """
     out: list[tuple[str, str, int]] = []
