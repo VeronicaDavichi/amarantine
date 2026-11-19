@@ -2579,6 +2579,49 @@ python3 harness/mark_self.py --namespace <ns>            # 预演
 python3 harness/mark_self.py --namespace <ns> --apply    # 写 is_self=true
 ```
 
+#### LLM 也能问「我是谁」
+
+MCP 工具 **`memory_whoami`**（只读）：
+
+```json
+{"name": "memory_whoami", "arguments": {"include_relations": true}}
+```
+
+返回一段可读文本 + 结构化数据，实测输出：
+
+```
+你是 Veronica Davichi（QQ 505456846，uid u_7zrO…）。
+你在这个域里有 19 个群名片，例如：海嗣、苏苏大可爱、…
+以你为起点的关系 3 条：
+  - OWNS → 服务器
+  - MAINTAINS → 大肥鱼
+```
+
+什么时候调：用户问「我是谁」「你记得我是谁吗」「我和某人什么关系」。
+**答案必须来自记忆**，不能让模型编。
+
+#### 「我」怎么参与关系层
+
+关系边的两端口径是「名字」，而同一个号有 19 个群名片、摘要里还常出现「我」。
+所以建关系层时会把下面这些**统一归到 `acct_<self_uid>` 这个 Person**：
+
+- 账号昵称（`canonical`）
+- 全部群名片
+- 第一人称代词：`我` / `自己` / `本人` / `咱` / `俺`
+
+已有的边用一次性脚本重指：
+
+```bash
+python3 harness/rebind_self_edges.py --namespace <ns>           # 预演
+python3 harness/rebind_self_edges.py --namespace <ns> --apply   # 重指
+```
+
+查一下「有多少卡提到我」（判断关系层该不该有边）：
+
+```bash
+python3 harness/scan_self_mentions.py
+```
+
 ## 删掉导入的聊天记录（清理某个域）
 
 导入的数据散在**三处**：SQLite 原文 / Weaviate 卡片 / Neo4j 图。

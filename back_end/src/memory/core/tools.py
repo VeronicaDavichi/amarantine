@@ -139,6 +139,25 @@ TOOLS: dict[str, dict[str, Any]] = {
             "additionalProperties": False,
         },
     },
+    "memory_whoami": {
+        "name": "memory_whoami",
+        "description": (
+            "回答「我是谁」：当前记忆域里，登录账号对应的身份，以及我与别人的关系。"
+            "用户问「我是谁」「你记得我是谁吗」「我和某人是什么关系」时调用。"
+            "只读，不写记忆。"
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "include_relations": {
+                    "type": "boolean",
+                    "description": "是否附上「我与别人的关系」（默认 true）",
+                    "default": True,
+                },
+            },
+            "additionalProperties": False,
+        },
+    },
     "memory_feedback": {
         "name": "memory_feedback",
         "description": (

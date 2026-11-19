@@ -71,7 +71,8 @@ def test_initialize_returns_server_info_and_namespace(tmp_path: Path) -> None:
     assert "memory_recall" in msg["result"]["instructions"]
 
 
-def test_tools_list_has_four_tools(tmp_path: Path) -> None:
+def test_tools_list_has_expected_tools(tmp_path: Path) -> None:
+    """五个工具：读写删 + 反馈 + 我是谁（spec 050 延伸）。"""
     out, _, _ = run_mcp(
         [INIT, json.dumps({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})],
         log_file=tmp_path / "m.log",
@@ -82,6 +83,7 @@ def test_tools_list_has_four_tools(tmp_path: Path) -> None:
         "memory_remember",
         "memory_forget",
         "memory_feedback",
+        "memory_whoami",
     }
     for t in tools:
         assert t["inputSchema"]["type"] == "object"
@@ -168,8 +170,8 @@ def test_bad_arguments_report_error_not_crash(tool: str, tmp_path: Path) -> None
     assert parse(out)[0]["result"]["isError"] is True
 
 
-def test_all_four_tools_are_implemented() -> None:
-    """四个工具都不能再挂 NotImplementedError —— 这是阶段 E 的出口条件。"""
+def test_all_tools_are_implemented() -> None:
+    """所有工具都不能再挂 NotImplementedError —— 这是阶段 E 的出口条件。"""
     from memory.entrypoints.mcp_stdio import HANDLERS
 
     assert set(HANDLERS) == {
@@ -177,6 +179,7 @@ def test_all_four_tools_are_implemented() -> None:
         "memory_remember",
         "memory_forget",
         "memory_feedback",
+        "memory_whoami",
     }
     for name, handler in HANDLERS.items():
         source = inspect.getsource(handler)

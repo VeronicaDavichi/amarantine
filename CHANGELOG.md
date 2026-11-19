@@ -13,6 +13,9 @@
   `harness/restore_state.py`（按 namespace 还原并校验条数）
 - SQLite schema 版本与迁移：`memory/services/schema.py`（`PRAGMA user_version`，
   有序幂等迁移，拒绝降级）
+- `memory_whoami` MCP 工具 + `GET /admin/whoami`：回答「我是谁」与「我与别人的关系」
+- 「我」参与关系层：账号昵称 / 群名片 / 第一人称代词统一归到 `acct_<self_uid>`
+- `harness/rebind_self_edges.py`（已有边重指）、`harness/scan_self_mentions.py`（看多少卡提到我）
 - 文档：`docs/quickstart.md`（冷启动）、`docs/degradation.md`（依赖挂掉会怎样）、
   `docs/config-reference.md`（86 项配置，自动生成）
 - 协作文件：`CONTRIBUTING.md`、`SECURITY.md`、`.github/workflows/ci.yml`

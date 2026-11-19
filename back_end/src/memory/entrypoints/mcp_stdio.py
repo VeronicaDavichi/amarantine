@@ -165,10 +165,54 @@ def _tool_feedback(settings: Settings, args: dict[str, Any]) -> dict[str, Any]:
     return outcome.to_tool_result()
 
 
+def _tool_whoami(settings: Settings, args: dict[str, Any]) -> dict[str, Any]:
+    """`memory_whoami`：我是谁 + 我与别人的关系。
+
+    为什么给 LLM 用：用户会问「你记得我是谁吗」「我和某人什么关系」，
+    这些答案必须来自记忆，不能让模型凭空编。
+    """
+    from memory.services.whoami import build_whoami
+
+    include_relations = args.get("include_relations", True)
+    namespace = settings.MEMORY_NAMESPACE or ""
+    got = build_whoami(settings, namespace=namespace)
+    ident = got.get("identity") or {}
+
+    lines = []
+    if not ident.get("configured"):
+        lines.append("还没有配置「我是谁」（SELF_QQ）—— 我不知道登录的是哪个账号。")
+    elif not ident.get("uid"):
+        lines.append(f"配了 SELF_QQ={ident.get('qq')}，但成员表里查不到这个账号。")
+    else:
+        name = ident.get("canonical") or ident.get("qq")
+        lines.append(f"你是 {name}（QQ {ident.get('qq')}，uid {ident.get('uid')}）。")
+        names = ident.get("names") or []
+        if names:
+            lines.append(f"你在这个域里有 {len(names)} 个群名片，例如："
+                         + "、".join(names[:5]))
+        if ident.get("reason"):
+            lines.append(f"注意：{ident['reason']}")
+
+    rels = got.get("relations") or []
+    if include_relations:
+        if rels:
+            lines.append(f"以你为起点的关系 {len(rels)} 条：")
+            for r in rels[:10]:
+                lines.append(f"  - {r['predicate']} → {r['target']}")
+        else:
+            lines.append(f"（没有以你为起点的关系：{got.get('relations_note') or '无'}）")
+
+    return {
+        "content": [{"type": "text", "text": "\n".join(lines)}],
+        "structuredContent": got,
+        "isError": False,
+    }
+
 HANDLERS = {
     "memory_recall": _tool_recall,
     "memory_remember": _tool_remember,
     "memory_forget": _tool_forget,
+    "memory_whoami": _tool_whoami,
     "memory_feedback": _tool_feedback,
 }
 

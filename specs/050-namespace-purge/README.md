@@ -74,6 +74,8 @@ transitions:
 - [x] T6 用后即删：`harness/clean_qq_plain.py` + 导出脚本默认清理（`--keep-plain` 保留）
 - [x] T7 MCP 工具名按能力解析：`harness/mcp_client.mjs`（换实现只改配置）
 - [x] T8 「我是谁」：`SELF_QQ` → uid → canonical + `GET /admin/whoami` + `mark_self.py`
+- [x] T9 「我」参与关系层：别名/代词映射到 `acct_<self_uid>` + Person 节点合并
+- [x] T10 MCP 工具 `memory_whoami`（LLM 可问身份与关系）
 
 ## Test
 
@@ -178,3 +180,43 @@ decrypt_qq_database, query_chat_messages, …, list_contacts, list_group_members
 并写 `is_self=true`（Account 与 Person 各一份）。
 
 接口：`GET /admin/whoami?namespace=…`（已验证返回上述字段）。
+
+### 2026-11-19 · T9「我」参与关系层 + T10 MCP memory_whoami
+
+**T9 做了什么**
+
+| 环节 | 实现 |
+|---|---|
+| 建关系层 | `build_relations._self_alias_map()`：账号昵称 + 19 个群名片 + 代词（我/自己/本人/咱/俺）→ 统一 `acct_<self_uid>` |
+| 已有边 | `harness/rebind_self_edges.py`（主语是本人名字的边重指到 self） |
+| 节点合并 | `harness/merge_self_persons.py`：把「本人别名的 Person」和「别名+≤3 字残片」的 Person 并进 self |
+| 排查工具 | `harness/scan_self_mentions.py`（多少卡提到我） |
+
+实测：本人别名 **25 个（含代词）**；合并了 6 个 Person 节点
+（`海嗣` + `海嗣向潘`/`海嗣吐`/`海嗣用`/`海嗣求`/`海嗣发` —— 提取层把名字和动词粘在一起）。
+
+**但关系边仍是 0 —— 这是数据结论，不是 bug**
+
+```
+提到「我」的卡：200 张
+其中含关系词  ：4 张
+这 4 张的内容：分享名片 / 发恶搞通知 / 被 @ 询问天气 / 调侃
+→ 没有一句表达「我维护/拥有/负责什么」
+```
+
+抽样跑抽取确认：`海嗣认为甲沟炎处理方式…` / `海嗣称自己闻到烟味…` 都是**观点陈述**，
+不是职责关系（其中一条被证据跨度规则拒掉，理由「没有关系词」——判得对）。
+
+所以：**管道修对了，但目前语料里「我」没有稳定关系可抽**。
+一旦出现「我负责 X」这类卡，会被映射到 self 而不是散成 20 个群名片。
+
+**T10 memory_whoami（实测输出）**
+
+```
+你是 Veronica Davichi（QQ 505456846，uid u_7zrO…）。
+你在这个域里有 19 个群名片，例如：海嗣、苏苏大可爱、…
+（没有以你为起点的关系：关系层还没有以我为起点的边（陈述通道产量本来就少））
+```
+
+工具只读、无必填参数；`structuredContent` 同时给身份与关系给程序用。
+**没配 `SELF_QQ` 时会明说**「还没有配置我是谁」——不让模型编。

@@ -125,6 +125,34 @@ RETURN count(p) AS n
 """
 
 
+#: 第一人称代词：「我」在摘要里出现时也归到本人
+_SELF_PRONOUNS = ("我", "自己", "本人", "咱", "俺")
+
+
+def _self_alias_map(settings) -> dict[str, str]:
+    """`名字/代词 → self Person 的 key`。
+
+    为什么需要：同一个号有 19–20 个群名片（`海嗣`、`苏苏大可爱`…），
+    关系层按名字解析会把这些碎片当成不同主语；
+    「我」在摘要里出现时更是谁也认不出。全部映射到 `acct_<self_uid>`。
+    """
+    from memory.services.self_identity import resolve_self
+
+    try:
+        got = resolve_self(settings)
+    except Exception:  # noqa: BLE001 - 没配就当没有本人
+        return {}
+    uid = got.get("uid") or ""
+    if not uid:
+        return {}
+    key = f"acct_{uid}"
+    names = set(got.get("names") or []) | set(got.get("nicknames") or [])
+    if got.get("canonical"):
+        names.add(got["canonical"])
+    names |= set(_SELF_PRONOUNS)
+    return {n: key for n in names if n}
+
+
 def resolve_ends(session, namespace: str, names: set[str]):
     """把名字解析成 `(标签, key)`，缺 Person 的按账号锚定补建。
 
@@ -148,8 +176,20 @@ def resolve_ends(session, namespace: str, names: set[str]):
     resolved: dict[str, tuple[str, str]] = {}
     to_anchor: list[dict] = []
     missing: list[str] = []
+    self_map: dict[str, str] = {}
+    try:
+        from memory.config import load_settings
+
+        self_map = _self_alias_map(load_settings())
+    except Exception:  # noqa: BLE001 - 配置不可用就当没有本人
+        self_map = {}
+    if self_map:
+        print(f"  本人别名 {len(self_map)} 个（含代词）→ 统一归到 self Person")
     for name in names:
         if not name:
+            continue
+        if name in self_map:
+            resolved[name] = ("Person", self_map[name])
             continue
         if name in people:
             resolved[name] = ("Person", people[name])
