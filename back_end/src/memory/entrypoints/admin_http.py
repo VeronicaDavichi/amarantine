@@ -727,6 +727,25 @@ def create_app(
     """
     cfg = settings or load_settings()
 
+    # spec 049 A4：启动时把 SQLite schema 升到代码期望版本。
+    # 放在这里而不是某个服务里：所有表都要先齐，后面才可能读得到。
+    try:
+        from memory.services.schema import ensure_schema
+        from memory.services.sqlite_conn import open_db as _open_db
+
+        _url = str(cfg.DATABASE_URL)
+        if _url.startswith("sqlite"):
+            _path = _url.split("///", 1)[-1]
+            _conn = _open_db(_path, cfg)
+            try:
+                _ver, _applied = ensure_schema(_conn)
+                if _applied:
+                    logger.info("schema 升到 v%s：%s", _ver, _applied)
+            finally:
+                _conn.close()
+    except Exception as exc:  # noqa: BLE001 - 迁移失败要显眼但不阻断启动
+        logger.error("schema 迁移失败（继续启动，可能缺列）: %s", exc)
+
     lifespan = None
     if maintenance and cfg.MEMORY_NAMESPACE:
 

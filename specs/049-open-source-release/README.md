@@ -41,7 +41,7 @@ updated_at: 2026-11-19T02:48:57.237087765Z
 
 - [x] 备份脚本：`harness/backup_state.py`（SQLite 在线备份 + 卡片 JSONL + 图 JSONL + manifest）
 - [x] 恢复脚本 `harness/restore_state.py`（SQLite 按 namespace + 卡片带向量 + 图 MERGE）
-- [ ] 版本迁移：SQLite schema 版本号 + 迁移脚本（现有库能升上来）
+- [x] schema 版本迁移：`memory/services/schema.py`（PRAGMA user_version + 有序幂等迁移）
 - [x] 文档写明三处一起备份（脚本 docstring + 本节实测数字）
 
 ### G3 可运维
@@ -56,8 +56,8 @@ updated_at: 2026-11-19T02:48:57.237087765Z
       - nbnhhsh（Apache-2.0）已在 README 标注
       - bge-m3 / bge-reranker-v2-m3 的许可证与再分发条件需确认
 - [ ] README 重写：这是什么 / 解决什么问题 / 30 秒快速开始 / 架构图 / 已知限制
-- [ ] CONTRIBUTING.md（开发环境、测试、spec 流程）
-- [ ] SECURITY.md（如何报漏洞；明确「自托管、单租户」的安全边界）
+- [x] `CONTRIBUTING.md`（环境 / 提交前检查 / spec 规矩 / 隐私红线 / PR 要求）
+- [x] `SECURITY.md`（私报渠道 + 安全模型 + 密钥 + 已知弱默认 + 已知限制）
 - [x] 隐私说明：`data/`、`corpus/`、`backups/`、`docs/labeling-data.js` 均已在 `.gitignore`
 
 ### G5 可验证（可持续）
@@ -233,3 +233,35 @@ git rev-list --objects --all | 按 blob 大小排序
 
 **G1 只剩一项**：admin 进 compose。这需要先有 `Dockerfile`（镜像化后端），
 属「新增交付物」，比改文档重，留到下一轮或由你确认后再做。
+
+### 2026-11-19 · A4 迁移通过 + G4 两份协作文档
+
+**A4：schema 版本迁移**
+
+新增 `back_end/src/memory/services/schema.py`：
+
+- 版本记在 `PRAGMA user_version`（不占表）
+- `MIGRATIONS` 有序、每步幂等；`SCHEMA_VERSION` 必须等于最后一条
+- **拒绝降级**：库版本高于代码时抛错（旧代码读新库会漏字段、读出半个真相）
+- 启动时在 `create_app` 里跑一次（失败告警但不阻断启动）
+
+真实库演练：
+
+```
+迁移前 v0 → 迁移后 v2
+执行：v1 ingest_job 补 dropped_events/split_rounds
+      v2 entity_suppress 建表 + 索引
+再跑一次：[] （幂等）
+核对：user_version=2，两列都在，entity_suppress 存在，raw_quote 9415 行完好
+```
+
+**G4 两份文档**
+
+- `CONTRIBUTING.md`：环境、提交前必跑的四条命令、spec 规矩（不做的事也要写）、
+  代码约定（注释解释为什么 / 派生层可重建 / 幂等）、隐私红线、PR 要求
+- `SECURITY.md`：私报渠道、**安全模型**（单机单租户、namespace 不是鉴权边界、
+  单 token 无分级、默认无 TLS）、密钥存放、已知弱默认（`neo4j/password`）、
+  外部依赖风险（**聊天内容会发给 LLM 网关**）、已知限制（抽取会猜错）
+
+**仍未做（等用户拍板）**：LICENSE 选择、README 重写（要写许可证名）、
+CHANGELOG 与 `v0.1.0` tag。
