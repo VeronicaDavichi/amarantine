@@ -63,7 +63,7 @@ updated_at: 2026-11-19T02:48:57.237087765Z
 ### G5 可验证（可持续）
 
 - [x] GitHub Actions `.github/workflows/ci.yml`（test + privacy 两个 job）
-- [ ] CHANGELOG.md + `v0.1.0` tag
+- [~] `CHANGELOG.md` 已写；`v0.1.0` tag 待发布时打
 - [ ] 发布前最后一遍：`bash harness/verify_all.sh --static` 全绿
 
 ## Plan
@@ -265,3 +265,39 @@ git rev-list --objects --all | 按 blob 大小排序
 
 **仍未做（等用户拍板）**：LICENSE 选择、README 重写（要写许可证名）、
 CHANGELOG 与 `v0.1.0` tag。
+
+### 2026-11-19 · G1：admin 进 compose（构建未验证）+ CHANGELOG
+
+**交付**
+
+- `back_end/Dockerfile`：`python:3.12-slim` + `uv sync --frozen --no-dev`，
+  非 root（uid 10001），`HEALTHCHECK` 用 `/health?deps=0`（只探进程）
+- `docker-compose.yml` 增加 `admin` 服务：
+  - `env_file: ./back_end/.env`，但**用 `environment:` 覆盖四个依赖地址** ——
+    `.env` 里写的是 `127.0.0.1`（宿主视角），容器里那指向容器自己
+  - `./back_end/data:/app/data` 落卷，否则容器重建记忆就没了
+  - `depends_on` 用 `service_healthy`；rerank 有 profile，故意不设强依赖
+- `docker compose config --quiet` 通过，`--services` 列出 `admin`
+
+**为什么没验证镜像构建（诚实记录）**
+
+本机 Docker Hub 不可达且没配镜像加速：
+
+```
+failed to resolve source metadata for docker.io/library/python:3.12-slim:
+  dial tcp 199.59.148.222:443: i/o timeout
+```
+
+所以 Dockerfile 改成**基础镜像可覆盖**：
+
+```bash
+docker build --build-arg BASE=<镜像站>/library/python:3.12-slim \
+             --build-arg UV_IMAGE=<镜像站>/astral-sh/uv:latest .
+```
+
+**A1（干净环境 `compose up` 起全套）在本机无法验证** —— 需要一台能拉
+Docker Hub（或配置了镜像站）的机器。这条留作发布前的人工验收项。
+
+**CHANGELOG.md** 已写：`Unreleased` 段按「新增 / 变更 / 修复 / 安全」分类，
+条目都来自真实 spec 与提交；`0.1.0` 段留占位，发布时把 Unreleased 内容
+挪过去并打 tag。

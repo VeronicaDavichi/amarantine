@@ -141,6 +141,40 @@ services:
       start_period: 20s
     restart: unless-stopped
 
+  # 后端本体。镜像见 back_end/Dockerfile。
+  #
+  # 这里的 `environment` 是**必须**的：`.env` 里写的是 127.0.0.1（宿主视角），
+  # 容器里那个地址指向容器自己 —— 不改就会出现「服务起来了但连不上库」。
+  admin:
+    build:
+      context: ./back_end
+    image: amarantine-admin:dev
+    container_name: amarantine-admin
+    ports:
+      - "8765:8765"
+    env_file:
+      - ./back_end/.env
+    environment:
+      # 容器内用服务名寻址（覆盖 .env 里的 127.0.0.1）
+      WEAVIATE_URL: "http://weaviate:8080"
+      NEO4J_URI: "bolt://neo4j:7687"
+      EMBEDDING_BASE_URL: "http://embedding:80"
+      RERANK_BASE_URL: "http://reranker:80"
+      DATABASE_URL: "sqlite:////app/data/memory.db"
+    volumes:
+      # SQLite 必须落卷：容器重建不带上，记忆就没了
+      - ./back_end/data:/app/data
+    depends_on:
+      weaviate:
+        condition: service_healthy
+      neo4j:
+        condition: service_healthy
+      embedding:
+        condition: service_healthy
+      # rerank 是可选的（`--profile rerank` 才起），所以不设强依赖
+    restart: unless-stopped
+
+
 volumes:
   weaviate_data:
   embedding_cache:
