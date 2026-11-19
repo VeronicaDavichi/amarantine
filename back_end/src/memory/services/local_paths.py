@@ -91,3 +91,36 @@ def qq_plain_dir(settings: Any = None) -> Path:
         if cand.is_dir():
             return cand
     return local
+
+def mcp_pkg_dir(settings: Any = None) -> str:
+    """MCP 实现包目录（`QQ_MCP_PKG`）。
+
+    给的是「包目录」，脚本据此拼 `dist/index.js`。换实现（qq-mcp → im-mcp）
+    只改配置，不改代码。
+
+    Note:
+        这里**不做路径转换**（Windows 盘符 ↔ WSL 挂载）—— 那取决于调用方
+        是哪个平台的 node，由 `harness/load_env.mjs` 的 `resolvePath` 负责。
+    """
+    return _cfg_value(settings, "QQ_MCP_PKG")
+
+
+def mcp_passphrase_file(settings: Any = None) -> str:
+    """口令文件路径（`QQ_MCP_PASSPHRASE_FILE`）。"""
+    return _cfg_value(settings, "QQ_MCP_PASSPHRASE_FILE")
+
+def mcp_passphrase(settings: Any = None) -> str:
+    """MCP 口令：优先 `QQ_MCP_PASSPHRASE`，否则读 `QQ_MCP_PASSPHRASE_FILE`。
+
+    返回空串表示没配（调用方决定报错还是让 MCP 自己去找 `~/.qq-mcp/qqkey`）。
+    """
+    inline = _cfg_value(settings, "QQ_MCP_PASSPHRASE")
+    if inline:
+        return inline
+    path = mcp_passphrase_file(settings)
+    if not path:
+        return ""
+    try:
+        return Path(path).expanduser().read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""

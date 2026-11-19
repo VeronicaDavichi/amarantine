@@ -21,11 +21,12 @@
  * 分类（处罚/空白/伪装/小号）由 Python 侧 `name_marker` 做，避免两边逻辑漂移。
  */
 
+import { env, childEnv, passphrase, resolvePath } from "./load_env.mjs";
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 import { writeFileSync, mkdirSync } from "node:fs";
 
-const PKG = process.env.QQ_MCP_PKG ?? "D:/nodejs/node_modules/@powercess/qq-mcp";
+const PKG = resolvePath(env("QQ_MCP_PKG"));
 const DEFAULT_DB = "D:/TencentData/Chats/Tencent Files/10000000001/nt_qq/nt_db/nt_msg.db";
 
 const require = createRequire(import.meta.url);
@@ -49,7 +50,7 @@ function parseArgs(argv) {
 const transport = new StdioClientTransport({
   command: process.execPath,
   args: [`${PKG}/dist/index.js`],
-  env: Object.fromEntries(Object.entries(process.env).filter(([, v]) => typeof v === "string")),
+  env: childEnv({ ...(passphrase() ? { QQ_MCP_PASSPHRASE: passphrase() } : {}) }),
 });
 const client = new Client({ name: "amarantine-members", version: "0.1.0" });
 await client.connect(transport);

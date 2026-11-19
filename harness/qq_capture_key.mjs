@@ -23,13 +23,14 @@
  *     node harness/qq_capture_key.mjs --verify           # 只校验已保存的口令
  */
 
+import { env, childEnv, passphrase, resolvePath } from "./load_env.mjs";
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-const PKG = process.env.QQ_MCP_PKG ?? "D:/nodejs/node_modules/@powercess/qq-mcp";
+const PKG = resolvePath(env("QQ_MCP_PKG"));
 const DEFAULT_DIRS = [
   "D:/TencentData/Chats/Tencent Files",
   "C:/Users/Public/Documents/Tencent Files",
@@ -55,7 +56,7 @@ function parseArgs(argv) {
 const transport = new StdioClientTransport({
   command: process.execPath,
   args: [`${PKG}/dist/index.js`],
-  env: Object.fromEntries(Object.entries(process.env).filter(([, v]) => typeof v === "string")),
+  env: childEnv({ ...(passphrase() ? { QQ_MCP_PASSPHRASE: passphrase() } : {}) }),
 });
 const client = new Client({ name: "amarantine-qq-key", version: "0.1.0" });
 await client.connect(transport);

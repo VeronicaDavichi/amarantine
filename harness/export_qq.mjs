@@ -16,14 +16,13 @@
  * 依赖：全局装好的 @powercess/qq-mcp；口令在 ~/.qq-mcp/qqkey（或 QQ_MCP_PASSPHRASE）。
  */
 
+import { env, childEnv, passphrase, resolvePath } from "./load_env.mjs";
 import { writeFileSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { pathToFileURL } from "node:url";
 import { createRequire } from "node:module";
 
-const PKG =
-  process.env.QQ_MCP_PKG ??
-  "C:/Users/Administrator/AppData/Roaming/npm/node_modules/@powercess/qq-mcp";
+const PKG = resolvePath(env("QQ_MCP_PKG"));
 
 // SDK 在 qq-mcp 自己的 node_modules 里；本仓库没有 node 依赖。
 // 裸 specifier 从本文件解析不到，所以用 createRequire 带着 paths 去解析
@@ -76,7 +75,10 @@ function toEpoch(value) {
 const untilEpoch = toEpoch(args.until) ?? Math.floor(Date.now() / 1000);
 const sinceEpoch = toEpoch(args.since) ?? untilEpoch - args.days * 86400;
 console.log(`时间窗: ${new Date(sinceEpoch * 1000).toISOString()} → ${new Date(untilEpoch * 1000).toISOString()}`);
-  if (!args.db) throw new Error("--db <nt_msg.db> 必填");
+  // db 路径优先命令行，其次 .env 的 QQ_NT_MSG_DB（启动参统一放 .env）
+  if (!args.db) args.db = resolvePath(env("QQ_NT_MSG_DB"));
+  if (!args.db)
+    throw new Error("--db <nt_msg.db> 必填（或在 .env 里配 QQ_NT_MSG_DB）");
 
   const transport = new StdioClientTransport({
     command: process.execPath,

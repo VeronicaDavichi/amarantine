@@ -59,6 +59,14 @@ class Settings(BaseSettings):
     # `~/.qq-mcp/plain` → `/mnt/c/Users/*/.qq-mcp/plain` 顺序自动找。
     QQ_MCP_PLAIN_DIR: str = Field(default="")
 
+    # MCP 实现包（`dist/index.js` 所在目录）。默认空 = 脚本报错提示配置。
+    # 想换实现（例如 im-mcp）就指到那个包的目录。
+    QQ_MCP_PKG: str = Field(default="")
+    # qq-mcp 的口令文件（内容是数据库口令）。
+    # 也可以直接给 QQ_MCP_PASSPHRASE（明文进 .env，安全性差一些）。
+    QQ_MCP_PASSPHRASE_FILE: str = Field(default="")
+    QQ_MCP_PASSPHRASE: str = Field(default="")
+
     # ---------- 身份与隔离 ----------
     MEMORY_NAMESPACE: str | None = Field(
         default=None,

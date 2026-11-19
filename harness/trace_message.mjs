@@ -16,12 +16,13 @@
  * 输出会明确告诉你命中落在哪一层，以及**不在**哪一层。
  */
 
+import { env, childEnv, passphrase, resolvePath } from "./load_env.mjs";
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 import { readFileSync } from "node:fs";
 
-const PKG = process.env.QQ_MCP_PKG ?? "D:/nodejs/node_modules/@powercess/qq-mcp";
-const DB_DIR = process.env.QQ_DB_DIR ?? "D:/TencentData/Chats/Tencent Files/10000000001/nt_qq/nt_db";
+const PKG = resolvePath(env("QQ_MCP_PKG"));
+const DB_DIR = env("QQ_DB_DIR", env("QQ_NT_DB_DIR"));
 const MSG_DB = `${DB_DIR}/nt_msg.db`;
 const FTS_DB = `${DB_DIR}/group_msg_fts.db`;
 
@@ -54,7 +55,7 @@ const { StdioClientTransport } = await import(resolveSdk("client/stdio.js"));
 const transport = new StdioClientTransport({
   command: process.execPath,
   args: [`${PKG}/dist/index.js`],
-  env: Object.fromEntries(Object.entries(process.env).filter(([, v]) => typeof v === "string")),
+  env: childEnv({ ...(passphrase() ? { QQ_MCP_PASSPHRASE: passphrase() } : {}) }),
 });
 const client = new Client({ name: "amarantine-trace", version: "0.1.0" });
 await client.connect(transport);

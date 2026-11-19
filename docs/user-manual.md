@@ -2500,6 +2500,39 @@ python3 harness/emoji_alias_scan.py --namespace qq-10000000001 --apply
 
 **必须有语料验证**：替词很容易臆造 —— `便携式鸭腿` 在 4383 张卡里 0 次出现，
 而 `便携式` 有 139 次。所以候选词要在原文里出现 ≥3 次才写进图。
+## 配置 MCP 实现（qq-mcp / im-mcp 都在 .env 里选）
+
+导语料用的 MCP 实现**不写死在代码里**，由 `.env` 指定：
+
+```dotenv
+# back_end/.env
+QQ_MCP_PKG=D:/nodejs/node_modules/@powercess/qq-mcp
+QQ_MCP_PASSPHRASE_FILE=/mnt/c/Users/<你>/.qq-mcp/qqkey
+QQ_NT_MSG_DB=/mnt/d/.../nt_qq/nt_db/nt_msg.db
+QQ_MCP_PLAIN_DIR=/mnt/c/Users/<你>/.qq-mcp/plain
+```
+
+| 配置项 | 作用 |
+|---|---|
+| `QQ_MCP_PKG` | MCP 实现包的**目录**（脚本拼 `dist/index.js`）；换成 `im-mcp` 就指到那个包 |
+| `QQ_MCP_PASSPHRASE_FILE` | 口令文件（内容是数据库口令）；也支持直接 `QQ_MCP_PASSPHRASE` |
+| `QQ_NT_MSG_DB` | NT QQ 消息库路径 |
+| `QQ_MCP_PLAIN_DIR` | 解密副本目录（留空自动探测） |
+
+**node 脚本也会读 `.env`**：`harness/load_env.mjs` 做了最小 dotenv 解析，
+优先级 **进程环境变量 > `.env`**，所以临时覆盖仍然有效：
+
+```bash
+QQ_MCP_PKG=/别的/实现 node harness/export_qq.mjs --list
+```
+
+**路径不用手动转换**：`resolvePath()` 会按当前平台把
+`D:/x` ↔ `/mnt/d/x` 互转 —— 这套脚本在 WSL 里跑、MCP 包却可能是 Windows 侧的。
+
+> ⚠️ 换实现要确认**工具名兼容**：`export_qq.mjs` 等脚本调用的是
+> `list_contacts` / `query_chat_messages` 这些具体工具名。
+> `im-mcp` 若不同名，需要在脚本里改调用，不是只改配置就行。
+
 ## 删掉导入的聊天记录（清理某个域）
 
 导入的数据散在**三处**：SQLite 原文 / Weaviate 卡片 / Neo4j 图。

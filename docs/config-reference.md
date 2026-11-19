@@ -1,6 +1,6 @@
 # 配置项参考
 
-由 `harness/gen_config_doc.py` 从 `back_end/config.py` 自动生成，共 **88** 项。
+由 `harness/gen_config_doc.py` 从 `back_end/config.py` 自动生成，共 **91** 项。
 
 > **注释为空的项表示源码里没写说明** —— 不是这里漏了。
 > 修改任何一项前先读对应 spec；标「不要改」的项改动会破坏数据一致性。
@@ -125,7 +125,7 @@
 |---|---|---|
 | `CONTEXT_TOKEN_BUDGET` | `3000` |  |
 
-## 其他（38 项）
+## 其他（41 项）
 
 | 配置项 | 默认值 | 说明 |
 |---|---|---|
@@ -157,6 +157,9 @@
 | `LOG_FILE` | `'logs/memory.log'` |  |
 | `LOG_LEVEL` | `'INFO'` |  |
 | `PROTECT_IMPORTANCE_REVIEW` | `0.7` |  |
+| `QQ_MCP_PASSPHRASE` | `Field(default='')` |  |
+| `QQ_MCP_PASSPHRASE_FILE` | `Field(default='')` | qq-mcp 的口令文件（内容是数据库口令）。；也可以直接给 QQ_MCP_PASSPHRASE（明文进 .env，安全性差一些）。 |
+| `QQ_MCP_PKG` | `Field(default='')` | MCP 实现包（`dist/index.js` 所在目录）。默认空 = 脚本报错提示配置。；想换实现（例如 im-mcp）就指到那个包的目录。 |
 | `QQ_MCP_PLAIN_DIR` | `Field(default='')` | qq-mcp 解密副本目录（`plain/`）。留空时按；`~/.qq-mcp/plain` → `/mnt/c/Users/*/.qq-mcp/plain` 顺序自动找。 |
 | `QQ_NT_MSG_DB` | `Field(default='')` | ---------- 外部工具路径（QQ 语料相关，可选）----------；；这些原本是「跑脚本时临时 export 的环境变量」，用户要求统一放到 .env 里配。；全部可留空：留空时相关脚本自己找默认位置，或明确报错说「没配」。；；NT QQ 的消息库（`nt_msg.db` 的完整路径）。导出/清理脚本用它定位原库。 |
 | `RECENCY_HALF_LIFE_DAYS` | `180` |  |
