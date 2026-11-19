@@ -282,14 +282,18 @@ def main() -> int:
                 rejected_all: list[dict] = []
                 texts = [row.get("summary") or "" for row in summaries]
                 if args.use_llm:
-                    # 营销卡也含「发布/上新」，抽出来全是 `运营-OWNS->图片` 噪声；
-                    # 而且会给 `图片`/`信息` 建一堆垃圾 Entity 节点。
-                    from memory.services.marketing import looks_like_marketing
+                    # **营销不做关系判定**（用户 2026-11-19）：
+                    # 营销内容的用途只有「有没有我关注过的子项」，问「谁维护什么」
+                    # 没有意义。卡摘要把链接与图片都概括掉了，所以要按**卡片业务词**
+                    # 判，不能用原始消息那套（URL/图片行数恒为 0）。
+                    from memory.services.marketing import looks_like_marketing_card
 
                     before = len(texts)
-                    texts = [t for t in texts
-                             if not looks_like_marketing(t)[0]]
-                    print(f"  跳过营销卡 {before - len(texts)} 张")
+                    skipped_mk = [t for t in texts if looks_like_marketing_card(t)[0]]
+                    texts = [t for t in texts if not looks_like_marketing_card(t)[0]]
+                    print(f"  跳过营销卡 {len(skipped_mk)} 张（营销不做关系判定）")
+                    for t in skipped_mk[:3]:
+                        print(f"    · {t[:50]}")
                 if args.use_llm and not args.all_cards:
                     # 只喂含关系词的卡：全量 2546 张逐张调 LLM 要数小时，
                     # 而实测只有约 10% 的卡里有关系动词（其余是「发了图片」）。

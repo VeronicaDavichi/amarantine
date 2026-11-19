@@ -108,3 +108,43 @@ def recall_terms(text: str, *, limit: int = 5) -> list[str]:
         if len(out) >= limit:
             break
     return out
+
+#: 卡片摘要里的「业务词」：摘要把链接和图片都概括掉了，只剩这些词还能认出来。
+#: 实测 `运营发布9月20日截单提醒` 用 `looks_like_marketing` 判不出来
+#: （没有 URL、没有图片行），但那明显是营销。
+CARD_MARKETING_WORDS = (
+    "尾款", "补款", "截单", "上新", "上架", "预定", "预购", "定金", "拍下",
+    "团购", "开团", "拼团", "现货", "到货", "代购", "包邮", "下单", "通贩",
+    "贩售", "特价", "限时", "优惠", "折扣", "库存", "扭蛋", "补尾款", "截团",
+    # 2026-11-19 补：实测漏网（`kk发布新品速递并介绍…预约上架`）
+    "预约", "速递", "私信", "加群", "图透", "上新公告", "商品图",
+)
+
+#: 摘要里出现这些「发布者角色」时更像店铺播报
+CARD_SELLER_HINTS = ("运营", "传讯员", "店铺", "店家", "客服", "通贩", "小助手")
+
+
+def looks_like_marketing_card(text: str) -> tuple[bool, dict]:
+    """判定**事件卡摘要**是不是营销播报。
+
+    Args:
+        text: 卡片摘要（不是原始消息）。
+
+    Returns:
+        `(is_marketing, detail)`。
+
+    Note:
+        判据只看卡片摘要里的业务词与发布者角色 —— 摘要里没有链接、没有图片行，
+        原始消息那套（URL 占比 / 图片行数）在这里恒为 0，抓不到任何东西。
+
+        **营销不做关系判定**（用户 2026-11-19）：营销内容的唯一用途是
+        「有没有我关注过的子项」，所以这里只做过滤，不抽 `OWNS/MAINTAINS`。
+    """
+    body = text or ""
+    if not body:
+        return False, {"reason": "empty"}
+    hits = [w for w in CARD_MARKETING_WORDS if w in body]
+    seller = [w for w in CARD_SELLER_HINTS if w in body]
+    # 至少两个业务词，或一个业务词 + 明确的店铺角色
+    is_mk = len(hits) >= 2 or (len(hits) >= 1 and len(seller) >= 1)
+    return is_mk, {"hits": hits, "seller": seller, "reason": "card_words" if is_mk else "none"}
