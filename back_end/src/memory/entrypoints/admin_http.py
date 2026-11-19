@@ -17,6 +17,7 @@ from __future__ import annotations
 import logging
 import os
 import time
+from concurrent.futures import ThreadPoolExecutor, wait
 from contextlib import asynccontextmanager, suppress
 from datetime import date, datetime, timedelta, timezone
 from dataclasses import replace
@@ -639,6 +640,83 @@ class ReviewVerdictResponse(BaseModel):
 # ---------------------------------------------------------------- 应用工厂
 
 
+#: 依赖探活结果缓存：`(monotonic_ts, payload)`。
+#: 为什么缓存：`/health` 会被探针高频调用，每次都打四个外部服务会把它们打疼。
+_DEP_CACHE: tuple[float, dict[str, Any]] | None = None
+_DEP_TTL_S = 5.0
+
+
+def _probe(name: str, fn) -> dict[str, Any]:
+    started = time.monotonic()
+    try:
+        ok, detail = fn()
+    except Exception as exc:  # noqa: BLE001 - 探活不能抛
+        ok, detail = False, f"{type(exc).__name__}: {exc}"
+    return {"ok": bool(ok), "detail": detail,
+            "ms": round((time.monotonic() - started) * 1000, 1), "name": name}
+
+
+def _dependency_health(cfg: Any) -> dict[str, Any]:
+    """四依赖探活（并行，总超时 3 秒，结果缓存 5 秒）。
+
+    端点：
+    - weaviate：`/v1/.well-known/ready`
+    - embedding / rerank：`/health`
+    - neo4j：`bolt://` 的 TCP 端口连得上即算 ok（HTTP 7474 不一定开）
+    """
+    global _DEP_CACHE
+    now = time.monotonic()
+    if _DEP_CACHE and now - _DEP_CACHE[0] < _DEP_TTL_S:
+        return {**_DEP_CACHE[1], "cached": True}
+
+    import socket
+
+    import httpx
+
+    def _http(url: str):
+        def probe():
+            r = httpx.get(url, timeout=1.5)
+            return r.status_code == 200, f"HTTP {r.status_code}"
+        return probe
+
+    def _tcp(host: str, port: int):
+        def probe():
+            with socket.create_connection((host, port), timeout=1.5):
+                return True, "tcp ok"
+        return probe
+
+    targets: dict[str, Any] = {
+        "weaviate": _http(f"{cfg.WEAVIATE_URL}/v1/.well-known/ready"),
+        "embedding": _http(f"{cfg.EMBEDDING_BASE_URL}/health"),
+        "rerank": _http(f"{cfg.RERANK_BASE_URL}/health"),
+    }
+
+    uri = str(cfg.NEO4J_URI)
+    hostport = uri.split("://", 1)[1].split("/")[0] if "://" in uri else uri
+    host, _, port = hostport.partition(":")
+    targets["neo4j"] = _tcp(host or "127.0.0.1", int(port or 7687))
+
+    out: dict[str, Any] = {}
+    ex = ThreadPoolExecutor(max_workers=len(targets))
+    try:
+        futures = {ex.submit(_probe, name, fn): name for name, fn in targets.items()}
+        done, _pending = wait(list(futures), timeout=3.0)
+        for fut in done:
+            out[futures[fut]] = fut.result()
+        for fut, name in futures.items():
+            if name not in out:
+                out[name] = {"ok": False, "detail": "timeout(3s)",
+                             "ms": 3000.0, "name": name}
+    finally:
+        ex.shutdown(wait=False)
+
+    ok_all = all(v["ok"] for v in out.values())
+    payload = {"degraded": not ok_all, "deps": out,
+               "down": sorted(k for k, v in out.items() if not v["ok"])}
+    _DEP_CACHE = (now, payload)
+    return payload
+
+
 def create_app(
     settings: Settings | None = None, *, maintenance: bool = False
 ) -> FastAPI:
@@ -959,9 +1037,22 @@ def create_app(
         return {"term": term, "scope": scope, "tier": tier, "senses": rows}
 
     @app.get("/health")
-    def health() -> dict[str, Any]:
-        """不需要认证：给探活用。只报「活着」，不报内部状态。"""
-        return {"status": "ok", "service": "amarantine-memory-admin"}
+    def health(deps: int = 1) -> dict[str, Any]:
+        """不需要认证：给探活用。
+
+        Returns:
+            `status` 恒定 `ok`（进程活着），另附 `deps` 四项依赖状态。
+
+        Note:
+            `status` **不随依赖挂掉而变** —— 它是「进程活着」的意思，
+            给 k8s 的 liveness probe 用；依赖状态看 `degraded` 与 `deps`。
+            否则向量库一挂，容器会被反复重启，而重启救不了向量库。
+        """
+        base = {"status": "ok", "service": "amarantine-memory-admin"}
+        if not deps:
+            return base
+        base.update(_dependency_health(cfg))
+        return base
 
     # ------------------------------------------------------------ review
 

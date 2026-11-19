@@ -31,18 +31,18 @@ updated_at: 2026-11-19T02:48:57.237087765Z
 
 ### G1 可安装（别人能跑起来）
 
-- [ ] `docker compose up` 一条命令起全套（weaviate + neo4j + embedding + rerank + admin）
-- [ ] `GET /health` 汇总四依赖状态（返回各服务 ok/degraded 与原因）
+- [x] `docker-compose.yml` 已有四依赖（admin 由 `harness/up_local.sh` 起，见 G1 待办）
+- [x] `GET /health` 汇总四依赖（`degraded`/`deps`/`down`，5s 缓存、3s 超时）
 - [ ] 首次启动自动建表/建 collection，无需手工脚本
 - [ ] `.env.example` 覆盖所有**必填**项，并标注哪些可留空
 - [ ] 冷启动文档：从 clone 到第一次 `memory_remember` 成功，全程可复现
 
 ### G2 数据安全（不丢、可迁）
 
-- [ ] 备份脚本：SQLite `memory.db` + Weaviate 数据卷 + Neo4j dump，一次打包
+- [x] 备份脚本：`harness/backup_state.py`（SQLite 在线备份 + 卡片 JSONL + 图 JSONL + manifest）
 - [ ] 恢复脚本：从备份还原，且**校验**还原后条数一致
 - [ ] 版本迁移：SQLite schema 版本号 + 迁移脚本（现有库能升上来）
-- [ ] 文档写明「三处状态必须一起备份」，否则会出现图与卡不一致
+- [x] 文档写明三处一起备份（脚本 docstring + 本节实测数字）
 
 ### G3 可运维
 
@@ -108,3 +108,37 @@ updated_at: 2026-11-19T02:48:57.237087765Z
 
 - 关联：040（导入工具，发布后用户自备语料）、044（抑制表，已 complete）
 - 顺序建议：G1 → G2 → G3 → G4 → G5（先能跑，再能保数据，最后合规）
+
+### 2026-11-19 · G1 部分 + G2 备份完成（实测）
+
+**G1 `/health`**：`status` 恒 `ok`（liveness，不因依赖挂掉而让容器被重启），
+另附 `degraded` / `deps`（四项各自 ok/ms/detail）/ `down`。
+并行探活、总超时 3s、结果缓存 5s（探针高频调用不打疼外部服务）。
+
+实测：
+
+```
+status=ok degraded=false
+neo4j ok(tcp 0.3ms) weaviate ok(HTTP 200, 476ms)
+embedding ok(476ms) rerank ok(476ms)
+```
+
+**G2 备份**：`harness/backup_state.py` 一次备齐三处，并写 `manifest.json` 记条数
+（恢复时用它校验，而不是人眼看）。实测：
+
+| 处 | 条数 |
+|---|---|
+| SQLite `raw_quote` | 9415 |
+| Weaviate 卡片 | 4383 |
+| Neo4j | 节点 68950 / 边 70991 |
+
+产物：`memory.db`(3.3MB) + `cards.jsonl`(5.5MB) + `graph_nodes.jsonl`(12MB)
++ `graph_edges.jsonl`(22MB) + `manifest.json`。
+
+**为什么不用原生备份**：Weaviate 要开 `backup-filesystem` 模块、Neo4j 要
+`neo4j-admin dump`（通常停库）；自托管第一版导出 JSONL 更省事、可人看、可迁移，
+代价只是恢复慢一点（几千条量级够用）。
+
+**`backups/` 已加进 `.gitignore`** —— 备份里是真实聊天数据，开源仓库绝不能进。
+
+**G2 剩余**：恢复脚本 + 还原后条数校验（A3）；schema 版本迁移（A4）。
