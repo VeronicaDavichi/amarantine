@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import pathlib
 import sqlite3
 import subprocess
@@ -25,9 +26,10 @@ from datetime import datetime, timedelta, timezone
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 DB = ROOT / "back_end" / "data" / "memory.db"
 OUT = ROOT / "harness" / "corpus" / "qq-inc"
-QQ_DB = pathlib.Path(
-    "/mnt/d/TencentData/Chats/Tencent Files/10000000001/nt_qq/nt_db/nt_msg.db")
-NAMESPACE = "qq-10000000001"
+#: 真实路径与账号**不进代码**（开源仓库里是占位符），用环境变量给：
+#:   QQ_NT_MSG_DB=/mnt/d/.../nt_msg.db  AMARANTINE_NAMESPACE=qq-你的号
+QQ_DB = pathlib.Path(os.environ.get("QQ_NT_MSG_DB", ""))
+NAMESPACE = os.environ.get("AMARANTINE_NAMESPACE", "qq-10000000001")
 INACTIVE = ROOT / "back_end" / "config" / "inactive_sessions.json"
 
 
@@ -44,7 +46,17 @@ def inactive_map(namespace: str) -> dict[str, dict]:
     except Exception as exc:  # noqa: BLE001 - 清单坏了不该阻断导出
         print(f"⚠ 读不活跃清单失败（忽略）: {exc}")
         return {}
-    ns = data.get(namespace) or {}
+    ns = data.get(namespace)
+    if ns is None:
+        # 开源版清单里的 namespace 是占位符（`qq-10000000001`），
+        # 用户本地真实 namespace 不同。只有一份清单时就用它 ——
+        # 否则「不活跃群」功能会在真实环境里静默失效。
+        buckets = [v for k, v in data.items()
+                   if not k.startswith("_") and isinstance(v, dict)]
+        if len(buckets) == 1:
+            ns = buckets[0]
+        else:
+            return {}
     return {str(k): v for k, v in ns.items() if isinstance(v, dict)}
 
 

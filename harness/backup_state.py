@@ -94,7 +94,8 @@ def backup_weaviate(out: Path, namespace: str) -> int:
                  'event_id namespace summary date_start date_end types importance pinned '
                  'pinned_source unresolved entity_names raw_quote_ids retention '
                  'recall_count confirmed_by_use review_verdict vocab_version reviewer '
-                 'observed_at session_id resolves } } }')
+                 'observed_at session_id resolves '
+                 '_additional { vector id } } } }')
             try:
                 data = gql(q)
             except Exception as exc:  # noqa: BLE001 - 备份失败要明确报错

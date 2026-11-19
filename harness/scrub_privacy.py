@@ -1,46 +1,53 @@
-# -*- coding: utf-8 -*-
-"""开源前脱敏：把真实姓名 / IP / QQ 号替换成既有映射里的假值。
+#!/usr/bin/env python3
+"""开源前脱敏：把真实姓名 / 内网 IP / QQ 号替换成假值。
 
-## 为什么要有这一步
+## 为什么映射表要外置
 
-开源发布意味着这些字符串会永久进入公开历史。仓库里目前仍有：
+映射表里写着**真实姓名**，把它提交进仓库本身就是泄露 ——
+第一版脚本就犯了这错（`git ls-files` 里能搜到真名）。
 
-- QQ 号 `505456846`（出现在 harness 默认参数与文档示例里）
-- 内网 IP `192.168.0.58`（LLM 网关）、`172.20.192.1`（WSL 宿主）
-- 真实姓名（孙柏林 / 任泽昂 / 王婕）
+所以：
 
-## 映射来源
+| 文件 | 入库 | 内容 |
+|---|---|---|
+| `harness/privacy-map.example.json` | ✅ | 占位符之间的映射（`"真实姓名A": "张三"`），示范格式 |
+| `harness/.privacy-map.json` | ❌ gitignored | 真实映射，只在本机 |
 
-沿用项目里**已经存在**的脱敏映射，避免造出第三套假名：
-`孙柏林→陈柏林`、`任泽昂→任泽安`、`王婕→王洁`、
-`192.168.0.58→198.51.100.58`、`172.20.192.1→198.51.100.1`、
-`505456846→10000000001`。
+没有真实映射文件时脚本用示例映射跑 —— 对开源用户来说这就是「没用真实数据」，
+对维护者来说本机有真实映射就能清干净。
 
-## 范围
+## 用法
 
-只改**被 git 跟踪的文本文件**；跳过 `data/`、`corpus/`、`backups/`、
-`.venv*`、`.git`、日志。
+    python3 harness/scrub_privacy.py                 # dry-run
+    python3 harness/scrub_privacy.py --apply         # 写回
+    python3 harness/scrub_privacy.py --map 其它.json  # 指定映射
 """
 
 from __future__ import annotations
 
+import argparse
+import json
 import pathlib
 import subprocess
 import sys
 
-ROOT = pathlib.Path("/mnt/e/PycharmProjects/amarantine")
-
-MAP = {
-    "505456846": "10000000001",
-    "192.168.0.58": "198.51.100.58",
-    "172.20.192.1": "198.51.100.1",
-    "孙柏林": "陈柏林",
-    "任泽昂": "任泽安",
-    "王婕": "王洁",
-}
+ROOT = pathlib.Path(__file__).resolve().parents[1]
+REAL_MAP = ROOT / "harness" / ".privacy-map.json"
+EXAMPLE_MAP = ROOT / "harness" / "privacy-map.example.json"
 
 SKIP_DIRS = ("data/", "corpus/", "backups/", ".venv", ".git/", "node_modules/")
 SKIP_SUFFIX = (".log", ".db", ".pyc", ".png", ".jpg", ".jpeg", ".gif", ".xlsx")
+
+
+def load_map(path: pathlib.Path | None) -> tuple[dict[str, str], str]:
+    """返回 `(映射, 来源说明)`。"""
+    if path:
+        return json.loads(path.read_text(encoding="utf-8")), str(path)
+    if REAL_MAP.is_file():
+        return json.loads(REAL_MAP.read_text(encoding="utf-8")), str(REAL_MAP)
+    if EXAMPLE_MAP.is_file():
+        return json.loads(EXAMPLE_MAP.read_text(encoding="utf-8")), str(EXAMPLE_MAP)
+    return {}, "（没有映射文件）"
 
 
 def tracked_files() -> list[pathlib.Path]:
@@ -59,10 +66,19 @@ def tracked_files() -> list[pathlib.Path]:
 
 
 def main() -> int:
-    apply = "--apply" in sys.argv
-    hits: dict[str, int] = {k: 0 for k in MAP}
-    files_touched: dict[str, int] = {}
+    ap = argparse.ArgumentParser(description="开源前脱敏")
+    ap.add_argument("--apply", action="store_true")
+    ap.add_argument("--map", default="")
+    args = ap.parse_args()
 
+    mapping, source = load_map(pathlib.Path(args.map) if args.map else None)
+    if not mapping:
+        print("没有可用映射，无事可做")
+        return 0
+    print(f"映射来源：{source}（{len(mapping)} 条）\n")
+
+    hits: dict[str, int] = {k: 0 for k in mapping}
+    files_touched: dict[str, int] = {}
     for p in tracked_files():
         try:
             text = p.read_text(encoding="utf-8")
@@ -70,26 +86,28 @@ def main() -> int:
             continue
         orig = text
         changed = 0
-        for real, fake in MAP.items():
-            if real in text:
-                n = text.count(real)
-                hits[real] += n
+        for real, fake in mapping.items():
+            if real and real in text:
+                hits[real] += text.count(real)
                 text = text.replace(real, fake)
-                changed += n
-        if changed and text != orig:
-            files_touched[str(p.relative_to(ROOT))] = changed
-            if apply:
+                changed += text.count(fake) and 0 or 0  # 只用于计数占位
+        if text != orig:
+            n = sum(hits[k] for k in mapping)  # 粗略：总替换数
+            files_touched[str(p.relative_to(ROOT))] = max(
+                files_touched.get(str(p.relative_to(ROOT)), 0), changed)
+            if args.apply:
                 p.write_text(text, encoding="utf-8")
 
-    print(f"{'替换' if apply else '将替换'} {sum(files_touched.values())} 处，"
+    total = sum(hits.values())
+    print(f"{'替换' if args.apply else '将替换'} {total} 处，"
           f"涉及 {len(files_touched)} 个文件\n")
     for real, n in hits.items():
         if n:
             print(f"  {real!r:<18} × {n}")
     print()
-    for rel, n in sorted(files_touched.items(), key=lambda kv: -kv[1])[:20]:
-        print(f"  {rel:<52} {n}")
-    if not apply:
+    for rel, _n in sorted(files_touched.items()):
+        print(f"  {rel}")
+    if not args.apply:
         print("\n（dry-run；加 --apply 才写）")
     return 0
 

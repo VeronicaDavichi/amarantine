@@ -1,0 +1,51 @@
+name: CI
+
+# 开源发布的最低门（spec 049 G5）：单测 + spec 骨架 + 文档一致性。
+# 不跑需要外部服务的真库验收（那要 weaviate/neo4j/LLM，CI 里没有）。
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 uv
+        uses: astral-sh/setup-uv@v3
+
+      - name: 装依赖
+        working-directory: back_end
+        run: uv sync --frozen
+
+      - name: 单元测试
+        working-directory: back_end
+        run: uv run pytest -q
+
+      - name: spec 骨架
+        run: python3 harness/check_spec.py
+
+      - name: 文档与代码一致
+        run: python3 harness/check_guide.py
+
+  privacy:
+    # 真实姓名 / 内网 IP / QQ 号不该进仓库（spec 049 A5 + G4）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: 工作区敏感串扫描
+        run: |
+          python3 harness/scrub_privacy.py
+          # dry-run 模式：只要还会「替换 N 处」，就说明工作区有残留
+          out=$(python3 harness/scrub_privacy.py)
+          echo "$out"
+          if ! echo "$out" | head -1 | grep -q "将替换 0 处"; then
+            echo "::error::工作区仍有敏感串，先跑 python3 harness/scrub_privacy.py --apply"
+            exit 1
+          fi

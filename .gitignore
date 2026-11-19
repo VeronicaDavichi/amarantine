@@ -48,3 +48,6 @@ backups/
 
 # 评测数据（含真实聊天摘要），由 make_labeling_data.py 生成（spec 049 G4）
 docs/labeling-data.js
+
+# 脱敏映射含真实姓名，永不入库（示例见 harness/privacy-map.example.json）
+harness/.privacy-map.json
