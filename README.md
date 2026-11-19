@@ -1,15 +1,5 @@
 # amarantine
 
-> [!WARNING]
-> **开发中 · 未完成（WIP）**
->
-> 这个项目还在施工：接口、数据模型、spec 都可能变，**不保证对外稳定，不要用于生产**。
-> 当前状态：1262 个测试全绿、44 个 spec；已实现 036（切分不丢）/ 037（英文实体），
-> 还剩 **2 项有 spec 未开工 + 4 项草稿**（`date_start` 缺陷已并入 [040](specs/040-chat-import-tool/)，见[已知限制](#已知限制)）。
-
-> 给大模型用的长期记忆：**MCP 工具（LLM 侧）+ 本地管理通道（人侧）**。
-> 事件卡片进向量库与图库双写，支持召回、遗忘、复核、反馈的完整闭环。
-
 [English](#english) · [中文](#中文)
 
 ---
@@ -18,179 +8,158 @@
 
 ### 这是什么
 
-一个自托管的长期记忆服务。大模型通过 MCP（stdio JSON-RPC）写入与召回记忆；
-人通过本地 HTTP 管理通道做复核、纠错、遗忘和归档。
+**给大模型用的、自托管的长期记忆服务。**
+
+大模型没有跨会话的记忆。这个项目给它一个：通过 MCP（stdio JSON-RPC）写入与召回，
+人通过本地 HTTP 通道做复核、纠错、遗忘。记忆以「事件卡」为单位，
+存在向量库里可语义召回，同时派生一张图回答「谁和谁什么关系」。
 
 ```
-┌──────────────────────────────────────────┐
-│ MCP Host（Claude Desktop / DSH / ...）    │
-│   └─ 拉起子进程 env: MEMORY_NAMESPACE=xxx │
-│        └─ memory-mcp  (stdio JSON-RPC)    │
-└──────────────────────────────────────────┘
-              ↓ 共享 service 层
-┌──────────────────────────────────────────┐
-│ FastAPI — 127.0.0.1:8765 管理通道          │
-└──────────────────────────────────────────┘
-              ↓
-   Weaviate（事实源）· Neo4j（派生图）· SQLite（原文/计数）
+┌────────────────────────────────────────────────────┐
+│ MCP Host（Claude Desktop / DSH / 其它）              │
+│   └─ 拉起子进程  env: MEMORY_NAMESPACE=xxx           │
+│        └─ memory-mcp（stdio JSON-RPC）               │
+└────────────────────────────────────────────────────┘
+                 ↓ 共用 service 层
+┌────────────────────────────────────────────────────┐
+│ FastAPI — 127.0.0.1:8765（管理通道 + /health）        │
+└────────────────────────────────────────────────────┘
+                 ↓
+   Weaviate（事实源：卡片 + 向量）
+   Neo4j（派生图：可整张重建）
+   SQLite（原文 / job / 各类留痕）
 ```
+
+### 它解决什么问题
+
+| 问题 | 做法 |
+|---|---|
+| 模型记不住上次的决定 | 事件卡 + 语义召回，`recall` 带 token 预算与衰减 |
+| 「他说过什么」查不到原话 | 原文进 SQLite，卡片带 `raw_quote_ids` 可溯源 |
+| 同名多账号、群名片天天改 | 账号锚定（uid）> 备注 > 昵称 > 姓名，按 scope 查 |
+| 一张卡说错话就永远错 | 事实层只软删；卡片有版本与冲突记录 |
+| 记了一堆垃圾 | 遗忘扫描（保留期 + 硬信号保护）+ 营销闸门 |
+
+### 30 秒快速开始
+
+```bash
+docker compose up -d            # weaviate + neo4j + embedding + admin
+curl -s http://127.0.0.1:8765/health | python3 -m json.tool
+# 期望 degraded=false，四依赖 ok
+```
+
+细节（`.env` 最少改哪三项、第一次写入/召回、接 MCP 客户端、常见卡点）见
+**[冷启动文档](docs/quickstart.md)**。
+
+### 实测数字（不是承诺，是某次真实测量的快照）
+
+| 指标 | 值 | 说明 |
+|---|---|---|
+| 单测 | 1613 passed | `uv run pytest -q` |
+| 召回 hit@5 | 0.50（60 样本） | 用**原文片段**当 query，不是拿摘要反向搜 |
+| 召回延迟 P95 | 299 ms | 同一批样本 |
+| 关系 precision | 0.95（19 条核对） | 机器边由人逐条判对错 |
+| 关系 recall | 0.67（24 题） | 「这句该有几条」由人答 |
+
+召回质量目前是**最真实的短板**：hit@5 只有一半。语料越多噪声越多，
+所以下一步优先提质量而不是继续灌数据。
 
 ### 核心设计
 
 | 决策 | 内容 |
 |---|---|
-| **事实源与派生层分离** | 事件卡写进 Weaviate 即为事实；Neo4j 图是可丢弃、可全量重建的索引 |
-| **写序固定** | 先写向量（成功才算写成功），再异步更新图；图失败只告警，不回滚 |
-| **namespace 隔离** | 只来自环境变量，入参携带一律拒绝；向量与图同源派生 |
+| **事实源与派生层分离** | 卡片进 Weaviate 即事实；Neo4j 图可丢弃、可整张重建 |
+| **写序固定** | 先写向量（成功才算成功），再异步更新图；图失败只告警、不回滚 |
+| **namespace 隔离** | 只来自环境/配置，请求参数携带一律拒绝 |
 | **原话与摘要分层** | 原文进 SQLite（可溯源），摘要进向量（可语义召回） |
-| **遗忘不物理删** | 事实层只软删（`is_deleted` + `deleted_at`），图节点才会 `DETACH DELETE` |
-| **弱关联可分层** | 关系带 `label` / `confidence` / 证据，查询分 strict / default / explore 三档 |
-
-### 特性
-
-- **双入口**：MCP 工具给 LLM，Admin HTTP 给人，共用 service 层
-- **批量导入**：`POST /admin/ingest` 把历史对话切分成事件卡（LLM 切分 + 幂等 `dedupe_key`）
-- **动态召回预算**：token 预算 + 相对衰减 + 断崖 + 强制保留溢出
-- **别名与称呼**：规则层 + LLM 复核，拒绝也留痕（`alias_reject`）可复查
-- **可观测**：召回带 `trace_id`，反馈能回流；健康检查覆盖数据一致性
-
-### 快速开始
-
-前置：WSL2 + Docker（中间件）、Python 3.12。
-
-```bash
-# 1. 中间件（WSL 内执行）
-docker compose up -d          # weaviate / embedding / reranker / neo4j
-
-# 2. 后端
-cd back_end
-uv sync --python 3.12
-cp .env.example .env          # 填 LLM_API_KEY / ADMIN_TOKEN
-uv run pytest -q
-
-# 3. 起管理通道
-uv run python -m memory.entrypoints.admin_http   # http://127.0.0.1:8765
-
-# 4. MCP 冒烟
-MEMORY_NAMESPACE=agent-a uv run memory-mcp
-```
-
-### 目录
-
-```
-back_end/         Python 3.12 · FastAPI · MCP stdio · SQLite
-harness/          夹具生成、开发脚本、一致性校验、导入工具
-specs/            LeanSpec 规格（43 个，含需求/设计/任务/验收）
-docs/             ADR、P0 任务、用户手册、工具指南、审计记录
-docker-compose.yml
-```
+| **遗忘不物理删** | 事实层软删（`is_deleted`），只有图节点会 `DETACH DELETE` |
+| **弱关联可分层** | 关系带 `label` / `confidence` / 证据，查询分 strict / default / explore |
 
 ### 文档
 
 | 文档 | 内容 |
 |---|---|
-| [ADR-001 架构](docs/ADR-001-memory-architecture.md) | 决策 D1–D10、契约 4.0–4.10、验收 A1–A34 |
-| [用户手册](docs/user-manual.md) | 安装、配置、操作、FAQ、限制 |
-| [工具使用指南](docs/memory-tool-guide.md) | 给 LLM 的调用说明（MCP instructions 单一源头） |
-| [验收审计](docs/acceptance-audit.md) | 34 条验收标准逐条核对 |
-| [部署档位](docs/deployment-profiles.md) | 高配（GPU）/ 低配（2–3 GB）/ 混合，含实测内存与延迟 |
-| [规格目录](specs/) | 每个 spec 有需求、设计、任务、验收 |
+| [冷启动](docs/quickstart.md) | clone → 起服务 → 第一次 remember/recall |
+| [降级行为](docs/degradation.md) | LLM / 向量库 / 图库挂掉时会发生什么 |
+| [配置项参考](docs/config-reference.md) | 86 项配置（自动生成，含默认值与源码注释） |
+| [用户手册](docs/user-manual.md) | 导入、召回、复核、遗忘、关系层、实体抑制 |
+| [设计规格](specs/) | 49 个 spec：每个决策与踩过的坑 |
 
-### 质量
+### 质量与验收
 
 ```bash
-cd back_end && uv run pytest -q        # 1545 passed
-python3 ../harness/check_spec.py       # spec 骨架一致（48 个）
-python3 ../harness/check_guide.py      # 文档与代码一致
-
-# 一键全量验收（静态 + 真库；会先唤醒容器）
-bash harness/verify_all.sh
-bash harness/verify_all.sh --static   # 只跑静态检查，不需要容器
+bash harness/verify_all.sh --static     # 单测 + spec 骨架 + 文档一致 + 环境覆盖 + 隐私扫描
+bash harness/verify_all.sh              # 再加真库验收（需容器与 LLM 网关）
 ```
 
-`verify_all.sh` 依次跑：单测 → spec 骨架 → 文档一致性 → `wake.sh` →
-`verify_046.py`（指代回溯/卡归并）→ `verify_047.py`（群名片/头衔/whois）。
+CI（`.github/workflows/ci.yml`）跑 `--static` 那一半。
 
 ### 外部依赖
 
-| 依赖 | 用途 | 是否必需 |
+| 依赖 | 用途 | 必需 |
 |---|---|---|
-| LLM（OpenAI 兼容网关） | 事件切分、标签、摘要 | **必需**（不可用时降级，质量下降） |
-| [nbnhhsh](https://github.com/itorr/nbnhhsh)（`lab.magiconch.com`，Apache-2.0） | 把拼音首字母缩写猜成全称（`lysk → 恋与深空`） | **可选，默认关** |
-
-**nbnhhsh 的使用方式**
-
-- 开关：`ABBR_NBNHHHSH_ENABLED=false`（默认）。
-  开启后，解析缩写时会先查本地缓存，未命中才 `POST /api/nbnhhsh/guess`
-  （只发缩写字符串，如 `{"text":"lysk"}`，不含聊天内容）。
-- 关掉后仍可用 `back_end/config/abbr_local.json` 的本地词典（`nn=暖暖` 这类
-  nbnhhsh 未收录的词），功能不消失、只是长尾覆盖变少。
-- **它没有公开的整包词库**：仓库里只有油猴脚本（7 个文件），API 也只有 `guess`
-  这一个端点。因此本项目把每次查询结果缓存到 `back_end/data/abbr_cache.db`，
-  再配合本地词典逐步积累，而不是「扒一份完整词库」。
-- 引用该项目的名字与链接仅作来源标注；其许可证为 Apache-2.0。
+| LLM 网关（OpenAI 兼容 / Anthropic Messages） | 事件切分、标签复核、关系抽取 | **必需**（不可用时降级成原文卡） |
+| Weaviate | 卡片与向量（事实源） | 必需 |
+| Neo4j | 派生图 | 必需（可重建） |
+| embedding / rerank | bge-m3 / bge-reranker | 必需 / 可选（挂了只降排序质量） |
+| [nbnhhsh](https://github.com/itorr/nbnhhsh) | 拼音缩写猜全称（`lysk → 恋与深空`） | 可选，默认关 |
 
 ### 已知限制
 
-**按 spec 记录的未完成项**
+**取舍（不是 bug）**
 
-| 项 | spec | 状态 / 影响 |
-|---|---|---|
-| 实体证据降级（拉丁 topic 误当实体） | [044](specs/044-entity-evidence-demotion/) | `planned`，**故意放一放**：当前语料量不足 |
-| 群名片的「备注」标记 | [047](specs/047-group-card-alias/) | 数据源不可得：`list_contacts` 不返回 `remark` |
+- 单机、单租户；`namespace` 是隔离粒度，**不是鉴权边界**；只有一个 `ADMIN_TOKEN`
+- 中文群聊优先；英文语料效果未验证
+- 关系层只保留陈述通道（行为通道因数据不足停用）；关系会猜错
 
-**已实现（供对照）**
+**待办**
 
-| 项 | spec |
-|---|---|
-| 切分超上限按行二分，不再静默丢尾部 | [036](specs/036-split-truncation-data-loss/) |
-| 英文词形（ESB / Kafka / PyCharm）成为实体 | [037](specs/037-latin-acronym-entities/) |
-| 称呼归一到真人（`王老师` → 实名节点） | [038](specs/038-appellation-normalization/) |
-| 关系谓词：陈述 + 行为双通道，precision 20/20 | [039](specs/039-relation-predicates/) |
-| 历史聊天导入（QQ / 钉钉），营销闸门 + 指代回溯 | [040](specs/040-chat-import-tool/) |
-| 指称层：字面 → 义项（LLM 抽 gloss，8/8 正确） | [041](specs/041-reference-layer/) |
-| 身份来源分层：uid > 备注 > 昵称 > 姓名 | [043](specs/043-identity-source-priority/) |
-| Person 键从名字派生改为账号锚定 | [045](specs/045-person-key-strategy/) |
-| 会话内指代回溯 + 卡归并（`resolves`） | [046](specs/046-context-backtracking-merge/) |
-| 群名片按 scope 别名 + 群头衔 `TITLED` | [047](specs/047-group-card-alias/) |
-| 拼音首字母缩写（`lysk → 恋与深空`） | [048](specs/048-abbr-alias/) |
-| 实体消歧候选池（「看过但没敢合」也留痕，可人工裁决） | [016](specs/016-entity-disambiguation/) |
+- 召回 hit@5 只有 0.50，提升质量是当前主线
+- 部分能力的召回率未量化（只测了 precision）
+- 数据导入按需进行，仓库不含任何语料
 
-**已知缺陷 / 边界**
-
-- 单机自托管，无多租户；隔离粒度是 `namespace`
-- 依赖外部 LLM 做切分与标签复核：不可用时降级（产出原文卡），质量下降
-- 中文人名抽取依赖权威名册；无名册时退化到分词，会误判品牌名
-- 关系层：precision 0.95 / recall 0.67（2026-11-18 实测）；**行为通道已停止投入**（数据凑不齐，只有陈述通道产出边）
-- **清空 namespace 会连 `Account`/`Alias` 一起删**，名字标记与头衔要重写：
-  `harness/apply_display_names.py` / `harness/apply_titles.py`
-- QQ 语料只导了 12 / 106 个群；**数据导入已暂停**（2026-11-18 用户决定：磁盘吃紧）。
-  恢复前先确认磁盘：`df -h /mnt/c`（C 盘曾经只剩 6G，清 `Temp/wsl-crashes` 回收 12G）
-
-### License
-
-[MIT](LICENSE)
+**许可**：见 [LICENSE](LICENSE)（待选定）。
 
 ---
 
 ## English
 
-> [!WARNING]
-> **Work in progress** — APIs and data models are still changing. Tests are green
-> (1262 passing), but this is **not production-ready** and carries several known gaps.
+### What this is
 
-**amarantine** is a self-hosted long-term memory service for LLMs.
+A **self-hosted long-term memory service for LLMs**. The model writes and recalls
+through MCP (stdio JSON-RPC); a human manages it through a local HTTP channel.
 
-- **MCP tools** for the model side (stdio JSON-RPC), **HTTP admin channel** for humans
-- **Dual store**: event cards in Weaviate (source of truth) + Neo4j graph (derived, rebuildable)
-- **Batch ingest** of historical conversations with idempotent dedupe keys
-- **Forget without deleting**: fact layer is soft-deleted only
-- **Weak relations**: edges carry `label` / `confidence` / evidence, queries have three strictness tiers
+Memory is stored as *event cards* in a vector store (semantic recall), with a
+derived property graph answering "who relates to what". Original quotes live in
+SQLite so every card can be traced back.
+
+### Quick start
 
 ```bash
 docker compose up -d
-cd back_end && uv sync --python 3.12 && cp .env.example .env && uv run pytest -q
-uv run python -m memory.entrypoints.admin_http   # http://127.0.0.1:8765
+curl -s http://127.0.0.1:8765/health | python3 -m json.tool   # expect degraded=false
 ```
 
-Docs are in Chinese under `docs/`. MIT licensed.
+See [quickstart](docs/quickstart.md) for `.env` minimums, first write/recall, and
+MCP client wiring.
+
+### Measured numbers (a snapshot, not a promise)
+
+| Metric | Value |
+|---|---|
+| Unit tests | 1613 passed |
+| Recall hit@5 | 0.50 (60 samples, queries are raw quotes) |
+| Recall latency P95 | 299 ms |
+| Relation precision / recall | 0.95 / 0.67 |
+
+Recall quality is the honest weak spot right now.
+
+### Docs
+
+[quickstart](docs/quickstart.md) · [degradation](docs/degradation.md) ·
+[config reference](docs/config-reference.md) · [user manual](docs/user-manual.md) ·
+[specs](specs/)
+
+### License
+
+See [LICENSE](LICENSE) (pending selection).

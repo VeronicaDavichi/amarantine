@@ -55,7 +55,7 @@ updated_at: 2026-11-19T02:48:57.237087765Z
 - [ ] LICENSE 确认（当前仓库已有？待核）+ 第三方依赖许可证清单
       - nbnhhsh（Apache-2.0）已在 README 标注
       - bge-m3 / bge-reranker-v2-m3 的许可证与再分发条件需确认
-- [ ] README 重写：这是什么 / 解决什么问题 / 30 秒快速开始 / 架构图 / 已知限制
+- [~] README 重写完成（问题/30秒开始/实测数字/设计/文档索引/限制）；许可节等 LICENSE 选定
 - [x] `CONTRIBUTING.md`（环境 / 提交前检查 / spec 规矩 / 隐私红线 / PR 要求）
 - [x] `SECURITY.md`（私报渠道 + 安全模型 + 密钥 + 已知弱默认 + 已知限制）
 - [x] 隐私说明：`data/`、`corpus/`、`backups/`、`docs/labeling-data.js` 均已在 `.gitignore`
@@ -71,7 +71,7 @@ updated_at: 2026-11-19T02:48:57.237087765Z
 - [ ] P1 G1 可安装：compose 全套 + `/health` 汇总 + 首启自建表 + `.env.example` + 冷启动文档
 - [ ] P2 G2 数据安全：备份 / 恢复 / schema 版本迁移 / 三处状态一起备份的说明
 - [ ] P3 G3 可运维：86 项配置分组说明 + 结构化日志 + 三种降级路径写清
-- [ ] P4 G4 合规：LICENSE 与依赖许可确认 + README 重写 + CONTRIBUTING + SECURITY + 隐私说明
+- [~] README 重写完成（问题/30秒开始/实测数字/设计/文档索引/限制）；许可节等 LICENSE 选定
 - [ ] P5 G5 可验证：CI（pytest/check_spec/check_guide）+ CHANGELOG + `v0.1.0` tag
 
 ## Test
@@ -301,3 +301,24 @@ Docker Hub（或配置了镜像站）的机器。这条留作发布前的人工�
 **CHANGELOG.md** 已写：`Unreleased` 段按「新增 / 变更 / 修复 / 安全」分类，
 条目都来自真实 spec 与提交；`0.1.0` 段留占位，发布时把 Unreleased 内容
 挪过去并打 tag。
+
+### 2026-11-19 · README 重写
+
+从 196 行的「开发中 WIP」公告改成面向使用者的说明（165 行）：
+
+| 旧版问题 | 新版 |
+|---|---|
+| 开头一大段 WIP 警告 + 过时数字（1262 测试 / 44 spec / 2 项未开工） | 开门见山「这是什么」+ 架构图 |
+| 缺少「解决什么问题」 | 五行表格：问题 → 做法 |
+| 快速开始混着 WSL/Windows 细节 | 两行 `compose up` + `/health`，细节跳 `quickstart.md` |
+| 特性列表像功能清单 | **实测数字表**（1613 passed / hit@5 0.50 / P95 299ms / precision 0.95 / recall 0.67） |
+| 已知限制里混着已修好的项 | 分成「取舍（不是 bug）」与「待办」 |
+| 文档散落 | 统一索引表（quickstart / degradation / config / manual / specs） |
+
+**刻意保留的两句实话**：
+
+- 「召回 hit@5 只有一半，这是最真实的短板」
+- 「实测数字是某次快照，不是承诺」
+
+**英文段**只保留最小可用版（这是什么 / 快速开始 / 数字 / 文档 / 许可），
+不逐段翻译 —— 维护两份等长说明书必然走样。
