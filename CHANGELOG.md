@@ -39,4 +39,6 @@
 ## [0.1.0] - 待发布
 
 发布前置条件见 [spec 049](specs/049-open-source-release/README.md)：
-LICENSE 选定、README 重写、CI 首跑通过、`v0.1.0` 打 tag。
+README 重写、CI 首跑通过、`v0.1.0` 打 tag。
+
+许可证：MIT（见 [LICENSE](LICENSE)）。

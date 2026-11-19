@@ -118,7 +118,7 @@ CI（`.github/workflows/ci.yml`）跑 `--static` 那一半。
 - 部分能力的召回率未量化（只测了 precision）
 - 数据导入按需进行，仓库不含任何语料
 
-**许可**：见 [LICENSE](LICENSE)（待选定）。
+**许可**：[MIT](LICENSE) © 2026 VeronicaDavichi。
 
 ---
 
@@ -162,4 +162,4 @@ Recall quality is the honest weak spot right now.
 
 ### License
 
-See [LICENSE](LICENSE) (pending selection).
+MIT — see [LICENSE](LICENSE).
