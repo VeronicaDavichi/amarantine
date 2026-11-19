@@ -116,14 +116,59 @@ cd /mnt/e/PycharmProjects/amarantine
 
 ### 起 MCP 服务（给 LLM 用）
 
-由你的 MCP 宿主（Claude Desktop / Cherry Studio / DSH 等）拉起，
-配置里让它执行：
+由 MCP 宿主（Claude Desktop / Cherry Studio / DSH / …）拉起子进程，
+**不是**常驻服务。宿主配置里让它执行：
 
 ```bash
-wsl -d Ubuntu2204 --exec bash -c 'cd /mnt/e/PycharmProjects/amarantine/back_end && .venv-linux/bin/python -m memory.entrypoints.mcp_stdio'
+<项目根>/back_end/.venv/bin/python -m memory.entrypoints.mcp_stdio
 ```
 
-宿主需要注入 `MEMORY_NAMESPACE`。**它不能由 LLM 传**（见工具指南）。
+Windows 用户如果代码在 WSL 里，用这种形式（**把两处路径换成你自己的**）：
+
+```bash
+wsl -d <发行版名> --exec bash -c 'cd /mnt/<盘>/<你的路径>/amarantine/back_end && .venv-linux/bin/python -m memory.entrypoints.mcp_stdio'
+```
+
+#### 客户端配置示例（Claude Desktop 的 `claude_desktop_config.json`）
+
+```json
+{
+  "mcpServers": {
+    "amarantine": {
+      "command": "wsl",
+      "args": [
+        "-d", "Ubuntu2204", "--exec", "bash", "-c",
+        "cd /mnt/e/PycharmProjects/amarantine/back_end && .venv-linux/bin/python -m memory.entrypoints.mcp_stdio"
+      ],
+      "env": {
+        "MEMORY_NAMESPACE": "work",
+        "LOG_FILE": "/tmp/amarantine-mcp.log"
+      }
+    }
+  }
+}
+```
+
+原生 Linux / macOS 直接写 `"command": "/path/to/back_end/.venv/bin/python"`，
+`args` 用 `["-m", "memory.entrypoints.mcp_stdio"]`。
+
+#### 三条硬要求
+
+| 要求 | 为什么 |
+|---|---|
+| **`MEMORY_NAMESPACE` 由宿主注入** | 不能由 LLM 传（工具参数里的 namespace 一律被拒）；换 namespace 要重启进程 |
+| **日志必须落文件**（`LOG_FILE`） | stdout 只允许写 JSON-RPC 消息；往 stdout 打日志会污染协议、直接连接失败 |
+| **依赖要先起来** | 写入需要 embedding + Weaviate；召回还可用到 Neo4j |
+
+#### 自检（不用连客户端）
+
+```bash
+cd back_end
+.venv-linux/bin/python3 ../harness/e2e_mcp.py
+# 期望：OK: MCP stdio 端到端全绿（15 项）
+```
+
+它真的会拉起子进程走一遍：`initialize → tools/list → remember → recall → feedback → 退出`。
 
 ### 起管理接口（给人用）
 
