@@ -2500,6 +2500,63 @@ python3 harness/emoji_alias_scan.py --namespace qq-10000000001 --apply
 
 **必须有语料验证**：替词很容易臆造 —— `便携式鸭腿` 在 4383 张卡里 0 次出现，
 而 `便携式` 有 139 次。所以候选词要在原文里出现 ≥3 次才写进图。
+## 删掉导入的聊天记录（清理某个域）
+
+导入的数据散在**三处**：SQLite 原文 / Weaviate 卡片 / Neo4j 图。
+清理必须三处一起删，只删一处会留下对不上的残片。
+
+```bash
+# 1) 先看有哪些域、各多少张卡
+python3 harness/purge_namespace.py --list
+
+# 2) 预演：只数不改（不需要确认语）
+python3 harness/purge_namespace.py --namespace my-ns
+
+# 3) 真删：确认语必须一字不差
+python3 harness/purge_namespace.py --namespace my-ns \
+    --confirm "purge my-ns" --apply
+```
+
+同一个能力也有 HTTP 接口（默认 `apply=false` 即预演）：
+
+```bash
+TOKEN=$(grep '^ADMIN_TOKEN=' .env | cut -d= -f2)
+curl -s -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8765/admin/namespaces
+curl -s -X POST http://127.0.0.1:8765/admin/namespaces/purge \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"namespace":"my-ns","confirm":"purge my-ns","apply":false}'
+```
+
+**为什么这么麻烦（三道闸）**：
+
+| 闸 | 作用 |
+|---|---|
+| 只接受字面 namespace（拒绝 `*`、逗号、空） | 防止一次删掉多个域 |
+| `confirm` 必须等于 `purge <namespace>` | 防止 `--namespace` 打错 |
+| 默认预演 + 删后复核 | 先看会删多少；删完再数一遍，残留会报错 |
+
+删除顺序固定 **图 → 卡片 → SQLite**：先拆派生层，再删事实源；
+反过来会出现「卡没了但图上还挂着节点」。
+
+### qq-mcp 的解密副本（不归本项目管）
+
+qq-mcp 读库时会在 `~/.qq-mcp/plain/` 留**明文**副本，实测能到 **3.3 GB**
+（同一库会留多份，旧的不自动清理）：
+
+```
+nt_msg.db.2952791040.1794906224199.plain.db        2.2 GB
+group_msg_fts.db.603980800.…plain.db               576 MB × 2
+group_info.db.23069696.…plain.db                    22 MB × 3
+```
+
+原库还在，随时能重新解密，所以可以直接删：
+
+```bash
+rm -rf ~/.qq-mcp/plain        # 省 3.3 GB；qqkey 要留着（16 字节）
+```
+
+> ⚠️ 这些是**未加密**的聊天记录，比原库更敏感。导完就删是好习惯。
+
 ## 实体抑制（哪些名字不再建节点）
 
 分词会把带空格/emoji 的显示名切碎（`Veronica ⊂ Veronica Davichi`、

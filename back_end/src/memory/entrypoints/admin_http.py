@@ -318,6 +318,38 @@ class AliasRejectListResponse(BaseModel):
     by_reason: dict[str, int]
 
 
+class NamespaceInfo(BaseModel):
+    namespace: str
+    cards: int
+
+
+class NamespaceListResponse(BaseModel):
+    items: list[NamespaceInfo]
+    total: int
+
+
+class PurgeRequest(BaseModel):
+    """清理请求。
+
+    `confirm` 必须是 `purge <namespace>` —— 防止 `--namespace` 打错时误删别的域。
+    """
+
+    namespace: str
+    confirm: str
+    #: 默认 dry-run：只数不改
+    apply: bool = False
+
+
+class PurgeResponse(BaseModel):
+    namespace: str
+    applied: bool
+    before: dict[str, int]
+    deleted: dict[str, int]
+    after: dict[str, int]
+    ok: bool
+    residual: dict[str, int] = {}
+
+
 class EntitySuppressEntry(BaseModel):
     """一条被抑制的实体名（spec 044）。"""
 
@@ -1313,6 +1345,38 @@ def create_app(
     # 别名声明从原话到图上一条边有两道判据，两侧都可能被拒。原来两边
     # 都不留痕迹 —— `印度人`、`科学家`、`种师道` 三次都是这么藏起来的。
     # 这两个接口把「为什么那条边没建」变成可以查、可以裁决的事。
+
+    @app.get(
+        "/admin/namespaces",
+        response_model=NamespaceListResponse,
+        dependencies=[Depends(require_token)],
+    )
+    def list_namespaces_endpoint() -> NamespaceListResponse:
+        """列出所有 namespace 与卡片数（先看清有什么，再决定删哪个）。"""
+        from memory.services.purge import list_namespaces
+
+        items = [NamespaceInfo(**it) for it in list_namespaces(cfg)]
+        return NamespaceListResponse(items=items, total=len(items))
+
+    @app.post(
+        "/admin/namespaces/purge",
+        response_model=PurgeResponse,
+        dependencies=[Depends(require_token)],
+    )
+    def purge_namespace_endpoint(body: PurgeRequest) -> PurgeResponse:
+        """删掉某 namespace 的三处数据（原文 / 卡片 / 图）。
+
+        **默认 dry-run**：`apply=false` 只返回「将删多少」。
+        真正删除要 `confirm` 精确等于 `purge <namespace>`。
+        """
+        from memory.services.purge import PurgeError, purge_namespace
+
+        try:
+            report = purge_namespace(
+                cfg, body.namespace, confirm=body.confirm, apply=body.apply)
+        except PurgeError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return PurgeResponse(**report)
 
     @app.get(
         "/admin/entities/suppress",
