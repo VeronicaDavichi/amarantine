@@ -89,9 +89,27 @@ def _timed(settings, store, graph):
     return (time.perf_counter() - t0) * 1000, result
 
 
+def _embedding_alive() -> bool:
+    """embedding 服务在不在（1 秒探活）。"""
+    import httpx
+
+    try:
+        url = f"{_settings().EMBEDDING_BASE_URL}/health"
+        return httpx.get(url, timeout=1.0).status_code == 200
+    except Exception:  # noqa: BLE001 - 连不上就是不活
+        return False
+
+
 @pytest.fixture(scope="module", autouse=True)
 def _warm() -> None:
-    """把 jieba / httpx / TEI 的一次性开销挪出测量窗口。"""
+    """把 jieba / httpx / TEI 的一次性开销挪出测量窗口。
+
+    **依赖不可用时跳过整个模块**：这个文件的用例要真实 embedding
+    （文件头写了「必须用真实 sleep，不能用 mock」），CI 里没有该服务，
+    让它们 ERROR 只会制造假红灯。
+    """
+    if not _embedding_alive():
+        pytest.skip("需要真实 embedding 服务（CI 里没有）；本地起 docker compose 后再跑")
     _timed(_settings(), SlowStore(0.0), make_graph(0.0))
 
 
