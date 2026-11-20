@@ -24,7 +24,7 @@
 | **G5** | CI | `.github/workflows/ci.yml`（test + privacy 两个 job，7 步） |
 | **G5** | CHANGELOG | 本文件 |
 | **A2** | 文档命令存在且可启动 | `harness/check_doc_cmds.py --run` → 43 个脚本全部 ok |
-| **A6** | CI 配置可解析 | `yaml.safe_load` 通过；步骤含 pytest / check_spec / check_guide / check_doc_cmds |
+| **A6** | **CI 在 GitHub 实际跑通** | run `44653037541`：`test` 40s（1643 passed / 13 skipped）+ `privacy` 4s，两 job 全绿 |
 | **A7** | 静态全绿 | `bash harness/verify_all.sh --static` → 1656 passed / 50 spec / 文档一致 / 命令存在 |
 
 ## 未验证（需要你在一台干净机器上做）
@@ -33,7 +33,6 @@
 |---|---|---|
 | **A1** | `docker compose up -d` → `/health` 四项 ok | 本机 Docker Hub 不可达（`dial tcp 199.59.148.222:443: i/o timeout`），拉不到 `python:3.12-slim`，**镜像从未构建过** |
 | **A2（人工部分）** | 照 `docs/quickstart.md` 从 clone 走到第一次 recall | 本机已有数据与 .env，不是干净状态 |
-| **A6（真跑）** | CI 在 GitHub 上实际跑通 | 需要 push 触发（本仓库已推，等 Actions 出结果） |
 | **tag** | `v0.1.0` | 按流程放在 A1 通过后 |
 
 ## A1 的具体做法

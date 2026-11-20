@@ -350,3 +350,25 @@ harness/scrub_privacy.py → 将替换 15 处，涉及 6 个文件：'1000000000
 | G4 | LICENSE MIT；依赖许可 59 包无 GPL；CONTRIBUTING/SECURITY/README；A5 历史干净 |
 | G5 | CI 两 job；CHANGELOG；A7 `verify_all --static` 全绿（1656 passed / 50 spec） |
 | A2 | `check_doc_cmds.py --run`：44 个脚本存在且可启动 |
+
+### 2026-11-20 · A6 真正通过：CI 首次全绿
+
+之前我在清单里写过「CI ✅」—— **那是错的**。查 `gh run list` 才发现
+**最近 5 次全是 failure**。真实原因三个，逐个修完才绿：
+
+| # | 失败原因 | 修法 |
+|---|---|---|
+| 1 | 6 个测试硬编码 `/mnt/e/PycharmProjects/...`（我本机写的），CI 上 `ModuleNotFoundError` | 改成从 `__file__` 推 `REPO_ROOT` / `HARNESS` |
+| 2 | privacy job 判定逻辑本身错：`head -1 \| grep "将替换 0 处"` 永远失败（第一行是「映射来源」） | `scrub_privacy.py --check`，用退出码 |
+| 3 | CI 没有真实映射 → fall back 示例映射 → 把 `_doc`/`_format` 与映射文件自己当残留 | 过滤下划线键 + `SKIP_FILES` + docstring 不照抄键名 |
+| 4 | `test_recall_budget` 需要真实 embedding，CI 里 setup 就抛错 | 1 秒探活，不活则 `pytest.skip` |
+
+**最终结果（run 44653037541）**
+
+```
+✓ test    in 40s   1643 passed, 13 skipped
+✓ privacy in 4s    OK: 工作区无敏感串残留
+```
+
+`13 skipped` 是需要真实容器/LLM 的用例（embedding、Neo4j 等），
+在 CI 里跳过是对的 —— **跳过要写清原因**，不能变成静默通过。
