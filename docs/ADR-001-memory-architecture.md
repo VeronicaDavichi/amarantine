@@ -858,7 +858,7 @@ MCP 的 `initialize` 响应可带 `instructions` 字段，运行时直接投给 
 | 约定 | 内容 |
 |---|---|
 | **单一源头** | [`docs/memory-tool-guide.md`](./memory-tool-guide.md)，构建时生成 `instructions`，代码里**不另写一份** |
-| **一致性校验** | `harness/check-guide.py` 比对「工具 inputSchema」与「指南文档」，不一致即非零退出 |
+| **一致性校验** | `harness/check_guide.py` 比对「工具 inputSchema」与「指南文档」，不一致即非零退出 |
 | **定时** | 由用户 crontab 驱动，表达式放 `.env` 的 `GUIDE_CHECK_CRON`；**不内置调度器**（省一个守护进程） |
 | **失败可见** | 校验失败写日志并非零退出，由 cron 的日志/邮件暴露 |
 

@@ -35,7 +35,8 @@ updated_at: 2026-11-19T02:48:57.237087765Z
 - [x] `GET /health` 汇总四依赖（`degraded`/`deps`/`down`，5s 缓存、3s 超时）
 - [ ] 首次启动自动建表/建 collection，无需手工脚本
 - [x] `.env.example` 与 `Settings` **完全对齐**（86/86，`check_env_coverage.py` 绿）
-- [x] 冷启动文档 `docs/quickstart.md`（compose → 后端 → 写入 → 召回 → 接 MCP）
+- [x] 冷启动文档 `docs/quickstart.md` + `harness/check_doc_cmds.py`（文档里的命令机械核对）
+- [x] A2 可复现性：文档引用 43 个脚本**全部存在且 `--help` 可启动**（`--run` 实测）
 
 ### G2 数据安全（不丢、可迁）
 
@@ -365,3 +366,35 @@ Docker Hub（或配置了镜像站）的机器。这条留作发布前的人工�
 - `ensure_ascii=False`：中文不转成 `\uXXXX`（否则 grep 中文会失效）
 
 **G3 至此完成**：配置清单 ✅ + 降级文档 ✅ + 结构化日志 ✅。
+
+### 2026-11-20 · A2 护栏：文档里的命令必须真实存在
+
+早期 quickstart 写过 `POST /admin/remember`（接口不存在），用户照抄会失败。
+为让这类问题**机械暴露**，新增 `harness/check_doc_cmds.py`：
+
+| 模式 | 做什么 | 用途 |
+|---|---|---|
+| 默认 | 扫 `README/CONTRIBUTING/SECURITY/CHANGELOG/docs/*.md` 里的 `harness/*.py\|mjs\|sh`，检查文件存在 | CI（秒级） |
+| `--run` | 逐个跑 `--help`（部分脚本用只读参数） | 发布前人工验收 |
+
+**第一次跑就抓到 4 个问题**
+
+1. `docs/ADR-001` 与 `docs/P0-task-plan.md` 写的是 `harness/check-guide.py`，
+   真实文件名是 `check_guide.py`（下划线）—— 已修
+2. `harness/embed_server.py` / `rerank_server.py` 在模块顶层 `import torch`，
+   没装 torch 时 `--help` 直接 `ModuleNotFoundError` —— 已改成 `--help` 提前退出
+   （文档让人先看用法，缺可选依赖不该像装错了）
+3. 修的过程中还踩到 `NameError: sys` —— 早退代码用了 `sys` 但没导入，已补
+4. `harness/export_qq_members.mjs` 没有 `--help`，缺参数时报栈 —— 已补用法
+
+**现在的结果**
+
+```
+OK: 文档引用的 43 个 harness 脚本全部存在
+OK: 文档引用的 43 个 harness 脚本全部可启动
+```
+
+已接进 CI（`test` job 新增一步）与 `verify_all.sh --static`（第 3b 步）。
+
+**A2 的边界（诚实）**：这只证明「命令存在且能启动」。
+真正的「照文档从零走一遍」仍需在干净环境人工做（与 A1 一起）。

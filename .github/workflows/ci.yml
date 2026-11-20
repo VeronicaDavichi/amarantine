@@ -32,6 +32,9 @@ jobs:
       - name: 文档与代码一致
         run: python3 harness/check_guide.py
 
+      - name: 文档里的 harness 命令都真实存在
+        run: python3 harness/check_doc_cmds.py
+
   privacy:
     # 真实姓名 / 内网 IP / QQ 号不该进仓库（spec 049 A5 + G4）
     runs-on: ubuntu-latest

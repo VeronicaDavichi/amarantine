@@ -28,6 +28,7 @@ GPU：有 CUDA 就用 fp16（RTX 4060 Ti 16G 实测单批 8 条约 100ms 量级�
 """
 
 from __future__ import annotations
+import sys
 
 import argparse
 import os
@@ -35,6 +36,13 @@ import time
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
+
+# `--help` 要能在**没装 torch** 的机器上跑通：文档第一件事就是让人看用法，
+# 缺可选依赖时报 ModuleNotFoundError 会被误当成装错了。
+if __name__ == "__main__" and any(a in ("-h", "--help") for a in sys.argv[1:]):
+    print('python harness/embed_server.py [--port 8082] [--model bge-m3]')
+    print("\n需要 torch + transformers + GPU（或用 docker compose 起同名服务）。")
+    raise SystemExit(0)
 
 import torch
 import uvicorn

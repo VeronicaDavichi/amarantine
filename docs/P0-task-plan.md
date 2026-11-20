@@ -100,7 +100,7 @@
 | E1 | `memory_forget` | 软删 + `raw_quote_preserved` | A32 | S |
 | E2 | `memory_feedback` | `(trace_id,event_id)` 幂等 | A29 | S |
 | E3 | **工具使用指南** | `docs/memory-tool-guide.md`（单一源头）+ MCP `instructions` 生成 | — | M |
-| E4 | **一致性校验脚本** | `harness/check-guide.py`：比对 inputSchema 与指南，不一致即非零退出 | — | S |
+| E4 | **一致性校验脚本** | `harness/check_guide.py`：比对 inputSchema 与指南，不一致即非零退出 | — | S |
 
 ### 阶段 F：管理前端（4 任务）
 
@@ -154,7 +154,7 @@ A（地基：含 MCP 框架）→ B（写入）→ C（召回）→ G（验收�
 | 事件切分粒度不稳 | B2 | 先用手工夹具验证，再调 prompt |
 | 图通道拖慢召回 | C2 | Neo4j 200ms 硬超时 |
 | MCP stdio 调试困难 | A5 | 先写 JSON-RPC 回显 server 打通链路 |
-| 指南与工具定义漂移 | E4 | `check-guide.py` 定时校验，不一致即非零退出 |
+| 指南与工具定义漂移 | E4 | `check_guide.py` 定时校验，不一致即非零退出 |
 | 合成夹具不代表真实分布 | A3 | 标注「基线不可外推」 |
 
 ## 8. 与 ADR 的对应

@@ -65,6 +65,16 @@ const call = async (name, args) => {
   }
 };
 
+if (process.argv.includes("--help") || process.argv.includes("-h")) {
+  console.log(`导出群成员表（给 spec 047 的按 scope 别名用）
+
+  node harness/export_qq_members.mjs --group <gid> [--out-dir DIR]
+  node harness/export_qq_members.mjs --all         [--out-dir DIR]
+
+需要 .env 里的 QQ_MCP_PKG / QQ_NT_MSG_DB（见 docs/user-manual.md）。`);
+  process.exit(0);
+}
+
 try {
   const args = parseArgs(process.argv.slice(2));
   mkdirSync(args.outDir, { recursive: true });

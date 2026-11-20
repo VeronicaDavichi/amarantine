@@ -25,6 +25,10 @@ echo
 echo "=== 3. 文档与代码一致 ==="
 python3 harness/check_guide.py 2>&1 | tail -1 || FAIL=1
 
+echo
+echo "=== 3b. 文档里的 harness 命令都存在 ==="
+python3 harness/check_doc_cmds.py 2>&1 | tail -2 || FAIL=1
+
 if [ "$STATIC_ONLY" -eq 1 ]; then
   echo
   echo "（--static：跳真库验收）"
