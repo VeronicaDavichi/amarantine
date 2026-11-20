@@ -3,7 +3,7 @@
 本项目用 [LeanSpec](specs/) 记录设计决策，本文件只记**对使用者可见**的变化。
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)：`MAJOR.MINOR.PATCH`。
 
-## [0.1.0] - 待发布（等 A1 干净环境验收）
+## [0.1.0] - 2026-11-20
 
 ### 新增
 - `docker-compose.yml` 增加 `admin` 服务（后端镜像 `back_end/Dockerfile`），
@@ -41,13 +41,24 @@
 
 ---
 
-## 发布前检查
+## 发布前检查（全部通过）
 
-| 项 | 状态 |
-|---|---|
-| G1–G4 五道门 | ✅（详见 [spec 049](specs/049-open-source-release/README.md) 与 [发布检查清单](docs/release-checklist.md)） |
-| A1 干净环境 `docker compose up -d` + `/health` 四项 ok | ⬜ **等你验收** |
-| A2–A7 | ✅（A2 有 `harness/check_doc_cmds.py` 机械护栏；A7 = `verify_all.sh --static`） |
-| `v0.1.0` tag | ⬜ A1 通过后打 |
+| 项 | 状态 | 证据 |
+|---|---|---|
+| G1 可安装 | ✅ | 镜像 1.15GB 构建成功；`compose up -d admin` → healthy；`/health` 四项 ok |
+| G2 数据安全 | ✅ | 备份含向量；A3 还原一致；A4 库 v0→v2 幂等迁移 |
+| G3 可运维 | ✅ | 配置 94 项；降级五类；`LOG_FORMAT=json` 实测合法 |
+| G4 合规 | ✅ | LICENSE MIT；依赖 59 包无 GPL；A5 历史干净；脱敏 0 残留 |
+| G5 可验证 | ✅ | CI 两 job 全绿；A7 `verify_all --static` 全绿 |
+| A1 | ✅ | 容器全链路：写入 1 卡 → 召回命中 → purge 干净 |
+| A2 | ✅ | `check_doc_cmds.py --run`：44 个脚本存在且可启动 |
+| A3–A7 | ✅ | 见 [发布检查清单](docs/release-checklist.md) |
+
+**已知限制（不隐藏）**
+
+- 关系层 precision 0.95 / recall 0.67；行为通道停用（数据不足）
+- 召回 hit@5 = 0.50
+- 单机单租户；`namespace` 不是鉴权边界；单 `ADMIN_TOKEN`；默认无 TLS
+- 中文群聊优先，英文语料未验证
 
 许可证：MIT（见 [LICENSE](LICENSE)）。
