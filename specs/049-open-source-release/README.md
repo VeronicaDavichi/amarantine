@@ -47,7 +47,7 @@ updated_at: 2026-11-19T02:48:57.237087765Z
 ### G3 可运维
 
 - [x] 配置清单 `docs/config-reference.md`（`harness/gen_config_doc.py` 生成，86 项分组 + 默认值 + 源码注释）
-- [ ] 结构化日志（JSON 行）或至少统一前缀，便于 grep 与采集
+- [x] 结构化日志：`LOG_FORMAT=json`（一行一对象，业务字段可直接 jq；默认 text 不变）
 - [x] 降级行为 `docs/degradation.md`（五类依赖逐一写「谁挂 → 什么坏 → 怎么恢复」）
 
 ### G4 可协作（开源合规）
@@ -70,7 +70,7 @@ updated_at: 2026-11-19T02:48:57.237087765Z
 
 - [ ] P1 G1 可安装：compose 全套 + `/health` 汇总 + 首启自建表 + `.env.example` + 冷启动文档
 - [ ] P2 G2 数据安全：备份 / 恢复 / schema 版本迁移 / 三处状态一起备份的说明
-- [ ] P3 G3 可运维：86 项配置分组说明 + 结构化日志 + 三种降级路径写清
+- [x] 结构化日志：`LOG_FORMAT=json`（一行一对象，业务字段可直接 jq；默认 text 不变）
 - [ ] P5 G5 可验证：CI（pytest/check_spec/check_guide）+ CHANGELOG + `v0.1.0` tag
 
 ## Test
@@ -340,3 +340,28 @@ Docker Hub（或配置了镜像站）的机器。这条留作发布前的人工�
 - 保留版权声明与许可全文（本仓库 `LICENSE` 已在根目录，符合）
 - 分发二进制时同样要带上许可文本
 - **没有**专利授权条款、没有商标条款 —— 这是 MIT 与 Apache-2.0 的实质差别
+
+### 2026-11-20 · G3 结构化日志（JSON 行）
+
+`LOG_FORMAT=json` → 日志一行一对象；默认 `text`（人读）**行为不变**。
+
+实测（`LOG_FILE=/tmp/json-test.log LOG_FORMAT=json` 起 admin）：
+
+```
+{"ts": "2026-11-20T00:38:48+00:00", "level": "INFO", "logger": "memory.admin",
+ "msg": "admin 启动 127.0.0.1:8765"}
+{"ts": "...", "level": "INFO", "logger": "httpx",
+ "msg": "HTTP Request: GET http://127.0.0.1:8081/... 200 OK"}
+合法 JSON 行 4 / 非法 0
+```
+
+设计要点：
+
+- `ts` 用 **UTC ISO**（与代码里其他时间戳同口径）；要本地时间在采集端换
+- 业务字段通过 `logger.info("…", extra={"event_id": …})` 自动带上，
+  不用把上下文拼进 msg
+- `LogRecord` 自带字段（filename/lineno/process/thread…）**不**当业务字段输出
+- 不可序列化的 extra 退化成 `repr`，不让日志本身抛异常
+- `ensure_ascii=False`：中文不转成 `\uXXXX`（否则 grep 中文会失效）
+
+**G3 至此完成**：配置清单 ✅ + 降级文档 ✅ + 结构化日志 ✅。

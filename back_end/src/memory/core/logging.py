@@ -39,7 +39,13 @@ def setup_logging(settings: Settings) -> logging.Logger:
         backupCount=BACKUP_COUNT,
         encoding="utf-8",
     )
-    file_handler.setFormatter(logging.Formatter(FORMAT))
+    # 格式可切：默认 text；LOG_FORMAT=json 时一行一对象（便于 jq/采集）
+    if str(getattr(settings, "LOG_FORMAT", "text")).lower() == "json":
+        from memory.core.log_format import JsonLogFormatter
+
+        file_handler.setFormatter(JsonLogFormatter())
+    else:
+        file_handler.setFormatter(logging.Formatter(FORMAT))
     root.addHandler(file_handler)
 
     # 明确不挂 StreamHandler：std 通道留给协议

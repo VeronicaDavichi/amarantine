@@ -2524,11 +2524,19 @@ def _parse_date(raw: Any) -> date | None:
 
 def main() -> int:
     """启动 Admin HTTP。失败只写 LOG_FILE 并退 1（与 MCP 入口同一契约）。"""
+    # 格式可切（G3）：默认 text；LOG_FORMAT=json 时一行一对象
+    _fmt: logging.Formatter
+    if os.environ.get("LOG_FORMAT", "text").lower() == "json":
+        from memory.core.log_format import JsonLogFormatter
+
+        _fmt = JsonLogFormatter()
+    else:
+        _fmt = logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s")
     logging.basicConfig(
-        level=logging.INFO,
+        level=os.environ.get("LOG_LEVEL", "INFO"),
         filename=os.environ.get("LOG_FILE", "admin.log"),
-        format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
+    logging.getLogger().handlers[0].setFormatter(_fmt)
     try:
         settings = load_settings()
     except Exception as exc:  # noqa: BLE001

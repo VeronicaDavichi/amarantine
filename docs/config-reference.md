@@ -1,6 +1,6 @@
 # 配置项参考
 
-由 `harness/gen_config_doc.py` 从 `back_end/config.py` 自动生成，共 **93** 项。
+由 `harness/gen_config_doc.py` 从 `back_end/config.py` 自动生成，共 **94** 项。
 
 > **注释为空的项表示源码里没写说明** —— 不是这里漏了。
 > 修改任何一项前先读对应 spec；标「不要改」的项改动会破坏数据一致性。
@@ -125,7 +125,7 @@
 |---|---|---|
 | `CONTEXT_TOKEN_BUDGET` | `3000` |  |
 
-## 其他（43 项）
+## 其他（44 项）
 
 | 配置项 | 默认值 | 说明 |
 |---|---|---|
@@ -156,6 +156,7 @@
 | `LABEL_LLM_TEMP` | `0.2` |  |
 | `LABEL_REVIEW_BATCH` | `50` |  |
 | `LOG_FILE` | `'logs/memory.log'` |  |
+| `LOG_FORMAT` | `'text'` | 日志格式：text（默认，人读）或 json（一行一对象，便于采集） |
 | `LOG_LEVEL` | `'INFO'` |  |
 | `PROTECT_IMPORTANCE_REVIEW` | `0.7` |  |
 | `QQ_MCP_PASSPHRASE` | `Field(default='')` |  |

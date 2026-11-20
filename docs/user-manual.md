@@ -2622,6 +2622,39 @@ python3 harness/rebind_self_edges.py --namespace <ns> --apply   # 重指
 python3 harness/scan_self_mentions.py
 ```
 
+## 日志
+
+默认写文件（`LOG_FILE`），**完全不占 stdout** —— MCP 的 stdout 只承载 JSON-RPC，
+写一个字节的日志就会被 host 解析失败。
+
+```dotenv
+LOG_FILE=logs/memory.log
+LOG_LEVEL=INFO
+# text（默认，人读）或 json（一行一对象）
+LOG_FORMAT=text
+```
+
+切 JSON 后可以用 `jq` 直接取字段：
+
+```bash
+LOG_FORMAT=json python -m memory.entrypoints.admin_http
+tail -f logs/memory.log | jq -r 'select(.level=="ERROR") | .msg'
+jq -r 'select(.event_id) | [.ts,.event_id,.msg] | @tsv' logs/memory.log
+```
+
+**日志里如何带业务字段**（代码侧）：
+
+```python
+logger.info("写入完成", extra={"event_id": card.event_id, "cards": 1})
+# → {"ts":"…","level":"INFO","msg":"写入完成","event_id":"evt_…","cards":1}
+```
+
+注意：
+
+- `ts` 是 **UTC**（与项目其他时间戳同口径）
+- 中文不转义（`ensure_ascii=False`），可以直接 grep
+- 轮转：单文件 5 MB × 4 份（`RotatingFileHandler`）
+
 ## 删掉导入的聊天记录（清理某个域）
 
 导入的数据散在**三处**：SQLite 原文 / Weaviate 卡片 / Neo4j 图。

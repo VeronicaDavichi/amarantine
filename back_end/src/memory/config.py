@@ -271,6 +271,8 @@ class Settings(BaseSettings):
     ADMIN_PORT: int = 8765
     LOG_FILE: str = "logs/memory.log"
     LOG_LEVEL: str = "INFO"
+    # 日志格式：text（默认，人读）或 json（一行一对象，便于采集）
+    LOG_FORMAT: str = "text"
 
     # ---------- 校验 ----------
 
