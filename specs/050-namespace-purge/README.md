@@ -27,7 +27,7 @@ transitions:
 
 **现状（实测）**：
 
-| 存储 | 该 namespace 的量（qq-505456846） |
+| 存储 | 该 namespace 的量（qq-10000000001） |
 |---|---|
 | SQLite `raw_quote` | 9415 行 |
 | Weaviate `MemoryEvent` | 4383 张 |
@@ -107,7 +107,7 @@ transitions:
 预演：cards 3 / graph_nodes 10 / raw_quote 3 / ingest_job 3 / embedding_index_meta 1
 真删：cards 3 / graph_nodes 10 / raw_quote 3 / ingest_job 3 / embedding_index_meta 1
 复核：干净 ✓
-其它域不受影响：qq-505456846 仍 4383 张、work 仍 1 张
+其它域不受影响：qq-10000000001 仍 4383 张、work 仍 1 张
 确认语写错（purge verify046c）：✗ 拒绝，未删任何东西
 ```
 
@@ -167,7 +167,7 @@ decrypt_qq_database, query_chat_messages, …, list_contacts, list_group_members
 配置 `SELF_QQ`（登录用的 QQ 号）→ 从权威成员表反查 uid（spec 043 的账号锚定）
 → 得出：
 
-| 字段 | 实测值（qq 505456846） |
+| 字段 | 实测值（qq 10000000001） |
 |---|---|
 | uid | `u_7zrOQx_TiNIGvZcyFZipCA`（唯一） |
 | 账号昵称 | **Veronica Davichi** |
@@ -213,7 +213,7 @@ decrypt_qq_database, query_chat_messages, …, list_contacts, list_group_members
 **T10 memory_whoami（实测输出）**
 
 ```
-你是 Veronica Davichi（QQ 505456846，uid u_7zrO…）。
+你是 Veronica Davichi（QQ 10000000001，uid u_7zrO…）。
 你在这个域里有 19 个群名片，例如：海嗣、苏苏大可爱、…
 （没有以你为起点的关系：关系层还没有以我为起点的边（陈述通道产量本来就少））
 ```

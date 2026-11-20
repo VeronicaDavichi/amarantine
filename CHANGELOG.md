@@ -3,7 +3,7 @@
 本项目用 [LeanSpec](specs/) 记录设计决策，本文件只记**对使用者可见**的变化。
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)：`MAJOR.MINOR.PATCH`。
 
-## [Unreleased]
+## [0.1.0] - 待发布（等 A1 干净环境验收）
 
 ### 新增
 - `docker-compose.yml` 增加 `admin` 服务（后端镜像 `back_end/Dockerfile`），
@@ -39,9 +39,15 @@
 - `data/`、`corpus/`、`backups/`、`docs/labeling-data.js`、`.env`、
   `harness/.privacy-map.json` 全部 gitignored
 
-## [0.1.0] - 待发布
+---
 
-发布前置条件见 [spec 049](specs/049-open-source-release/README.md)：
-README 重写、CI 首跑通过、`v0.1.0` 打 tag。
+## 发布前检查
+
+| 项 | 状态 |
+|---|---|
+| G1–G4 五道门 | ✅（详见 [spec 049](specs/049-open-source-release/README.md) 与 [发布检查清单](docs/release-checklist.md)） |
+| A1 干净环境 `docker compose up -d` + `/health` 四项 ok | ⬜ **等你验收** |
+| A2–A7 | ✅（A2 有 `harness/check_doc_cmds.py` 机械护栏；A7 = `verify_all.sh --static`） |
+| `v0.1.0` tag | ⬜ A1 通过后打 |
 
 许可证：MIT（见 [LICENSE](LICENSE)）。

@@ -25,7 +25,7 @@ def ident_dir(tmp_path):
         (d / f"group-{gid}.json").write_text(json.dumps({
             "groupQq": gid,
             "members": [
-                {"uid": "u_me", "qq": 505456846, "nickname": "Veronica Davichi",
+                {"uid": "u_me", "qq": 10000000001, "nickname": "Veronica Davichi",
                  "card": card},
                 {"uid": "u_other", "qq": 999, "nickname": "别人", "card": "别人"},
             ],
@@ -41,7 +41,7 @@ def test_unconfigured(ident_dir) -> None:
 
 
 def test_resolves_uid_and_names(ident_dir) -> None:
-    got = S.resolve_self(_Settings("505456846", str(ident_dir)))
+    got = S.resolve_self(_Settings("10000000001", str(ident_dir)))
     assert got["uid"] == "u_me"
     assert set(got["names"]) == {"群里的我", "另一个名片"}
     assert got["namespaces_seen"] == ["111", "222"]
@@ -49,7 +49,7 @@ def test_resolves_uid_and_names(ident_dir) -> None:
 
 def test_canonical_is_nickname_not_card(ident_dir) -> None:
     """规范名取**账号昵称**，不是某个群名片（实测 20 个名片里挑错成「海嗣」）。"""
-    got = S.resolve_self(_Settings("505456846", str(ident_dir)))
+    got = S.resolve_self(_Settings("10000000001", str(ident_dir)))
     assert got["canonical"] == "Veronica Davichi"
 
 
@@ -60,13 +60,13 @@ def test_missing_qq(ident_dir) -> None:
 
 
 def test_missing_dir(tmp_path) -> None:
-    got = S.resolve_self(_Settings("505456846", str(tmp_path / "无")))
+    got = S.resolve_self(_Settings("10000000001", str(tmp_path / "无")))
     assert got["uid"] == ""
     assert "成员表目录不存在" in got["reason"]
 
 
 def test_self_uids(ident_dir) -> None:
-    assert S.self_uids(_Settings("505456846", str(ident_dir))) == {"u_me"}
+    assert S.self_uids(_Settings("10000000001", str(ident_dir))) == {"u_me"}
 
 
 @pytest.mark.parametrize("names,expect", [

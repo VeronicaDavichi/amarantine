@@ -6,8 +6,8 @@
 
 用法：
 
-    python3 harness/rebind_self_edges.py --namespace qq-505456846
-    python3 harness/rebind_self_edges.py --namespace qq-505456846 --apply
+    python3 harness/rebind_self_edges.py --namespace qq-10000000001
+    python3 harness/rebind_self_edges.py --namespace qq-10000000001 --apply
 """
 
 from __future__ import annotations

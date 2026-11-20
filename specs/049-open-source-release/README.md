@@ -107,7 +107,7 @@ updated_at: 2026-11-19T02:48:57.237087765Z
 - 关联：040（导入工具，发布后用户自备语料）、044（抑制表，已 complete）
 - 顺序建议：G1 → G2 → G3 → G4 → G5（先能跑，再能保数据，最后合规）
 
-### 2026-11-19 · G1 部分 + G2 备份完成（实测）
+### 2026-11-19 · G1/G2 验收记录（浓缩）
 
 **G1 `/health`**：`status` 恒 `ok`（liveness，不因依赖挂掉而让容器被重启），
 另附 `degraded` / `deps`（四项各自 ok/ms/detail）/ `down`。
@@ -178,93 +178,7 @@ git rev-list --objects --all | 按 blob 大小排序
 
 我倾向 1，但它会改运行时行为，属「需确认的改动」，等你定。
 
-### 2026-11-19 · G2 恢复（A3 通过）+ G3 配置清单 + G5 CI
 
-**G2 恢复演练（A3）**
-
-在 `verify046b`（3 卡 / 10 节点 / 24 边）上做「备份 → 清空 → 还原」：
-
-```
-备份：卡片 3，图节点 10 / 边 24，SQLite raw_quote 3 / ingest_job 3
-清空：删 3 卡 + DETACH DELETE 图 + 删该 namespace 的 SQLite 行
-还原：卡片 3，图 10/24，SQLite 3/3
-校验：备份 3 / 还原后 3  →  A3 卡片条数一致 ✓
-```
-
-`restore_state.py` 的设计要点：
-
-- **卡片带向量还原**：`backup_state.py` 现在导出 `_additional { vector }`；
-  不重新 embed（换过模型就会新旧向量混用）
-- **固定 UUID**（`deterministic_uuid`），重跑幂等
-- **按 namespace 还原**，`--into` 可导到别的 namespace 做演练（不动真实数据）
-
-**G3 配置清单**：`docs/config-reference.md` 由 `harness/gen_config_doc.py`
-从 `config.py` 机械生成（86 项、按前缀分组、保留源码注释）。
-注释为空的项**如实留空**，提示「源码里没写说明」。
-
-**G5 CI**：`.github/workflows/ci.yml` 两个 job ——
-`test`（pytest + check_spec + check_guide）与 `privacy`（敏感串扫描为 0）。
-
-**脱敏脚本自己的泄露也修了**：第一版把真实姓名写在映射表里，等于换个地方泄露。
-现在真实映射放 `harness/.privacy-map.json`（gitignored），仓库只留
-`privacy-map.example.json`（占位符之间互相替换）。
-
-### 2026-11-19 · G1 收尾两项 + G3 降级文档
-
-**.env.example 完全对齐**：`harness/check_env_coverage.py` 从 49/86 补到 **86/86**。
-补齐时只写「默认值」（从 `config.py` 机械取），不编造用途说明。
-顺带标出两项历史遗留：`EMBEDDING_PRELOAD` / `RERANK_PRELOAD` **不是 Settings 字段**，
-配了不生效 —— 保留但标注，不删（删了会让人以为没这回事）。
-
-**冷启动文档** `docs/quickstart.md`：compose → `uv sync` → `.env` 最少三项 →
-起服务 → `/health` 自检 → 写入（`/admin/ingest`）→ 召回（`/admin/recall`）→ 接 MCP，
-最后六条「常见卡点」。
-
-> 写这份文档时抓到自己一个错：原本写「`POST /admin/remember`」，
-> 但代码里**没有这个接口** —— 写入走 MCP 的 `memory_remember` 或批量入口
-> `/admin/ingest`。已改成实际存在的路径。
-
-**降级文档** `docs/degradation.md`：LLM / embedding / Weaviate / rerank / Neo4j
-五类，逐项写「挂掉后的表现 / 是否丢数据 / 恢复方式」。要点：
-
-- 图库挂了最轻（派生层，可重建）
-- 向量库或 embedding 挂了 → 召回 **503**（不是空结果，空结果会误导成「没这段记忆」）
-- LLM 挂了 → 写入降级成原文卡，记忆变粗糙但不断
-
-**G1 只剩一项**：admin 进 compose。这需要先有 `Dockerfile`（镜像化后端），
-属「新增交付物」，比改文档重，留到下一轮或由你确认后再做。
-
-### 2026-11-19 · A4 迁移通过 + G4 两份协作文档
-
-**A4：schema 版本迁移**
-
-新增 `back_end/src/memory/services/schema.py`：
-
-- 版本记在 `PRAGMA user_version`（不占表）
-- `MIGRATIONS` 有序、每步幂等；`SCHEMA_VERSION` 必须等于最后一条
-- **拒绝降级**：库版本高于代码时抛错（旧代码读新库会漏字段、读出半个真相）
-- 启动时在 `create_app` 里跑一次（失败告警但不阻断启动）
-
-真实库演练：
-
-```
-迁移前 v0 → 迁移后 v2
-执行：v1 ingest_job 补 dropped_events/split_rounds
-      v2 entity_suppress 建表 + 索引
-再跑一次：[] （幂等）
-核对：user_version=2，两列都在，entity_suppress 存在，raw_quote 9415 行完好
-```
-
-**G4 两份文档**
-
-- `CONTRIBUTING.md`：环境、提交前必跑的四条命令、spec 规矩（不做的事也要写）、
-  代码约定（注释解释为什么 / 派生层可重建 / 幂等）、隐私红线、PR 要求
-- `SECURITY.md`：私报渠道、**安全模型**（单机单租户、namespace 不是鉴权边界、
-  单 token 无分级、默认无 TLS）、密钥存放、已知弱默认（`neo4j/password`）、
-  外部依赖风险（**聊天内容会发给 LLM 网关**）、已知限制（抽取会猜错）
-
-**仍未做（等用户拍板）**：LICENSE 选择、README 重写（要写许可证名）、
-CHANGELOG 与 `v0.1.0` tag。
 
 ### 2026-11-19 · G1：admin 进 compose（构建未验证）+ CHANGELOG
 
@@ -398,3 +312,41 @@ OK: 文档引用的 43 个 harness 脚本全部可启动
 
 **A2 的边界（诚实）**：这只证明「命令存在且能启动」。
 真正的「照文档从零走一遍」仍需在干净环境人工做（与 A1 一起）。
+
+### 2026-11-20 · 发布检查清单 + CHANGELOG 收口
+
+**`docs/release-checklist.md`**：把 A1–A7 逐条写成「已验证 / 未验证」，
+已验证的带**可复现命令 → 结果**，未验证的写清「为什么本机做不到」。
+
+**CHANGELOG**：`Unreleased` 收进 `[0.1.0] - 待发布（等 A1）`，
+末尾加「发布前检查」表。tag 仍未打 —— 按流程放在 A1 通过后。
+
+**又抓到一次隐私泄漏（值得记）**
+
+```
+harness/scrub_privacy.py → 将替换 15 处，涉及 6 个文件：'505456846' × 15
+  back_end/tests/test_050_whoami.py / docs/user-manual.md /
+  harness/merge_self_persons.py / harness/rebind_self_edges.py /
+  harness/scan_self_mentions.py / specs/050-namespace-purge/README.md
+```
+
+来源：**我自己**这几轮写文档与测试时，把真实的 QQ 号与 namespace
+（`505456846` / `qq-505456846`）当示例抄了进去。
+`--apply` 已清干净（替换成 `10000000001`），测试仍 1656 passed。
+
+> 这条正好证明 CI 的 `privacy` job 有存在价值：靠人自觉，
+> 每隔几轮就会漏一次。写完就扫一遍是最低成本的护栏。
+
+**A1 仍是唯一硬阻塞**：本机 Docker Hub 不可达，镜像从未构建过。
+清单里给了「配镜像站」的替代命令。
+
+### 2026-11-19/20 · 其余门的验收（浓缩，细节见 docs/release-checklist.md）
+
+| 门 | 关键证据 |
+|---|---|
+| G1 | `/health` 四依赖 ok + `degraded=false`；`.env.example` 94/94 对齐 |
+| G2 | 备份含向量；A3 演练（verify046b 3 卡/10 节点/24 边）还原一致；A4 真实库 v0→v2 幂等 |
+| G3 | 配置清单 94 项；降级文档五类依赖；`LOG_FORMAT=json` 实测 4 行合法 JSON |
+| G4 | LICENSE MIT；依赖许可 59 包无 GPL；CONTRIBUTING/SECURITY/README；A5 历史干净 |
+| G5 | CI 两 job；CHANGELOG；A7 `verify_all --static` 全绿（1656 passed / 50 spec） |
+| A2 | `check_doc_cmds.py --run`：44 个脚本存在且可启动 |

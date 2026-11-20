@@ -9,7 +9,7 @@ sys.stdout.reconfigure(encoding="utf-8")
 from memory.services.local_paths import load_settings_from_project  # noqa: E402
 from memory.services.self_identity import resolve_self  # noqa: E402
 
-NS = "qq-505456846"
+NS = "qq-10000000001"
 s = load_settings_from_project()
 got = resolve_self(s, namespace=NS)
 names = {*(got.get("names") or []), *(got.get("nicknames") or []),

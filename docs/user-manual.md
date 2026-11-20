@@ -2590,7 +2590,7 @@ MCP 工具 **`memory_whoami`**（只读）：
 返回一段可读文本 + 结构化数据，实测输出：
 
 ```
-你是 Veronica Davichi（QQ 505456846，uid u_7zrO…）。
+你是 Veronica Davichi（QQ 10000000001，uid u_7zrO…）。
 你在这个域里有 19 个群名片，例如：海嗣、苏苏大可爱、…
 以你为起点的关系 3 条：
   - OWNS → 服务器
