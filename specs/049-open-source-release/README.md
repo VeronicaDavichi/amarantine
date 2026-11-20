@@ -1,5 +1,5 @@
 ---
-status: planned
+status: complete
 created: 2026-11-19
 priority: high
 tags:
@@ -7,9 +7,12 @@ tags:
 - oss
 - packaging
 created_at: 2026-11-19T02:48:57.237087765Z
-updated_at: 2026-11-19T02:48:57.237087765Z
+updated_at: 2026-11-20T02:25:07.293077310Z
+completed_at: 2026-11-20T02:25:07.293077310Z
+transitions:
+- status: complete
+  at: 2026-11-20T02:25:07.293077310Z
 ---
-
 # 049 开源发布准备（Open-source release readiness）
 
 ## Overview
@@ -33,7 +36,7 @@ updated_at: 2026-11-19T02:48:57.237087765Z
 
 - [x] `docker-compose.yml` 已有四依赖（admin 由 `harness/up_local.sh` 起，见 G1 待办）
 - [x] `GET /health` 汇总四依赖（`degraded`/`deps`/`down`，5s 缓存、3s 超时）
-- [ ] 首次启动自动建表/建 collection，无需手工脚本
+- [x] 首次启动自动建表/建 collection（空目录实测：2s 健康，memory.db 自建，user_version=2，写入+召回通）
 - [x] `.env.example` 与 `Settings` **完全对齐**（86/86，`check_env_coverage.py` 绿）
 - [x] 冷启动文档 `docs/quickstart.md` + `harness/check_doc_cmds.py`（文档里的命令机械核对）
 - [x] A2 可复现性：文档引用 43 个脚本**全部存在且 `--help` 可启动**（`--run` 实测）
@@ -65,14 +68,14 @@ updated_at: 2026-11-19T02:48:57.237087765Z
 
 - [x] GitHub Actions `.github/workflows/ci.yml`（test + privacy 两个 job）
 - [~] `CHANGELOG.md` 已写；`v0.1.0` tag 待发布时打
-- [ ] 发布前最后一遍：`bash harness/verify_all.sh --static` 全绿
+- [x] 发布前最后一遍 `verify_all.sh --static` 全绿（1656 passed / 50 spec / 文档一致 / 命令存在）
 
 ## Plan
 
-- [ ] P1 G1 可安装：compose 全套 + `/health` 汇总 + 首启自建表 + `.env.example` + 冷启动文档
-- [ ] P2 G2 数据安全：备份 / 恢复 / schema 版本迁移 / 三处状态一起备份的说明
+- [x] P1 G1 可安装：compose 全套 + `/health` 汇总 + 首启自建 + `.env.example` 94 项 + quickstart
+- [x] P2 G2 数据安全：备份 / 恢复（A3）/ schema 迁移（A4）/ 三处一起备份
 - [x] 结构化日志：`LOG_FORMAT=json`（一行一对象，业务字段可直接 jq；默认 text 不变）
-- [ ] P5 G5 可验证：CI（pytest/check_spec/check_guide）+ CHANGELOG + `v0.1.0` tag
+- [x] P5 G5 可验证：CI 全绿（A6）+ CHANGELOG + `v0.1.0` tag 已推送
 
 ## Test
 
@@ -346,4 +349,35 @@ purge a1-smoke → 删后复核 干净 ✓
 docker compose up -d
 # 不通（国内）：
 DOCKER_BASE_IMAGE=docker.m.daocloud.io/library/python:3.12-slim docker compose up -d
+```
+
+### 2026-11-20 · 收尾：首启自建验证 + 完成
+
+**「首次启动自动建表」是唯一还没测过的声明**，用空目录 + 一次性容器验了：
+
+```
+空目录 /tmp/a1-fresh-data（0 个文件）
+t+2s health=200
+自动生成：
+  memory.db        53248 B
+  admin.log         1876 B
+自动建表 5 张：entity_suppress, pending_task, recall_stats, sqlite_sequence, surname_decl
+user_version: 2（迁移自动跑过）
+写入 → job_97d46208ad625ddb；召回 → 材料数 1（说明 Weaviate collection 也自建）
+```
+
+（其余表由各服务首次使用时懒建 —— 关键是**不需要任何手工脚本**。）
+
+**踩到的一坑**：`docker run` 不带 `--user` 时用镜像默认 uid 10001，
+挂载空目录写不进 `admin.log`（`PermissionError`）。compose 里已按宿主 uid 跑，
+所以正常流程没这问题；手工 `docker run` 要自己加 `--user $(id -u):$(id -g)`。
+
+**发布完成**
+
+```
+tag    v0.1.0（annotated，已推送）
+release https://github.com/VeronicaDavichi/amarantine/releases/tag/v0.1.0
+CI     两 job 全绿
+测试   1656 passed
+spec   50 个全绿
 ```
