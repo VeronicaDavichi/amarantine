@@ -10,7 +10,7 @@
 
 | 文件 | 入库 | 内容 |
 |---|---|---|
-| `harness/privacy-map.example.json` | ✅ | 占位符之间的映射（`"真实姓名A": "张三"`），示范格式 |
+| `harness/privacy-map.example.json` | ✅ | 占位符之间的映射（键形如 `真实…` / `内网…`），示范格式 |
 | `harness/.privacy-map.json` | ❌ gitignored | 真实映射，只在本机 |
 
 没有真实映射文件时脚本用示例映射跑 —— 对开源用户来说这就是「没用真实数据」，
@@ -38,15 +38,32 @@ EXAMPLE_MAP = ROOT / "harness" / "privacy-map.example.json"
 SKIP_DIRS = ("data/", "corpus/", "backups/", ".venv", ".git/", "node_modules/")
 SKIP_SUFFIX = (".log", ".db", ".pyc", ".png", ".jpg", ".jpeg", ".gif", ".xlsx")
 
+#: 映射文件自己当然含有全部键 —— 扫它会把自己当残留。
+#: 踩过：CI 上只有示例映射，于是把示例里的键当成「工作区敏感串」，报 6 处。
+SKIP_FILES = frozenset({
+    "harness/privacy-map.example.json",
+    "harness/.privacy-map.json",
+})
+
+
+def _clean_map(raw: dict) -> dict[str, str]:
+    """丢掉 `_doc` / `_format` 这类元信息键 —— 它们不是要替换的字符串。
+
+    踩过：CI 上没有真实映射，用示例映射跑，把 `_doc`（24 次）、`_format`（8 次）
+    当成敏感串，报「38 处残留」直接红。
+    """
+    return {str(k): str(v) for k, v in raw.items()
+            if not str(k).startswith("_") and k and v}
+
 
 def load_map(path: pathlib.Path | None) -> tuple[dict[str, str], str]:
     """返回 `(映射, 来源说明)`。"""
     if path:
-        return json.loads(path.read_text(encoding="utf-8")), str(path)
+        return _clean_map(json.loads(path.read_text(encoding="utf-8"))), str(path)
     if REAL_MAP.is_file():
-        return json.loads(REAL_MAP.read_text(encoding="utf-8")), str(REAL_MAP)
+        return _clean_map(json.loads(REAL_MAP.read_text(encoding="utf-8"))), str(REAL_MAP)
     if EXAMPLE_MAP.is_file():
-        return json.loads(EXAMPLE_MAP.read_text(encoding="utf-8")), str(EXAMPLE_MAP)
+        return _clean_map(json.loads(EXAMPLE_MAP.read_text(encoding="utf-8"))), str(EXAMPLE_MAP)
     return {}, "（没有映射文件）"
 
 
@@ -55,6 +72,8 @@ def tracked_files() -> list[pathlib.Path]:
                          text=True, check=True).stdout.splitlines()
     files = []
     for rel in out:
+        if rel in SKIP_FILES:
+            continue
         if any(rel.startswith(d) or f"/{d}" in rel for d in SKIP_DIRS):
             continue
         if rel.endswith(SKIP_SUFFIX):
