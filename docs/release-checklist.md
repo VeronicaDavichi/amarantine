@@ -25,17 +25,17 @@
 | **G5** | CHANGELOG | 本文件 |
 | **A2** | 文档命令存在且可启动 | `harness/check_doc_cmds.py --run` → 43 个脚本全部 ok |
 | **A6** | **CI 在 GitHub 实际跑通** | run `44653037541`：`test` 40s（1643 passed / 13 skipped）+ `privacy` 4s，两 job 全绿 |
+| **A1** | **镜像构建 + 容器全链路** | 镜像 1.15GB 构建成功；`compose up -d admin` → `healthy`；`/health` 四项 ok、`degraded=false`；写入 1 卡 → 召回命中 `tr_6f693c9cd357` → purge 干净（`a1-smoke`） |
 | **A7** | 静态全绿 | `bash harness/verify_all.sh --static` → 1656 passed / 50 spec / 文档一致 / 命令存在 |
 
 ## 未验证（需要你在一台干净机器上做）
 
 | 编号 | 验收 | 为什么本机做不到 |
 |---|---|---|
-| **A1** | `docker compose up -d` → `/health` 四项 ok | 本机 Docker Hub 不可达（`dial tcp 199.59.148.222:443: i/o timeout`），拉不到 `python:3.12-slim`，**镜像从未构建过** |
 | **A2（人工部分）** | 照 `docs/quickstart.md` 从 clone 走到第一次 recall | 本机已有数据与 .env，不是干净状态 |
 | **tag** | `v0.1.0` | 按流程放在 A1 通过后 |
 
-## A1 的具体做法
+## A1 的复现命令（已验证）
 
 ```bash
 git clone <repo> amarantine && cd amarantine

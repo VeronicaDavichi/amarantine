@@ -18,9 +18,19 @@
 
 ```bash
 git clone <repo> amarantine && cd amarantine
-docker compose up -d          # weaviate + neo4j + embedding + rerank
-docker compose ps             # 四个都 healthy 再继续（首次要 1–3 分钟）
+docker compose up -d          # weaviate + neo4j + embedding + rerank + admin
+docker compose ps             # 五个都 healthy/running 再继续（首次 3–5 分钟）
 ```
+
+**Docker Hub 拉不动时**（国内常见）指到镜像站：
+
+```bash
+DOCKER_BASE_IMAGE=docker.m.daocloud.io/library/python:3.12-slim \
+  docker compose up -d
+```
+
+> `ghcr.io` 在很多国内镜像站**不被代理**（403），所以 uv 是从 PyPI 装的，
+> 镜像不依赖 ghcr。
 
 端口：`8081` 向量库 · `8082` 向量模型 · `8083` 重排 · `7474/7687` 图库。
 
@@ -52,8 +62,12 @@ uv run python -m memory.entrypoints.admin_http      # 默认 127.0.0.1:8765
 
 ```bash
 curl -s http://127.0.0.1:8765/health | python3 -m json.tool
-# 期望 degraded=false，deps 四项都是 ok:true
+# 期望 degraded=false，deps 四项（neo4j/embedding/weaviate/rerank）都 ok:true
 ```
+
+> 容器里 `ADMIN_HOST=0.0.0.0`（否则端口发布不生效），
+> 并以宿主 UID 运行（`user: ${HOST_UID:-1000}:${HOST_GID:-1000}`），
+> 否则挂载的 `data/` 写不进去。这两条 compose 已经配好，不用你改。
 
 ## 4. 第一次写入和召回
 

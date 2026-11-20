@@ -148,6 +148,10 @@ services:
   admin:
     build:
       context: ./back_end
+      args:
+        # Docker Hub 不可达时指到镜像站：
+        #   DOCKER_BASE_IMAGE=docker.m.daocloud.io/library/python:3.12-slim docker compose up -d
+        BASE: ${DOCKER_BASE_IMAGE:-python:3.12-slim}
     image: amarantine-admin:dev
     container_name: amarantine-admin
     ports:
@@ -161,6 +165,14 @@ services:
       EMBEDDING_BASE_URL: "http://embedding:80"
       RERANK_BASE_URL: "http://reranker:80"
       DATABASE_URL: "sqlite:////app/data/memory.db"
+      # 容器内必须绑 0.0.0.0，否则 docker 端口发布不生效
+      # （实测：容器 healthy，宿主 curl 被 reset —— 因为服务只监听 loopback）
+      ADMIN_HOST: "0.0.0.0"
+      # 日志落数据卷（容器内 /app/logs 不在卷里，写不进去）
+      LOG_FILE: "/app/data/admin.log"
+    # 以**宿主用户**身份运行：挂载的 data 目录归宿主所有，
+    # 用镜像默认 uid 10001 会写不进去（实测 readonly database）。
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
     volumes:
       # SQLite 必须落卷：容器重建不带上，记忆就没了
       - ./back_end/data:/app/data

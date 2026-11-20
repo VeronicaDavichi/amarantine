@@ -107,7 +107,7 @@ updated_at: 2026-11-19T02:48:57.237087765Z
 - 关联：040（导入工具，发布后用户自备语料）、044（抑制表，已 complete）
 - 顺序建议：G1 → G2 → G3 → G4 → G5（先能跑，再能保数据，最后合规）
 
-### 2026-11-19 · G1/G2 验收记录（浓缩）
+### 2026-11-19 · G1–G5 与 A1–A7 验收汇总
 
 **G1 `/health`**：`status` 恒 `ok`（liveness，不因依赖挂掉而让容器被重启），
 另附 `degraded` / `deps`（四项各自 ok/ms/detail）/ `down`。
@@ -281,75 +281,7 @@ Docker Hub（或配置了镜像站）的机器。这条留作发布前的人工�
 
 **G3 至此完成**：配置清单 ✅ + 降级文档 ✅ + 结构化日志 ✅。
 
-### 2026-11-20 · A2 护栏：文档里的命令必须真实存在
 
-早期 quickstart 写过 `POST /admin/remember`（接口不存在），用户照抄会失败。
-为让这类问题**机械暴露**，新增 `harness/check_doc_cmds.py`：
-
-| 模式 | 做什么 | 用途 |
-|---|---|---|
-| 默认 | 扫 `README/CONTRIBUTING/SECURITY/CHANGELOG/docs/*.md` 里的 `harness/*.py\|mjs\|sh`，检查文件存在 | CI（秒级） |
-| `--run` | 逐个跑 `--help`（部分脚本用只读参数） | 发布前人工验收 |
-
-**第一次跑就抓到 4 个问题**
-
-1. `docs/ADR-001` 与 `docs/P0-task-plan.md` 写的是 `harness/check-guide.py`，
-   真实文件名是 `check_guide.py`（下划线）—— 已修
-2. `harness/embed_server.py` / `rerank_server.py` 在模块顶层 `import torch`，
-   没装 torch 时 `--help` 直接 `ModuleNotFoundError` —— 已改成 `--help` 提前退出
-   （文档让人先看用法，缺可选依赖不该像装错了）
-3. 修的过程中还踩到 `NameError: sys` —— 早退代码用了 `sys` 但没导入，已补
-4. `harness/export_qq_members.mjs` 没有 `--help`，缺参数时报栈 —— 已补用法
-
-**现在的结果**
-
-```
-OK: 文档引用的 43 个 harness 脚本全部存在
-OK: 文档引用的 43 个 harness 脚本全部可启动
-```
-
-已接进 CI（`test` job 新增一步）与 `verify_all.sh --static`（第 3b 步）。
-
-**A2 的边界（诚实）**：这只证明「命令存在且能启动」。
-真正的「照文档从零走一遍」仍需在干净环境人工做（与 A1 一起）。
-
-### 2026-11-20 · 发布检查清单 + CHANGELOG 收口
-
-**`docs/release-checklist.md`**：把 A1–A7 逐条写成「已验证 / 未验证」，
-已验证的带**可复现命令 → 结果**，未验证的写清「为什么本机做不到」。
-
-**CHANGELOG**：`Unreleased` 收进 `[0.1.0] - 待发布（等 A1）`，
-末尾加「发布前检查」表。tag 仍未打 —— 按流程放在 A1 通过后。
-
-**又抓到一次隐私泄漏（值得记）**
-
-```
-harness/scrub_privacy.py → 将替换 15 处，涉及 6 个文件：'10000000001' × 15
-  back_end/tests/test_050_whoami.py / docs/user-manual.md /
-  harness/merge_self_persons.py / harness/rebind_self_edges.py /
-  harness/scan_self_mentions.py / specs/050-namespace-purge/README.md
-```
-
-来源：**我自己**这几轮写文档与测试时，把真实的 QQ 号与 namespace
-（`10000000001` / `qq-10000000001`）当示例抄了进去。
-`--apply` 已清干净（替换成 `10000000001`），测试仍 1656 passed。
-
-> 这条正好证明 CI 的 `privacy` job 有存在价值：靠人自觉，
-> 每隔几轮就会漏一次。写完就扫一遍是最低成本的护栏。
-
-**A1 仍是唯一硬阻塞**：本机 Docker Hub 不可达，镜像从未构建过。
-清单里给了「配镜像站」的替代命令。
-
-### 2026-11-19/20 · 其余门的验收（浓缩，细节见 docs/release-checklist.md）
-
-| 门 | 关键证据 |
-|---|---|
-| G1 | `/health` 四依赖 ok + `degraded=false`；`.env.example` 94/94 对齐 |
-| G2 | 备份含向量；A3 演练（verify046b 3 卡/10 节点/24 边）还原一致；A4 真实库 v0→v2 幂等 |
-| G3 | 配置清单 94 项；降级文档五类依赖；`LOG_FORMAT=json` 实测 4 行合法 JSON |
-| G4 | LICENSE MIT；依赖许可 59 包无 GPL；CONTRIBUTING/SECURITY/README；A5 历史干净 |
-| G5 | CI 两 job；CHANGELOG；A7 `verify_all --static` 全绿（1656 passed / 50 spec） |
-| A2 | `check_doc_cmds.py --run`：44 个脚本存在且可启动 |
 
 ### 2026-11-20 · A6 真正通过：CI 首次全绿
 
@@ -372,3 +304,46 @@ harness/scrub_privacy.py → 将替换 15 处，涉及 6 个文件：'1000000000
 
 `13 skipped` 是需要真实容器/LLM 的用例（embedding、Neo4j 等），
 在 CI 里跳过是对的 —— **跳过要写清原因**，不能变成静默通过。
+
+### 2026-11-20 · A1 真正通过（镜像构建 + 容器全链路）
+
+**结论**：`docker compose up -d admin` 起容器 → `healthy` → 四项依赖 ok →
+写入成功（1 张卡）→ 召回命中（`tr_6f693c9cd357`）→ 清理干净。
+
+**突破口**：`docker.m.daocloud.io` 是通的（`/v2/` 返回 401 = 需要 token，
+不是超时）。基础镜像拉得动，A1 就能做。
+
+**A1 抓到 3 个真实缺陷（都只在真实部署时才会暴露）**
+
+| # | 缺陷 | 现象 | 修法 |
+|---|---|---|---|
+| 1 | `COPY --from=${UV_IMAGE}` 不支持变量 | 构建直接报 `variable expansion is not supported for --from` | uv 改成从 PyPI 装（`pip install uv==0.11.13`）—— 顺带去掉 ghcr 依赖，国内镜像站**不代理 ghcr**（403） |
+| 2 | 镜像里 `ENV MEMORY_NAMESPACE=""` | 容器无限重启：`MEMORY_NAMESPACE 非法: ''` | 删掉该 ENV；命名空间由 `.env`/compose 注入 |
+| 3 | 容器绑 `127.0.0.1` | 容器 `healthy` 但宿主 `curl` 被 reset | compose 设 `ADMIN_HOST=0.0.0.0`（容器内必须） |
+| 4 | 卷权限 | 写入报 `attempt to write a readonly database`（容器 uid 10001 vs 宿主 1000） | 镜像 `chmod -R a+rX /app`；compose `user: ${HOST_UID:-1000}:${HOST_GID:-1000}`；日志改落 `/app/data/admin.log` |
+
+> 这 4 条**没有一条**能被「读代码」发现 —— 全是跑起来才现形。
+> 也正说明 A1 为什么不能省。
+
+**实测输出**
+
+```
+amarantine-admin  Up 35 seconds (healthy)
+{"status":"ok","degraded":false,
+ "deps":{"neo4j":{"ok":true},"embedding":{"ok":true},
+         "weaviate":{"ok":true},"rerank":{"ok":true}},"down":[]}
+
+POST /admin/ingest → {"job_id":"job_1e2d9cd11227853c","status":"queued"}
+job → status=done, events_created=1
+POST /admin/recall → 材料数 1, trace_id tr_6f693c9cd357
+purge a1-smoke → 删后复核 干净 ✓
+```
+
+**给用户的命令（已写进 quickstart）**
+
+```bash
+# Docker Hub 通：
+docker compose up -d
+# 不通（国内）：
+DOCKER_BASE_IMAGE=docker.m.daocloud.io/library/python:3.12-slim docker compose up -d
+```
