@@ -98,105 +98,143 @@ _BM25_PROPERTIES = ("summary_tokens", "conclusion_tokens")
 0.917 是**上界**。真实用户会换词，收益要打折。但「前 1/3 仍留 0.867」
 说明只记得半句也够用 —— 而这正是「我记得有句话」这个场景。
 
-## 这条推翻了 005 的一条非目标
+## 这条收窄了 005 的一条非目标
 
 [005 原文层](../005-raw-quote/README.md) 明确写：
 
 > 原文参与召回：**不做**。理由：原文是溯源通道，不是检索材料；
 > 进索引会污染召回评分的语义。
 
-**它担心的事是真的**，所以本 spec 不是推翻它、而是绕开它：
+**它担心的事是真的**（30 条消息的窗口变成一篇长文档，BM25 什么都能匹配，
+卡片语义被稀释）。所以本 spec 不改「向量用摘要」这件事，只做两件事：
 
-- 005 拒绝的是「把原文塞进卡片一起索引」→ 会让 30 条消息的窗口变成一篇长文档，
-  BM25 什么都能匹配，卡片语义被稀释。**这个拒绝是对的，本次不改。**
-- 本 spec 做的是**独立通道**：原文单独一个 collection，检索命中后
-  **映射回卡片**，卡片的向量与 BM25 分毫不动。
+1. 卡片**附带**原文的分词索引（`raw_text_tokens`），供一路**独立的** BM25 检索 ——
+   与摘要的 BM25 **分开打分**，两个分数不混在一起，稀释问题绕开而不是无视
+2. 召回材料带回原文细节（今天材料里连 `raw_quote_ids` 都没有，
+   LLM 只能看到摘要 —— 这是第二个独立缺口）
 
-所以 005 的约束仍然成立，只是「不做」的范围收窄为「不混进卡片索引」。
+所以 005 的约束仍然成立，范围收窄为「**不混进同一个 BM25 分数**」。
 
 ## Design
 
-### 走 010 的既有先例：独立 collection，不污染主表
+### 最初想错了：不需要独立 collection
 
-[010 chunk 层](../010-chunk-dedupe/README.md) 已经用同样的手法解决过同类问题：
+第一版 spec 打算新建 `MemoryRawQuote` collection（仿 010 的 chunk 做法）。
+主人问了一句：「raw quote 是否有必要存在向量库的附带内容里，处理向量的
+时候只使用摘要，但细节会被 recall 出来」—— **这个更对**，理由三条：
 
-> 往同一个 collection 混入 chunk 会让**每一处**都得加 `is_chunk == false` 过滤，
-> 漏掉一处就静默算错。独立 collection 的代价是「检索多查一次」，
-> 收益是**现有路径一行不用改**。
+| 对比 | 独立 collection | 卡片附带属性（采用） |
+|---|---|---|
+| schema 迁移 | 新建 class | `ensure_collection` **自动补属性**（已验证支持） |
+| 存量回填 | 新建 4383 对象 + 反查映射表 | 给已有对象 PATCH **一个字段** |
+| 检索后处理 | 多一步 quote→card 映射 | BM25 直接返回卡，**零映射** |
+| 数据一致性 | 两处都要维护 | 与卡同生共死 |
 
-本 spec 照抄这个决定：
+010 之所以必须用独立 collection，是因为 chunk **有自己的向量**（要参与
+nearVector）。而原文这一路**不做向量检索**（短文本关键词更稳，也省一次
+embedding），所以它不需要独立对象 —— 它只是一个**被 BM25 索引的文本属性**。
+
+### 只加一个属性，向量源不变
 
 ```
-MemoryRawQuote（新 collection）
-  quote_id      text           ← 原文（已脱敏前的事实，来自 raw_quote 表）
-  namespace     text
-  parent_event_ids  text[]     ← 反查：这句原文建出了哪些卡
-  text_tokens   text           ← 与现有 tokenize 同口径（bigram），供 BM25
-  ts            date
-  session_id    text
+MemoryEvent（既有 collection，不新建）
+  + raw_text_tokens   text   ← 窗口内 30 条原文的 bigram 分词（供 BM25）
+  ~~raw_text~~               ← 不存：原文的唯一事实源仍是 SQLite（005 的原则）
+  vector                     ← **仍然只由 summary 生成，一行不改**
 ```
 
-### 检索路径：新增第 4 路，只做「命中原话 → 映射到卡」
+`raw_text_tokens` 用与现有 `summary_tokens` **同一套** `tokenize_for_query`
+口径，否则中文 2 字查询会漏。生成时读 SQLite 的 `raw_quote.text` 拼接、去重、截断
+（上限 `RAW_TEXT_INDEX_MAX_CHARS`，防止个别超长窗口把对象撑爆）。
+
+**原文不进 `_FIELDS`**：它是大字段，查询默认不取，只在需要组装材料时按需取。
+
+### 检索路径：两个 BM25 通道，分数不混
 
 ```
 query
- ├─ 向量（卡片摘要）      ← 不动
- ├─ BM25（卡片摘要）      ← 不动
- ├─ 图（实体邻域）        ← 不动
- └─ 原文通道（本 spec）  ← 新：BM25 搜 MemoryRawQuote → parent_event_ids → 卡
+ ├─ 向量（卡片摘要）        ← 不动
+ ├─ BM25-A（摘要+结论）     ← 既有，不动
+ ├─ BM25-B（raw_text_tokens）← 新：只搜这个字段
+ ├─ 图（实体邻域）          ← 不动
         ↓
-      RRF 融合（权重低于前三路，因为它「命中即强证据」但不该压过语义）
+      RRF 融合（B 权重低于 A，它只证明「这句话出现过」，不证明「这张卡在讲这件事」）
         ↓
       rerank → 动态 K
 ```
 
-**权重为什么压低**：原文通道命中率高但语义窄（只证明「这句话出现过」，
-不证明「这张卡在讲这件事」）。RRF 里给它较小权重，让它做**补漏**而不是主导。
+**为什么分两条 BM25 而不是把 `raw_text_tokens` 加进 `_BM25_PROPERTIES`**：
+加进去就是 005 担心的稀释（长文本必然匹配更多词，把语义分拉平）。
+分两条则各自归一、RRF 再融合，缺失时只是少一路。
 
-`trace.channels` 新增 `raw_quote_hits` / `raw_quote_cards` 两个计数，
-便于事后判断这一路到底贡献了什么。
+`trace.channels` 新增 `raw_text_hits` / `raw_text_cards`，便于事后看这一路
+到底贡献了什么。
+
+### 材料带回原文细节
+
+今天 `_material()` **只给 summary**，连 `raw_quote_ids` 都没返回 ——
+LLM 想看原话只能再调接口（而且 MCP 没有这个工具）。所以加：
+
+```json
+{
+  "event_id": "evt_…",
+  "summary": "…",
+  "raw_quote_ids": ["msg_…", "msg_…"],
+  "raw_quotes": ["上厕所不冲厕所的吗！！！！", "…"],   // 新：来自 SQLite，批量取
+  "raw_truncated": false                              // 新：超预算被截断要说明
+}
+```
+
+**预算约束**：原文按 `RAW_MATERIAL_MAX_CHARS`（默认 200/条）截断，
+并计入 `CONTEXT_TOKEN_BUDGET` —— 不能为了「看得更全」把 LLM 的上下文挤爆。
+
+**批量取，禁止 N+1**：一次 `WHERE quote_id IN (...)` 查完全部材料。
 
 ### 写入路径：两处都要写
 
 | 来源 | 做法 |
 |---|---|
-| `POST /admin/ingest` | 原文落 SQLite 时同步写 `MemoryRawQuote`（批量） |
-| 存量数据 | `harness/reindex_raw_quotes.py`：从 SQLite 读 → 批量写，幂等（按 `quote_id` MERGE/覆盖） |
+| `POST /admin/ingest` | 原文落 SQLite 后，同一批 quote_id 拼出 tokens 写进卡片 |
+| 存量数据 | `harness/reindex_raw_text.py`：读 SQLite → **PATCH 已有对象**（只改一个字段，幂等） |
 
-**不做启动时自动补齐**：4383 卡 / 9112 条原文的重灌会拖慢冷启动，
-且失败会让人以为服务坏了。手动脚本 + `/health` 里一个明确的
-`raw_quote_indexed: true/false` 提示，比自动跑更可控。
+**不做启动时自动补齐**：9112 条原文的拼接 + PATCH 会拖慢冷启动，
+且失败会让人以为服务坏了。手动脚本 + `/health` 里明确的
+`raw_text_indexed` 计数（多少张卡已有该字段），比自动跑更可控。
 
 ### 开关
 
-`RAW_QUOTE_INDEX_ENABLED=false` 为默认（新功能默认关，零风险上线，
-与 `CHUNK_ENABLED` 同口径）。关掉时行为与今天完全一致。
+`RAW_TEXT_INDEX_ENABLED=false` 默认（新功能默认关，零风险上线，
+与 `CHUNK_ENABLED` 同口径）。关掉时召回与材料输出**与今天逐条一致**。
 
 ## Plan
 
-- [ ] T1 `MemoryRawQuote` schema + `services/raw_index.py`（写 / 搜 / 计数，仿 `chunk_store.py`）
-- [ ] T2 写入接线：`ingest` 落原文时同步写索引（失败只告警，不阻断导库）
-- [ ] T3 `harness/reindex_raw_quotes.py` 存量回填（幂等、可续跑、打印进度）
-- [ ] T4 `recall` 第 4 路 + RRF 权重 + `trace.channels` 计数
-- [ ] T5 `/health` 暴露 `raw_quote_indexed`（有没有漏灌）
-- [ ] T6 评测口径修正：`eval_recall.py` 增加「按 Jaccard 分档」报告，
-      不再只报一个混合了「可找到/不可找到」的总数
-- [ ] T7 文档：`degradation.md` 补「该通道不可用时降级为三路」；
+- [ ] T1 `SCHEMA_PROPERTIES` 增加 `raw_text_tokens`；`ensure_collection` 自动补齐（已验证支持）
+- [ ] T2 `services/raw_text_index.py`：拼 tokens（读 SQLite，去重、截断）+ 批量 PATCH
+- [ ] T3 写入接线：`ingest` 落原文后同步写该字段（失败只告警，不阻断导库）
+- [ ] T4 `harness/reindex_raw_text.py` 存量回填（PATCH 已有对象，幂等、可续跑、打印进度）
+- [ ] T5 `recall` 新增 `bm25_raw` 与 `bm25_summary` 两路分开打分 + RRF 权重 + trace 计数
+- [ ] T6 材料带回 `raw_quote_ids` / `raw_quotes` / `raw_truncated`（SQLite 批量取，计入预算）
+- [ ] T7 `/health` 暴露 `raw_text_indexed`（多少张卡已有该字段）
+- [ ] T8 `eval_recall.py` 按 Jaccard 分档报告，不再只报一个混合总数
+- [ ] T9 文档：`degradation.md` 补「该通道不可用时降级为三路」；
       `user-manual.md` 补 reindex 与开关说明
 
 ## Test
 
 | 编号 | 验收 | 手段 |
 |---|---|---|
-| D1 | 索引关掉时召回结果与今天**逐条一致** | 真库：同 60 样本前后 materials 完全比 |
-| D2 | `reindex` 幂等：跑两遍索引条数不变、内容不变 | 真库 |
-| D3 | 写入路径新卡立即可通过原文通道命中 | 真库：ingest 一条 → 用原文查 |
-| D4 | 原文通道不可用时召回仍是 200、`trace` 标降级 | 单测：模拟 GraphQL 错 |
-| D5 | hit@5 在 60 样本上**不低于基线 0.367**，且目标抬到 0.55+ | 真库 eval（同 seed） |
-| D6 | 分档报告：Jaccard=0 与 J>0 两档分别给数 | `eval_recall.py --json` |
-| D7 | 存量 1656 条单测零回归 | pytest |
+| D1 | 开关关掉时召回结果**逐条一致**（含 materials 字段不变） | 真库：同 60 样本前后逐条比 |
+| D2 | `reindex` 幂等：跑两遍对象数不变、字段值不变 | 真库 |
+| D3 | 新写入的卡立即能通过原文关键词命中 | 真库：ingest 一条 → 用原句查 |
+| D4 | 原文通道出错时召回仍 200、`trace` 标降级、其余三路不受影响 | 单测：模拟 GraphQL 错 |
+| D5 | **向量不变**：新写入对象与旧对象的 `_additional.vector` 生成逻辑同一路径（摘要） | 单测 + 真库抽查向量维度与值 |
+| D6 | 材料带 `raw_quotes`，且超 `RAW_MATERIAL_MAX_CHARS` 时截断并置 `raw_truncated=true` | 单测（预算边界）+ 真库 |
+| D7 | 材料里的原文**计入 token 预算**：预算变小时原文先被裁，摘要不被挤掉 | 单测 |
+| D8 | hit@5 在 60 样本上不低于基线 0.367，目标抬到 0.55+ | 真库 eval（同 seed） |
+| D9 | 分档报告：Jaccard=0 与 J>0 两档分别给数 | `eval_recall.py --json` |
+| D10 | 存量 1656 条单测零回归 | pytest |
 
-**D5 的 0.55 是保守目标**：模拟上界 0.917 用的是原句查询，
+**D8 的 0.55 是保守目标**：模拟上界 0.917 用的是原句查询，
 真实融合（只当补漏、权重压低）达不到，先定一个可验证的下限，
 跑完再按实测重新定。
 
@@ -205,7 +243,24 @@ query
 ### 为什么先建 spec 不动手
 
 这是 **Weaviate schema 变更 + 存量 reindex**，属于会改变部署形态的改动。
-而且它推翻了 005 的一条明确非目标 —— 这类决定要留痕，不能只在 commit 里。
+而且它收窄了 005 的一条明确非目标 —— 这类决定要留痕，不能只在 commit 里。
+
+### 主人这一问改掉了第一版设计
+
+第一版我打算新建 `MemoryRawQuote` collection，理由是「仿 010 的先例」。
+主人反问：「raw quote 是否有必要存在向量库的附带内容里，处理向量的时候
+只使用摘要，但细节会被 recall 出来」。
+
+**这个反问对了两件事**：
+
+1. 原文这一路不做向量检索 → 它不需要独立对象，只需要被 BM25 索引的文本属性。
+   我错在把 010 的结论（chunk 要独立，因为它有自己的向量）无条件外推。
+2. 「细节会被 recall 出来」是**另一个独立缺口**，而且今天完全没做 ——
+   `_material()` 只返回 summary，连 `raw_quote_ids` 都没有。
+   也就是说：即使 recall 命中了正确的卡，LLM 也看不到那句原话。
+
+所以本 spec 现在是两件事：**加一路检索** + **把细节带出来**。
+后者其实更便宜，收益也更直接（命中的卡能立刻给出证据原话）。
 
 ### 也顺手修了「指标」这件事
 
@@ -232,6 +287,14 @@ query
 | 不做 | 理由 |
 |---|---|
 | 改卡片切分粒度（30 条 → 更小） | 要重灌全部语料 + 重跑 LLM 摘要，成本是另一个数量级；先做便宜的通道 |
-| 让原文参与**卡片**的向量/BM25 | 005 的拒绝理由成立（长文档稀释语义） |
-| 原文通道做向量检索 | 原文短、噪声大，关键词更稳；且省一次 embedding |
+| 把原文向量化 / 参与 `nearVector` | 向量源保持「只用摘要」。原文短、噪声大、量是卡的 2 倍，且省一次 embedding |
+| 把 `raw_text_tokens` 加进**同一条** BM25 的 properties | 那就是 005 担心的稀释（长文本必然匹配更多词）；改成分两条 BM25 各自打分 |
+| 新建独立 collection | 那一套只在「需要独立向量」时才值得（如 010 的 chunk）；这里不需要 |
 | 把摘要改成「列出多个话题」 | 也是重灌成本，且会拉长摘要、影响现有召回分布 |
+
+### 待确认（写在 spec 里，答完再动手）
+
+1. **原文进材料会不会太长**？默认 `RAW_MATERIAL_MAX_CHARS=200`/条，
+   5 条材料 ≈ 1000 字。要不要更小，或只给命中的那一句？
+2. **要不要给 MCP 一个 `memory_raw(event_id)` 工具**？
+   材料里带原文之后可能不需要；但「想看全 30 条」时没有出口。
