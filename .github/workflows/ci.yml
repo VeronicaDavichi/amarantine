@@ -44,11 +44,7 @@ jobs:
           fetch-depth: 0
       - name: 工作区敏感串扫描
         run: |
-          python3 harness/scrub_privacy.py
-          # dry-run 模式：只要还会「替换 N 处」，就说明工作区有残留
-          out=$(python3 harness/scrub_privacy.py)
-          echo "$out"
-          if ! echo "$out" | head -1 | grep -q "将替换 0 处"; then
-            echo "::error::工作区仍有敏感串，先跑 python3 harness/scrub_privacy.py --apply"
-            exit 1
-          fi
+          # 用退出码判断，不靠 grep 输出行：
+          # 踩过 —— 原写法 `head -1 | grep "将替换 0 处"` 永远失败，
+          # 因为第一行是「映射来源：…」，替换数在第三行。
+          python3 harness/scrub_privacy.py --check

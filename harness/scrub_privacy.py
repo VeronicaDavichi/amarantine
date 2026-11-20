@@ -68,6 +68,8 @@ def tracked_files() -> list[pathlib.Path]:
 def main() -> int:
     ap = argparse.ArgumentParser(description="开源前脱敏")
     ap.add_argument("--apply", action="store_true")
+    ap.add_argument("--check", action="store_true",
+                    help="有残留就以非零退出（CI 用；不写文件）")
     ap.add_argument("--map", default="")
     args = ap.parse_args()
 
@@ -107,6 +109,16 @@ def main() -> int:
     print()
     for rel, _n in sorted(files_touched.items()):
         print(f"  {rel}")
+    if args.check:
+        # **CI 用这个**：退出码比 grep 第一行可靠。
+        # 踩过：CI 里 `head -1 | grep "将替换 0 处"` 永远失败 ——
+        # 因为第一行是「映射来源：…」，替换数在第三行。
+        if total:
+            print(f"\n✗ 工作区仍有 {total} 处敏感串，先跑 --apply")
+            return 1
+        print("\nOK: 工作区无敏感串残留")
+        return 0
+
     if not args.apply:
         print("\n（dry-run；加 --apply 才写）")
     return 0

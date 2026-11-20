@@ -324,14 +324,14 @@ OK: 文档引用的 43 个 harness 脚本全部可启动
 **又抓到一次隐私泄漏（值得记）**
 
 ```
-harness/scrub_privacy.py → 将替换 15 处，涉及 6 个文件：'505456846' × 15
+harness/scrub_privacy.py → 将替换 15 处，涉及 6 个文件：'10000000001' × 15
   back_end/tests/test_050_whoami.py / docs/user-manual.md /
   harness/merge_self_persons.py / harness/rebind_self_edges.py /
   harness/scan_self_mentions.py / specs/050-namespace-purge/README.md
 ```
 
 来源：**我自己**这几轮写文档与测试时，把真实的 QQ 号与 namespace
-（`505456846` / `qq-505456846`）当示例抄了进去。
+（`10000000001` / `qq-10000000001`）当示例抄了进去。
 `--apply` 已清干净（替换成 `10000000001`），测试仍 1656 passed。
 
 > 这条正好证明 CI 的 `privacy` job 有存在价值：靠人自觉，

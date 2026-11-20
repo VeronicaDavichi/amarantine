@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+#: repo 根（tests → back_end → repo）。**不要写绝对路径** ——
+#: 本机是 /mnt/e/...，CI 是 /home/runner/work/...，写死会让 CI 直接失败。
+REPO_ROOT = __import__("pathlib").Path(__file__).resolve().parents[2]
+HARNESS = REPO_ROOT / "harness"
+
 import pytest
 
 from memory.core import tools as T
@@ -70,7 +75,7 @@ def test_self_pronouns_in_alias_map(monkeypatch, pron: str) -> None:
     import importlib.util
     import pathlib
 
-    path = pathlib.Path("/mnt/e/PycharmProjects/amarantine/harness/build_relations.py")
+    path = HARNESS / "build_relations.py"
     spec = importlib.util.spec_from_file_location("br", path)
     br = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(br)

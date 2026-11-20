@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+#: repo 根（tests → back_end → repo）。**不要写绝对路径** ——
+#: 本机是 /mnt/e/...，CI 是 /home/runner/work/...，写死会让 CI 直接失败。
+REPO_ROOT = __import__("pathlib").Path(__file__).resolve().parents[2]
+HARNESS = REPO_ROOT / "harness"
+
 import importlib.util
 import json
 import sqlite3
@@ -13,7 +18,7 @@ import pytest
 def mod():
     spec = importlib.util.spec_from_file_location(
         "export_identities",
-        "/mnt/e/PycharmProjects/amarantine/harness/export_qq_identities.py",
+        str(HARNESS / "export_qq_identities.py"),
     )
     m = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(m)  # type: ignore[union-attr]

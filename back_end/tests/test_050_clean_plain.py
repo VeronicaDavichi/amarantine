@@ -2,6 +2,14 @@
 
 from __future__ import annotations
 
+from pathlib import Path as _P
+
+#: repo 根（tests → back_end → repo）。**不要写绝对路径**：
+#: 本机是 /mnt/e/...，CI 是 /home/runner/work/...，写死会让 CI 直接失败。
+REPO_ROOT = _P(__file__).resolve().parents[2]
+HARNESS = REPO_ROOT / "harness"
+
+
 import pathlib
 import time
 
@@ -9,7 +17,7 @@ import pytest
 
 import sys
 
-sys.path.insert(0, "/mnt/e/PycharmProjects/amarantine/harness")
+sys.path.insert(0, str(_P(__file__).resolve().parents[2] / "harness"))
 
 from clean_qq_plain import candidates, clean  # noqa: E402
 
