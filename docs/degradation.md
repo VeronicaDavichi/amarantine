@@ -35,10 +35,37 @@
   空结果会让人以为「确实没有这段记忆」）
 - 恢复后：`ingest_job` 里失败的片用 `harness/import_chat.py --retry-failed`
 
-### rerank 不可用
+### rerank 不可用 / 不生效
 
 - 召回**不失败**：`rerank_skipped=true` + `rerank_reason`，按第一阶段分数返回
-- 影响的是精度不是可用性；`/health` 会报 `degraded: true, down: ["rerank"]`
+- 影响的是精度不是可用性；`/health` 的 `deps.rerank` 会变红
+
+**但「服务 healthy」不等于「精排在生效」** —— 这两种情况都曾静默持续数周：
+
+| 现象 | 原因 | 处理 |
+|---|---|---|
+| `rerank_reason=http_413_batch_limit` | 服务端 `--max-client-batch-size` 小于 `RERANK_CANDIDATES` | 把服务端上限提到 ≥ 候选数（compose 里已设 64） |
+| `rerank_reason=ReadTimeout` | CPU 上排不完：实测约 **120ms/条 + 130ms 固定** | 见下面的容量表 |
+
+**CPU 上的实测容量**（bge-reranker-v2-m3，单请求）：
+
+| 候选数 | 耗时 | 800ms 够吗 |
+|---|---|---|
+| 1 | 253ms | ✓ |
+| 4 | 572ms | ✓ |
+| 8 | 1100ms | ✗ |
+| 16 | 2056ms | ✗ |
+| 50 | 5659ms | ✗ |
+
+所以 **CPU 上 `RERANK_CANDIDATES=50` + `RERANK_TIMEOUT_MS=800` 永远超时**，
+精排不会生效。启动时会打一条 `配置自检:` 告警指出可行条数；`/health` 也暴露实际结果：
+
+```json
+{"rerank_enabled": true, "rerank_last_ok": false,
+ "rerank_last_reason": "ReadTimeout", "rerank_consecutive_failures": 1}
+```
+
+`rerank_consecutive_failures` 一直涨 = 精排从未成功过。
 
 ### 原文索引通道不可用（spec 051）
 

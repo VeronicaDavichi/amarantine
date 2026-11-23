@@ -746,6 +746,30 @@ def _raw_text_index_coverage(cfg: Any) -> dict[str, Any]:
     return payload
 
 
+def _rerank_outcome(cfg: Any) -> dict[str, Any]:
+    """rerank 最近一次的真实结果。
+
+    为什么不只看依赖探活：服务 200 ≠ 精排生效。实测服务一直 healthy，
+    但每次请求都被服务端 batch 上限拒绝（413），`rerank_skipped` 永远为 true，
+    召回照常返回 200 —— 只有翻 trace 才发现精排从未工作过。
+    """
+    if not getattr(cfg, "RERANK_ENABLED", False):
+        return {"rerank_enabled": False}
+    try:
+        from memory.services.rerank import last_outcome
+
+        got = last_outcome()
+    except Exception as exc:  # noqa: BLE001 - 探活不该因为统计失败而变红
+        return {"rerank_enabled": True, "rerank_outcome_error": type(exc).__name__}
+    return {
+        "rerank_enabled": True,
+        "rerank_last_ok": got.get("ok"),
+        "rerank_last_reason": got.get("reason") or "",
+        "rerank_last_ms": got.get("elapsed_ms") or 0,
+        "rerank_consecutive_failures": got.get("consecutive_failures") or 0,
+    }
+
+
 def _dependency_health(cfg: Any) -> dict[str, Any]:
     """四依赖探活（并行，总超时 3 秒，结果缓存 5 秒）。
 
@@ -1163,6 +1187,9 @@ def create_app(
         base.update(_dependency_health(cfg))
         # spec 051：原文索引覆盖率（reindex 忘了跑时这里能看出来）
         base.update(_raw_text_index_coverage(cfg))
+        # rerank 的**实际**效果：探活只能证明「服务活着」，
+        # 证明不了「精排在生效」—— 实测 http_413 持续了几周都看不出来。
+        base.update(_rerank_outcome(cfg))
         return base
 
     # ------------------------------------------------------------ review
@@ -2615,6 +2642,16 @@ def main() -> int:
         startup_recover(settings.MEMORY_NAMESPACE, settings=settings)
 
     logger.info("admin 启动 %s:%s", settings.ADMIN_HOST, settings.ADMIN_PORT)
+
+    # 配置自检：这组配置写错时是**完全静默**的（降级照常 200），
+    # 所以在启动时就大声说出来，而不是等有人去翻 trace。
+    try:
+        from memory.services.rerank import startup_check as _rerank_check
+
+        for warn in _rerank_check(settings):
+            logger.warning("配置自检: %s", warn)
+    except Exception as exc:  # noqa: BLE001 - 自检失败不该阻断启动
+        logger.warning("配置自检失败（已忽略）: %s", exc)
     uvicorn.run(
         app,
         host=settings.ADMIN_HOST,

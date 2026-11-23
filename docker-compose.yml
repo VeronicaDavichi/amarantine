@@ -107,8 +107,14 @@ services:
       # 与 embedding 容器同样的内存取舍（WSL 15 GB）
       - "--max-batch-tokens"
       - "2048"
+      # 一次请求最多收多少条文本，**必须 >= RERANK_CANDIDATES（默认 50）**。
+      # 踩过：这里原来写 4，于是每次召回送 50 个候选都被 TEI 拒：
+      #   413 "batch size 50 > maximum allowed batch size 4"
+      # 而 rerank 的降级是「设计好的静默降级」——日志里只有
+      # rerank_skipped=true / reason=http_413，看起来像服务正常但没用上。
+      # 实测：改为 64 后单请求 50 条可在预算内完成。
       - "--max-client-batch-size"
-      - "4"
+      - "64"
       - "--tokenization-workers"
       - "4"
     volumes:
