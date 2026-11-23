@@ -86,6 +86,14 @@ class Settings(BaseSettings):
     RAW_TEXT_INDEX_MAX_CHARS: int = 4000
     #: 召回材料里每条卡最多带多少字原文（spec 051 定 2000）。
     RAW_MATERIAL_MAX_CHARS: int = 2000
+    #: 原文通道的 RRF 权重。**默认 1.0 = 遵守 ADR C.B4 等权**。
+    #:
+    #: 实测（60 样本，hit@5 / 材料均条数）：
+    #: 1.0 → 0.550 / 4.4、1.5 → 0.567 / 4.8、
+    #: 2.0 → 0.583 / 6.0、3.0 → 0.600 / 7.7。
+    #: 提高权重能持续提升召回，但**每查询多返回 1-3 条材料**；
+    #: 在没有精度指标之前，默认不动（1.5 的单位噪声收益最高，需要时自己调）。
+    RAW_TEXT_RRF_WEIGHT: float = 1.0
 
     # ---------- 身份与隔离 ----------
     MEMORY_NAMESPACE: str | None = Field(

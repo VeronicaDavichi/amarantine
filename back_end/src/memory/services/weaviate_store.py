@@ -1061,6 +1061,54 @@ class WeaviateStore:
     #: `summary` 的 word tokenizer 把整句中文当单个 token，2 字查询永远 0 命中。
     _BM25_PROPERTIES = ("summary_tokens", "conclusion_tokens")
 
+    def search_bm25_raw(
+        self,
+        text: str,
+        namespace: str,
+        *,
+        limit: int = 50,
+        date_from: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """只在**原文分词**上做 BM25（spec 051 的第 4 路）。
+
+        ## 为什么和 `search_bm25` 分成两个方法
+
+        `search_bm25` 搜摘要/结论，代表「这张卡在讲这件事」；
+        这里搜窗口内原文，代表「这句话在这张卡的窗口里出现过」。
+        两个语义强度不同，**分数必须分开归一** —— 塞进同一条 BM25 的
+        properties 会让 30 条原文的长文本稀释摘要的语义分（005 担心的事）。
+
+        原文一条都没有的卡（`raw_text_tokens` 为空）自然不参与这一路。
+        """
+        self.ensure_collection()
+        query_tokens = tokenize_for_query(text)
+        if not query_tokens:
+            return []
+        query = (
+            "query ($query: String!) {"
+            " Get { MemoryEvent("
+            'bm25: {query: $query, properties: ["raw_text_tokens"]}, '
+            f"limit: {int(limit)}, where: "
+            + self._where_graphql(namespace, date_from=date_from)
+            + f") {{{self._FIELDS}}} }} }}"
+        )
+        try:
+            data = self._graphql(query, {"query": query_tokens})
+        except WeaviateStoreError as exc:
+            # 老 collection 还没补属性时，说清修复方式，别让人猜
+            if "raw_text_tokens" in str(exc):
+                raise WeaviateStoreError(
+                    "collection 缺 raw_text_tokens 属性：启动一次会自动补齐，"
+                    "或跑 harness/reindex_raw_text.py"
+                ) from None
+            raise
+        return [
+            self._to_hit(
+                obj, score=float((obj.get("_additional") or {}).get("score") or 0.0)
+            )
+            for obj in self._extract_hits(data)
+        ]
+
     def search_bm25(
         self,
         text: str,

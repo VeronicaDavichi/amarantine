@@ -49,11 +49,9 @@ hit@1  0.283 / hit@5  0.367 / MRR 0.329 / P50 276ms
 摘要只写这 30 条里的**一个主要话题**：
 
 ```
-原话：上厕所不冲厕所的吗！！！！
-摘要：海嗣表示不觉得和妹妹之间谁占了便宜      ← 同一窗口，完全无关的话题
-
-原话：哈哈被你认出来啦，我就是那条蓝发肥鱼～
-摘要：西伯利亚大土豆表示自己整夜未睡，准备补觉
+原话 上厕所不冲厕所的吗！！！！  →  摘要 海嗣表示不觉得和妹妹之间谁占了便宜
+原话 哈哈被你认出来啦，我就是那条蓝发肥鱼～ → 摘要 西伯利亚大土豆表示自己整夜未睡
+（同一个 30 条窗口，摘要写的是另一个话题）
 ```
 
 **量化**：60 条里 **54 条（90%）原话与目标卡摘要零内容交集**（字符 bigram Jaccard = 0）。
@@ -68,15 +66,8 @@ hit@1  0.283 / hit@5  0.367 / MRR 0.329 / P50 276ms
 
 ### 诊断 3 · 换检索方式救不了
 
-| 方式（top50） | hit@1 | hit@5 | ≤50 命中 |
-|---|---|---|---|
-| 纯向量 | 0.333 | 0.417 | 0.517 |
-| BM25（搜摘要） | 0.017 | 0.017 | 0.033 |
-| 混合 alpha=0.7 / 0.5 / 0.3 | 0.333 | 0.417 | 0.517 |
-
-BM25 近乎失效：摘要被 LLM 改写，与原话字词对不上。混合检索等于纯向量。
-（第一版测出 BM25 全 0 是我把 GraphQL 对象键写成带引号导致的语法错，
-已修正后重测，本表是修正后的数。）
+BM25 搜摘要 hit@5 仅 **0.017**，混合（alpha 0.3/0.5/0.7）与纯向量**完全相同**（0.417）。
+摘要被 LLM 改写，字词与原话对不上 —— 问题不在「怎么排」，在「没有可搜的东西」。
 
 ### 诊断 4 · 真正的缺口：原文一条都没被索引
 
@@ -121,6 +112,10 @@ _BM25_PROPERTIES = ("summary_tokens", "conclusion_tokens")
 所以 005 的约束仍然成立，范围收窄为「**不混进同一个 BM25 分数**」。
 
 ## Design
+
+### 写入路径（两处）+ 开关（实现记录）
+
+`ingest` 落原文后同步写；存量用 `harness/reindex_raw_text.py` PATCH 已有对象（不做启动自动补齐，避免拖慢冷启动）。开关 `RAW_TEXT_INDEX_ENABLED=false` 默认关，关掉时召回与材料输出与今天**逐条一致**。
 
 ### 最初想错了：不需要独立 collection
 
@@ -274,29 +269,14 @@ BM25 里灌 `app` / `config` / `bizsrc` 这类噪声词。实测 97 条（与营
 
 **批量取，禁止 N+1**：一次 `WHERE quote_id IN (...)` 查完全部材料。
 
-### 写入路径：两处都要写
-
-| 来源 | 做法 |
-|---|---|
-| `POST /admin/ingest` | 原文落 SQLite 后，同一批 quote_id 拼出 tokens 写进卡片 |
-| 存量数据 | `harness/reindex_raw_text.py`：读 SQLite → **PATCH 已有对象**（只改一个字段，幂等） |
-
-**不做启动时自动补齐**：9112 条原文的拼接 + PATCH 会拖慢冷启动，
-且失败会让人以为服务坏了。手动脚本 + `/health` 里明确的
-`raw_text_indexed` 计数（多少张卡已有该字段），比自动跑更可控。
-
-### 开关
-
-`RAW_TEXT_INDEX_ENABLED=false` 默认（新功能默认关，零风险上线，
-与 `CHUNK_ENABLED` 同口径）。关掉时召回与材料输出**与今天逐条一致**。
 
 ## Plan
 
-- [ ] T1 `SCHEMA_PROPERTIES` 增加 `raw_text_tokens`；`ensure_collection` 自动补齐（已验证支持）
-- [ ] T2 `services/raw_text_index.py`：拼 tokens（读 SQLite，去重、截断）+ 批量 PATCH
-- [ ] T3 写入接线：`ingest` 落原文后同步写该字段（失败只告警，不阻断导库）
-- [ ] T4 `harness/reindex_raw_text.py` 存量回填（PATCH 已有对象，幂等、可续跑、打印进度）
-- [ ] T5 `recall` 新增 `bm25_raw` 与 `bm25_summary` 两路分开打分 + RRF 权重 + trace 计数
+- [x] T1 `SCHEMA_PROPERTIES` 增加 `raw_text_tokens`；`ensure_collection` 自动补齐
+- [x] T2 `services/raw_text_index.py`：两道闸 + 拼 tokens + `index_cards()`
+- [x] T3 写入接线：`run_ingest` 收尾调 `index_cards()`（失败只告警）
+- [x] T4 `harness/reindex_raw_text.py` 存量回填（实测 4383 卡 / 67s / 幂等）
+- [x] T5 `recall` 第 4 路 + 元数据并入 + `RAW_TEXT_RRF_WEIGHT` 可配 + trace 计数
 - [ ] T6 材料带回 `raw_quote_ids` / `raw_quotes` / `raw_truncated`（SQLite 批量取，计入预算）
 - [ ] T7 `/health` 暴露 `raw_text_indexed`（多少张卡已有该字段）
 - [ ] T8 `eval_recall.py` 按 Jaccard 分档报告，不再只报一个混合总数
@@ -382,12 +362,3 @@ BM25 里灌 `app` / `config` / `bizsrc` 这类噪声词。实测 97 条（与营
 | 把 `raw_text_tokens` 加进**同一条** BM25 的 properties | 那就是 005 担心的稀释（长文本必然匹配更多词）；改成分两条 BM25 各自打分 |
 | 新建独立 collection | 那一套只在「需要独立向量」时才值得（如 010 的 chunk）；这里不需要 |
 | 把摘要改成「列出多个话题」 | 也是重灌成本，且会拉长摘要、影响现有召回分布 |
-
-### 待确认（已全部拍板）
-
-1. 原文进材料给多少 → **上限 2000 字/条**（2026-11-20）
-2. 预算 → **保持 `CONTEXT_TOKEN_BUDGET=3000`**；分配方式见上「按分数贪心填充」
-   （高分材料先装满，低分只给摘要）
-3. `memory_raw(event_id)` 工具 → **不做**。材料带原文之后够用；
-   「想看全 30 条（含被预算裁掉的）」时暂无出口，需要再加 ——
-   少一个工具就少一份 LLM 乱用的可能。

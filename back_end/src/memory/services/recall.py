@@ -45,6 +45,14 @@ from memory.services.weaviate_store import WeaviateStore, WeaviateStoreError
 #: 这个是「为聚合留多少余量」（决定召回广度）。两者碰巧都叫「候选数」，不要合并。
 CHUNK_SEARCH_LIMIT = 100
 
+#: 图通道命中、但不在元数据索引里的 id，最多回填多少个。
+#:
+#: **这个常量曾经漏定义**（`NameError: GRAPH_META_LIMIT`），而回填整段被
+#: `except Exception` 包着 → 静默降级：图通道单独命中的卡（别名展开就是典型）
+#: 永远进不了返回集。日志里只有一行「图通道元数据回填失败（已降级）」。
+#: 图通道最多给 50 个 id，回填上限取 50 即可一次覆盖。
+GRAPH_META_LIMIT = 50
+
 logger = logging.getLogger("memory.recall")
 
 #: Weaviate 通道超时（ADR D3）；超时即整体 503
@@ -322,6 +330,12 @@ def recall(
                 query, namespace, limit=candidates_limit, date_from=date_from
             )
 
+        def run_raw_text():
+            # spec 051：只搜窗口内原文（不是摘要）。命中代表「这句话在这张卡里出现过」。
+            return active_store.search_bm25_raw(
+                query, namespace, limit=candidates_limit, date_from=date_from
+            )
+
         def run_graph():
             return graph_fn(
                 entities, namespace, person_names=persons, settings=settings
@@ -336,13 +350,21 @@ def recall(
         #
         # **不能用 `with ThreadPoolExecutor(...)`**：它的 __exit__ 是 shutdown(wait=True)，
         # 会把没跑完的线程等到结束 —— 那样 wait 只等 1.5s 也白搭，总时长仍是最慢通道的时间。
-        pool = ThreadPoolExecutor(max_workers=3)
+        # spec 051：第 4 路（原文 BM25）。**开关关闭时不建 future** ——
+        # 这样「关掉时行为逐条一致」是结构上成立的，不靠运行时 if 兜。
+        raw_text_on = bool(getattr(settings, "RAW_TEXT_INDEX_ENABLED", False))
+        workers = 4 if raw_text_on else 3
+        pool = ThreadPoolExecutor(max_workers=workers)
         try:
             futures = {
                 "vector": pool.submit(_timed("vector", run_vector)),
                 "bm25": pool.submit(_timed("bm25", run_bm25)),
                 "graph": pool.submit(_timed("graph", run_graph)),
             }
+            if raw_text_on:
+                futures["raw_text"] = pool.submit(
+                    _timed("raw_text", run_raw_text)
+                )
             done, not_done = wait(futures.values(), timeout=budget / 1000.0)
 
             for name, future in futures.items():
@@ -396,6 +418,21 @@ def recall(
             channels["vector"] = [h["event_id"] for h in kept_vector]
         if kept_bm25:
             channels["bm25"] = [h["event_id"] for h in kept_bm25]
+
+        # spec 051：原文通道。与摘要 BM25 **分开打分**（两个通道各自排名，
+        # RRF 等权融合）—— 塞进同一条 BM25 就是 005 担心的长文本稀释。
+        raw_hits = channel_results.get("raw_text") or []
+        kept_raw = [
+            h for h in raw_hits
+            if h.get("event_id") and float(h.get("score") or 0.0) > 0.0
+        ]
+        if kept_raw:
+            channels["raw_text"] = [h["event_id"] for h in kept_raw]
+        raw_text_trace: dict[str, Any] = {
+            "raw_text_enabled": raw_text_on,
+            "raw_text_hits": len(raw_hits),
+            "raw_text_kept": len(kept_raw),
+        }
         # 图通道是实体扩展，天然带有相关性假设，不额外设闸
         if graph_hits is not None and getattr(graph_hits, "event_ids", None):
             channels["graph"] = list(graph_hits.event_ids)
@@ -480,11 +517,24 @@ def recall(
             )
 
         # 6) RRF 融合
-        ranked = rrf_fuse(channels)
-        # 元数据索引：只有 vector/bm25 带回完整属性，图通道只给 id
+        #
+        # ADR C.B4 定的是**等权**（k=60）。`RAW_TEXT_RRF_WEIGHT != 1.0` 时才
+        # 传 weights —— 那是对 ADR 的有意偏离，取值必须有实测支撑，
+        # 曲线见 config.py 里该字段的注释与 spec 051 的记录。
+        _raw_w = float(getattr(settings, "RAW_TEXT_RRF_WEIGHT", 1.0) or 1.0)
+        ranked = (
+            rrf_fuse(channels, weights={"raw_text": _raw_w})
+            if "raw_text" in channels and _raw_w != 1.0
+            else rrf_fuse(channels)
+        )
+        # 元数据索引：vector / bm25 / raw_text 都带回完整属性，图通道只给 id
         # 用 kept_* —— 被闸门丢掉的不该再提供元数据（否则图通道会把它救回来）
+        #
+        # ⚠️ spec 051 踩过：加了 `raw_text` 通道却忘了把它加进这里，
+        # 于是「只有原文通道命中」的卡在第 7 步被 `eid in meta` 静默滤掉 ——
+        # 表现为「加了通道但只对本来就召回的卡有帮助」，A/C 两种修法都测不出差别。
         meta: dict[str, dict[str, Any]] = {}
-        for hit in [*kept_bm25, *kept_vector]:
+        for hit in [*kept_bm25, *kept_vector, *kept_raw]:
             eid = hit.get("event_id")
             if eid and eid not in meta:
                 meta[eid] = hit
@@ -697,6 +747,8 @@ def recall(
                     "date_range": _range_dict(date_range),
                     "gate": gate_trace,
                     **chunk_trace,
+                    # spec 051：原文通道的命中/留存计数（关掉时 enabled=false）
+                    **raw_text_trace,
                     **rerank_result.to_trace(),
                 },
             ),
