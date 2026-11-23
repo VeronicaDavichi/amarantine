@@ -705,6 +705,47 @@ def _probe(name: str, fn) -> dict[str, Any]:
             "ms": round((time.monotonic() - started) * 1000, 1), "name": name}
 
 
+#: 原文索引覆盖率的缓存（扫描是分页全量查，不能每次探活都跑）
+_RAW_IDX_CACHE: tuple[float, dict[str, Any]] | None = None
+_RAW_IDX_TTL_S = 60.0
+
+
+def _raw_text_index_coverage(cfg: Any) -> dict[str, Any]:
+    """原文索引覆盖率（spec 051）。
+
+    为什么要在 `/health` 里报：`reindex` 是手动脚本，导库后忘了跑、
+    或者中途失败，**从功能上完全看不出来** —— 只是召回悄悄变差。
+    这里给出「已索引 / 总数」，漏灌一眼可见。
+
+    60 秒缓存：分页全量查在 4000+ 卡上是几百毫秒，探活不能这么跑。
+    """
+    global _RAW_IDX_CACHE
+    if not getattr(cfg, "RAW_TEXT_INDEX_ENABLED", False):
+        return {"raw_text_index_enabled": False}
+    ns = str(getattr(cfg, "MEMORY_NAMESPACE", "") or "")
+    if not ns:
+        return {"raw_text_index_enabled": True, "raw_text_index_note": "未配置 namespace"}
+
+    now = time.monotonic()
+    if _RAW_IDX_CACHE and now - _RAW_IDX_CACHE[0] < _RAW_IDX_TTL_S:
+        return {**_RAW_IDX_CACHE[1], "raw_text_index_cached": True}
+    try:
+        from memory.services.weaviate_store import WeaviateStore
+
+        indexed, total = WeaviateStore(cfg).count_raw_text_indexed(ns)
+    except Exception as exc:  # noqa: BLE001 - 探活不该因为统计失败而变红
+        return {"raw_text_index_enabled": True,
+                "raw_text_index_error": type(exc).__name__}
+    payload = {
+        "raw_text_index_enabled": True,
+        "raw_text_indexed": indexed,
+        "raw_text_total": total,
+        "raw_text_missing": max(0, total - indexed),
+    }
+    _RAW_IDX_CACHE = (now, payload)
+    return payload
+
+
 def _dependency_health(cfg: Any) -> dict[str, Any]:
     """四依赖探活（并行，总超时 3 秒，结果缓存 5 秒）。
 
@@ -1120,6 +1161,8 @@ def create_app(
         if not deps:
             return base
         base.update(_dependency_health(cfg))
+        # spec 051：原文索引覆盖率（reindex 忘了跑时这里能看出来）
+        base.update(_raw_text_index_coverage(cfg))
         return base
 
     # ------------------------------------------------------------ review

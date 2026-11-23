@@ -297,6 +297,27 @@ class RawQuoteStore:
             ).fetchone()
         return _row_to_quote(row) if row is not None else None
 
+    def text_map(self, namespace: str, quote_ids: list[str]) -> dict[str, str]:
+        """一次查询返回 `{quote_id: text}`（查不到的 id 不在结果里）。
+
+        与 `texts_for` 的区别：那个按**传入顺序**返回、跳过缺失项，
+        调用方得自己对齐；这里直接给映射，组材料时不用猜。
+        """
+        ids = [q for q in dict.fromkeys(quote_ids or []) if q]
+        if not ids:
+            return {}
+        placeholders = ",".join("?" * len(ids))
+        con = self._connect()
+        try:
+            rows = con.execute(
+                f"SELECT quote_id, text FROM raw_quote "
+                f"WHERE namespace=? AND quote_id IN ({placeholders})",
+                (namespace, *ids),
+            ).fetchall()
+        finally:
+            con.close()
+        return {r["quote_id"]: (r["text"] or "") for r in rows}
+
     def texts_for(self, namespace: str, quote_ids: list[str]) -> list[str]:
         """按给定顺序取原文文本（**一次查询**，不要循环调 `get`）。
 

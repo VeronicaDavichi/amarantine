@@ -144,6 +144,45 @@ def load_pairs(db: pathlib.Path, namespace: str, sample: int,
     return pairs
 
 
+def _bigrams(text: str) -> set[str]:
+    s = "".join(ch for ch in text if ch.isalnum() or "\u4e00" <= ch <= "\u9fff")
+    return {s[i:i + 2] for i in range(len(s) - 1)} if len(s) > 1 else set()
+
+
+def summary_overlap(query: str, summary: str) -> float:
+    """原话与卡摘要的字符 bigram Jaccard（近似「摘要有没有写这件事」）。"""
+    a, b = _bigrams(query), _bigrams(summary)
+    if not a or not b:
+        return 0.0
+    return len(a & b) / len(a | b)
+
+
+def _fetch_summaries(namespace: str) -> dict[str, str]:
+    """一次拉全该域的 `event_id → summary`（分页）。"""
+    import httpx
+
+    out: dict[str, str] = {}
+    offset = 0
+    while True:
+        gql = ('{ Get { MemoryEvent(where: {path:["namespace"], operator: Equal, '
+               'valueText:"%s"}, limit: 500, offset: %d) { event_id summary } } }'
+               % (namespace, offset))
+        try:
+            r = httpx.post("http://127.0.0.1:8081/v1/graphql",
+                           json={"query": gql}, timeout=180).json()
+        except Exception:  # noqa: BLE001 - 拉不到就不分档
+            return out
+        rows = ((r.get("data") or {}).get("Get") or {}).get("MemoryEvent") or []
+        if not rows:
+            break
+        for x in rows:
+            if x.get("event_id"):
+                out[x["event_id"]] = x.get("summary") or ""
+        if len(rows) < 500:
+            break
+        offset += 500
+    return out
+
 def roster_names(namespace: str) -> set[str]:
     """名册里的名字（用来把样本分成「含人名」/「纯闲聊」两档）。
 
@@ -170,6 +209,7 @@ def run(pairs: list[dict], namespace: str, top_k: int) -> dict:
 
     settings = load_settings()
     names = roster_names(namespace)
+    summaries = _fetch_summaries(namespace)
     hits_at = {1: 0, 5: 0, 10: 0}
     rr_sum = 0.0
     lat: list[float] = []
@@ -195,8 +235,13 @@ def run(pairs: list[dict], namespace: str, top_k: int) -> dict:
             rr_sum += 1.0 / rank
         lat.append(res.elapsed_ms or 0.0)
         named = any(n in p["query"] for n in names) if names else False
+        # spec 051：按「摘要有没有写这件事」分档，避免单一数字误导
+        overlap = summary_overlap(
+            p["query"], summaries.get(p["targets"][0], "")
+        ) if summaries else 0.0
         rows.append({**p, "rank": rank, "n_returned": len(ids),
-                     "has_name": named, "elapsed_ms": res.elapsed_ms})
+                     "has_name": named, "overlap": overlap,
+                     "elapsed_ms": res.elapsed_ms})
         mark = f"@{rank}" if rank else "✗"
         print(f"  [{i}/{len(pairs)}] {mark:<4} {p['query'][:34]}")
 
@@ -208,12 +253,21 @@ def run(pairs: list[dict], namespace: str, top_k: int) -> dict:
 
     named = [r for r in rows if r.get("has_name")]
     plain = [r for r in rows if not r.get("has_name")]
+    # spec 051 分档：摘要写了这件事 vs 没写
+    covered = [r for r in rows if (r.get("overlap") or 0) >= 0.05]
+    uncovered = [r for r in rows if (r.get("overlap") or 0) < 0.05]
     summary = {
         "n": len(pairs),
         "含人名样本": len(named),
         "含人名 hit@5": _rate(named, 5),
         "纯闲聊样本": len(plain),
         "纯闲聊 hit@5": _rate(plain, 5),
+        # spec 051：摘要覆盖了原话内容（Jaccard>=0.05）时检索表现如何 ——
+        # 这一档高说明「检索器没问题」，低分来自「摘要没写这件事」
+        "摘要覆盖样本": len(covered),
+        "摘要覆盖 hit@5": _rate(covered, 5),
+        "摘要未覆盖样本": len(uncovered),
+        "摘要未覆盖 hit@5": _rate(uncovered, 5),
         "hit@1": hits_at[1] / n,
         "hit@5": hits_at[5] / n,
         "hit@10": hits_at[10] / n,
@@ -250,6 +304,15 @@ def main() -> int:
     print(f"  hit@10 {s['hit@10']:.3f}")
     print(f"  MRR    {s['mrr']:.3f}")
     print(f"  延迟   P50 {s['p50_ms']:.0f}ms / P95 {s['p95_ms']:.0f}ms")
+
+    # spec 051：分档 —— 单一 hit@5 会把「检索器好」和「摘要没写这件事」混在一起
+    print("\n=== 分档（摘要有没有写这件事）===")
+    print(f"  摘要覆盖（Jaccard>=0.05）  {s['摘要覆盖样本']:>3} 条  "
+          f"hit@5 {s['摘要覆盖 hit@5']:.3f}")
+    print(f"  摘要未覆盖               {s['摘要未覆盖样本']:>3} 条  "
+          f"hit@5 {s['摘要未覆盖 hit@5']:.3f}")
+    print(f"  含人名 {s['含人名样本']:>3} 条 hit@5 {s['含人名 hit@5']:.3f} / "
+          f"纯闲聊 {s['纯闲聊样本']:>3} 条 hit@5 {s['纯闲聊 hit@5']:.3f}")
 
     if args.json:
         pathlib.Path(args.json).write_text(

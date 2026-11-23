@@ -718,6 +718,11 @@ def recall(
         by_id = {c.event_id: c for c in scored}
         materials = [_material(meta[eid], by_id[eid]) for eid in decision.selected]
 
+        # 9.5) spec 051：把原文细节带进材料（开关关闭时零动作）
+        raw_material_trace = _attach_raw_quotes(
+            materials, namespace=namespace, settings=settings
+        )
+
         # 10) 召回计数回写（A13 / A19）
         # 只有进了返回集 **且** 分数达标才算「被用过」——
         # 低分条目即使返回也不能因此获得留存豁免。
@@ -749,6 +754,7 @@ def recall(
                     **chunk_trace,
                     # spec 051：原文通道的命中/留存计数（关掉时 enabled=false）
                     **raw_text_trace,
+                    **raw_material_trace,
                     **rerank_result.to_trace(),
                 },
             ),
@@ -852,6 +858,91 @@ def _range_dict(r: DateRange) -> dict[str, Any]:
     }
 
 
+def _attach_raw_quotes(
+    materials: list[dict[str, Any]],
+    *,
+    namespace: str,
+    settings: Any,
+) -> dict[str, Any]:
+    """把原文细节带进材料（spec 051）。
+
+    ## 分配策略：按分数贪心，不是均分
+
+        1. 先扣掉所有摘要占用的预算（摘要永不被原文挤掉）
+        2. 剩余预算从**最高分材料**开始逐条装满，每条上限 RAW_MATERIAL_MAX_CHARS
+        3. 轮到某条预算不够 → 该条只给摘要，不再往更低分走
+
+    为什么不均分：材料按相关度排，第 1 条比第 5 条更可能是用户要的东西。
+    均分等于「人人都饿着」—— 高分那条也被砍，而它本可以完整给出。
+    也**不做「每人切一半」**：半句话比没有更误导，LLM 会拿半句当完整证据。
+
+    Returns:
+        trace 用计数；开关关闭时原样返回零值。
+    """
+    from memory.services import raw_text_index as R
+
+    trace: dict[str, Any] = {
+        "raw_text_budget_chars": 0,
+        "raw_text_used_chars": 0,
+        "with_raw": 0,
+        "summary_only": 0,
+    }
+    if not materials or not R.enabled(settings):
+        return trace
+
+    # 摘要优先：先扣掉所有摘要的预算（中文约 1 字 1 token，与 _estimate_tokens 同口径）
+    summary_tokens = sum(_estimate_tokens(m.get("summary") or "") for m in materials)
+    budget_chars = max(0, int(settings.CONTEXT_TOKEN_BUDGET) - summary_tokens)
+    trace["raw_text_budget_chars"] = budget_chars
+    if budget_chars <= 0:
+        # **字段恒存在**：调用方不该区分「没有这个键」和「没给原文」
+        for m in materials:
+            m["raw_quotes"] = []
+            m["raw_truncated"] = False
+        trace["summary_only"] = len(materials)
+        return trace
+
+    # 一次批量取（禁 N+1）：所有材料的 quote_id 合成一次 IN 查询
+    wanted: list[str] = []
+    for m in materials:
+        wanted.extend(m.get("raw_quote_ids") or [])
+    try:
+        from memory.services.raw_quote import RawQuoteStore, db_path_from_settings
+
+        store = RawQuoteStore(db_path_from_settings(settings))
+        by_id = store.text_map(namespace, wanted)
+    except Exception as exc:  # noqa: BLE001 - 拿不到就只给摘要
+        logger.warning("原文细节获取失败（降级为只给摘要）: %s", exc)
+        trace["summary_only"] = len(materials)
+        return trace
+
+    # 贪心：按分数从高到低
+    order = sorted(
+        range(len(materials)), key=lambda i: -float(materials[i].get("score") or 0.0)
+    )
+    cap = R.material_max_chars(settings)
+    left = budget_chars
+    for i in order:
+        m = materials[i]
+        qids = m.get("raw_quote_ids") or []
+        texts_of_card = [by_id[q] for q in qids if q in by_id]
+        quotes, used, truncated = R.material_quotes(
+            texts_of_card, max_chars=cap, budget_left=left
+        )
+        if quotes:
+            m["raw_quotes"] = quotes
+            m["raw_truncated"] = truncated
+            left -= used
+            trace["with_raw"] += 1
+            trace["raw_text_used_chars"] += used
+        else:
+            # 留空数组 + false：与「这张卡本来就没有原文」区分靠 raw_quote_ids 是否为空
+            m["raw_quotes"] = []
+            m["raw_truncated"] = False
+            trace["summary_only"] += 1
+    return trace
+
+
 def _material(hit: dict[str, Any], cand: Candidate) -> dict[str, Any]:
     return {
         "event_id": cand.event_id,
@@ -860,6 +951,11 @@ def _material(hit: dict[str, Any], cand: Candidate) -> dict[str, Any]:
         "importance": hit.get("importance"),
         "pinned": hit.get("pinned"),
         "unresolved": hit.get("unresolved") or [],
+        # spec 051：原文 id 必须进材料 ——
+        # 踩过：`_material` 原来是白名单，`raw_quote_ids` 没在里面，
+        # 于是 `_attach_raw_quotes` 读到的永远是空列表，**材料里一条原文都带不出来**，
+        # 而 trace 显示「预算 2945 字 / 用了 0 字」，看起来像预算逻辑坏了。
+        "raw_quote_ids": hit.get("raw_quote_ids") or [],
         "score": round(cand.score, 6),
         "tokens": cand.tokens,
         "forced": cand.forced,

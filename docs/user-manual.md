@@ -2655,6 +2655,71 @@ logger.info("写入完成", extra={"event_id": card.event_id, "cards": 1})
 - 中文不转义（`ensure_ascii=False`），可以直接 grep
 - 轮转：单文件 5 MB × 4 份（`RotatingFileHandler`）
 
+## 召回质量：让原话也能被搜到（spec 051）
+
+**问题**：卡片由 30 条原文建成，摘要只写其中**一个主要话题**。所以
+「我记得有句话…」这类查询，在只索引摘要时命中率很低（实测 hit@5 = 0.367）。
+
+**做法**：给卡片附带一个 `raw_text_tokens` 字段（窗口内原文的分词），
+新增**第 4 路独立 BM25** 只搜它。向量与摘要 BM25 一分不动 ——
+两路分数分开算，不会互相稀释。
+
+```dotenv
+# back_end/.env
+RAW_TEXT_INDEX_ENABLED=true      # 默认 false
+RAW_TEXT_INDEX_MAX_CHARS=4000    # 单卡索引原文上限（按整条截断，不砍半句）
+RAW_MATERIAL_MAX_CHARS=2000      # 召回材料里每条卡最多带多少字原文
+RAW_TEXT_RRF_WEIGHT=1.0          # 该通道的 RRF 权重（1.0 = ADR 等权）
+```
+
+**存量数据要跑一次回填**（幂等，可重复跑）：
+
+```bash
+python3 harness/reindex_raw_text.py --namespace <你的域>          # 预演
+python3 harness/reindex_raw_text.py --namespace <你的域> --apply  # 写
+```
+
+实测 4383 张卡 **67 秒**跑完；已索引 4360 / 总 4383（差的 23 张是原文全被
+营销/卡片 JSON 闸挡掉的卡）。
+
+**跑完看这里确认**：
+
+```bash
+curl -s http://127.0.0.1:8765/health | python3 -m json.tool | grep raw_text
+# raw_text_indexed / raw_text_total / raw_text_missing
+```
+
+**召回材料现在带原话**：
+
+```json
+{
+  "event_id": "evt_…",
+  "summary": "海嗣抱怨男厕异味大、怀疑有人不冲厕所",
+  "raw_quote_ids": ["msg_…", "…"],
+  "raw_quotes": ["海嗣：不是尿骚", "…"],
+  "raw_truncated": false
+}
+```
+
+原文按**分数贪心**塞进 `CONTEXT_TOKEN_BUDGET`：先给高分材料，低分的只给摘要
+（均分会让每张都只剩几百字，高分那条也被砍）。`raw_truncated=true`
+表示这张卡有原文但没给全；`raw_quotes: []` + 有 `raw_quote_ids` 表示预算用尽。
+
+**两道闸**：营销文案（尾款/接龙长文）和 QQ 小程序/公告卡片 JSON
+（`{"app":"com.tencent…`）既不进索引也不进材料 —— 实测占原文 4.2%，
+却贡献了 P90 长度的绝大部分。
+
+**实测效果**（60 条原文片段查询，同 seed）：
+
+| 指标 | 关 | 开 |
+|---|---|---|
+| hit@1 | 0.283 | **0.417** |
+| hit@5 | 0.367 | **0.550** |
+| MRR | 0.327 | **0.456** |
+
+分档看更清楚：摘要**写了**这件事的 4 条，hit@5 = **1.00**（检索器本来就很好）；
+摘要**没写**的 56 条从 0.37 提到 **0.518** —— 提升全来自补上这条通道。
+
 ## 删掉导入的聊天记录（清理某个域）
 
 导入的数据散在**三处**：SQLite 原文 / Weaviate 卡片 / Neo4j 图。

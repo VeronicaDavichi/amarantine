@@ -40,6 +40,21 @@
 - 召回**不失败**：`rerank_skipped=true` + `rerank_reason`，按第一阶段分数返回
 - 影响的是精度不是可用性；`/health` 会报 `degraded: true, down: ["rerank"]`
 
+### 原文索引通道不可用（spec 051）
+
+- 原文 BM25 是**第 4 路**信号，挂了只降级：`trace.channels` 里没有 `raw_text`，
+  `trace.errors.raw_text` 记原因，其余三路照常返回
+- **不会 503**：它不是事实源（事实源是向量库），只是召回率的增强
+- 常见原因与处理：
+
+| 现象 | 原因 | 处理 |
+|---|---|---|
+| `errors.raw_text` 含 `raw_text_tokens` | 老 collection 还没补属性 | 重启一次（`ensure_collection` 自动补），或跑 `harness/reindex_raw_text.py` |
+| `/health` 里 `raw_text_missing > 0` | `reindex` 没跑完或新导的卡没索引 | 重跑 `reindex_raw_text.py`（幂等） |
+| 材料里 `raw_quotes` 全是 `[]` | 开关关着，或该卡原文全被闸挡掉 | 看 `trace.raw_text_budget_chars`：0 表示预算用尽 |
+
+- **原文取不到时只给摘要**，不编造、不给空串冒充原文（`raw_truncated` 区分「截断」与「没给」）
+
 ### Neo4j 不可用
 
 - 写图在 `graph_outbox`，异常只告警（图是**派生层**，能重建）
