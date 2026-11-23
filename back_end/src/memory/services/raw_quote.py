@@ -96,13 +96,27 @@ def _ensure_added_columns(conn: sqlite3.Connection) -> None:
             logger.info("ingest_job 补列 %s %s", name, ddl)
 
 
+#: `back_end/` 目录（raw_quote.py → services → memory → src → back_end）
+BACK_END_DIR = Path(__file__).resolve().parents[3]
+
+
 def db_path_from_settings(settings: Settings) -> Path:
-    """从 `DATABASE_URL` 推出 SQLite 文件路径（与 pending_task 同口径）。"""
+    """从 `DATABASE_URL` 推出 SQLite 文件路径（与 pending_task 同口径）。
+
+    **相对路径按 `back_end/` 解析，不按当前工作目录**。
+
+    踩过：`.env` 写的是 `sqlite:///./data/memory.db`，从仓库根跑脚本时
+    被解析成 `<repo>/data/memory.db` —— 文件不存在，SQLite 就**静默建了个空库**，
+    表现为「原文一条都查不到 / 闸把 100% 挡掉」，而且不报错。
+    """
     url = settings.DATABASE_URL
     if not url.startswith("sqlite"):
         raise ValueError(f"raw_quote 目前只支持 SQLite：{url}")
     raw = url.split("///", 1)[-1]
-    return Path(raw).expanduser().resolve()
+    path = Path(raw).expanduser()
+    if not path.is_absolute():
+        path = BACK_END_DIR / path
+    return path.resolve()
 
 
 def _now_iso(now: datetime | None = None) -> str:
