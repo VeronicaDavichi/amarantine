@@ -53,11 +53,23 @@ def setup_logging(settings: Settings) -> logging.Logger:
 
 
 def fatal(settings: Settings | None, message: str) -> None:
-    """记录致命错误——只写文件，不碰 std。
+    """记录致命错误。
 
-    配置阶段失败（settings 为 None）时日志系统尚未就绪，直接追加到
-    `LOG_FILE`（环境变量优先，否则默认路径），不经过 logging，避免
-    lastResort handler 把内容漏到 stderr。
+    ## 为什么这里**允许**写 stderr
+
+    模块开头说「进程级致命错误也不写 stderr」，那是针对**运行期**的：
+    协议建立后任何非协议字节都会让宿主解析失败。
+
+    但**启动阶段**（走到这里就 return 1 退出）协议还没建立，stdout 空着，
+    此时唯一的可观测信号是退出码 —— 而宿主把「进程起来又退出」显示成
+    「已连接但没有工具」，真正的原因（`MEMORY_NAMESPACE` 非法之类）
+    只躺在 `/tmp/xxx.log` 里没人会去看。
+
+    实测踩过：宿主配置里 `bash -lc` 没加引号 → namespace 没注入 →
+    配置校验失败 → 退出码 1 + 日志有原因 → 宿主只显示「未注册任何工具」，
+    排查花了一整轮。
+
+    所以：**启动期致命错误写 stderr**（帮宿主显示原因），日志照旧写文件。
     """
     if settings is None:
         target = Path(os.environ.get("LOG_FILE", DEFAULT_LOG_FILE))
@@ -67,6 +79,18 @@ def fatal(settings: Settings | None, message: str) -> None:
                 fh.write(f"FATAL: {message}\n")
         except OSError:
             pass
+        _echo_fatal(message)
         return
 
     logging.getLogger("memory").error("FATAL: %s", message)
+    _echo_fatal(message)
+
+
+def _echo_fatal(message: str) -> None:
+    """把启动期致命错误也写到 stderr（宿主通常能显示它）。"""
+    try:
+        import sys
+
+        print(f"amarantine mcp FATAL: {message}", file=sys.stderr, flush=True)
+    except Exception:  # noqa: BLE001 - 连 stderr 都没有就算了
+        pass

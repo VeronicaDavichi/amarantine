@@ -128,9 +128,13 @@ def test_namespace_argument_rejected(tmp_path: Path) -> None:
 
 
 def test_missing_namespace_exits_nonzero(tmp_path: Path) -> None:
-    """缺 namespace：退出码 1，stdout/stderr 全空，原因只写日志文件。
+    """缺 namespace：退出码 1，**stdout 干净**，原因同时写日志与 stderr。
 
-    **必须在空目录里跑**：开发机上 `back_end/.env` 里有 `MEMORY_NAMESPACE=qq`，
+    启动期致命错误写 stderr 是 2026-11-23 的设计变更：
+    宿主把「起来又退出」显示成「已连接但没有工具」，原因只在日志里没人看到。
+    **stdout 必须仍然为空** —— 那是协议通道，一旦有非协议字节宿主就会解析失败。
+
+    **必须在空目录里跑**：开发机上 `back_end/.env` 里若配了 namespace，
     子进程会从 cwd 的 .env 读到它 —— 那样「缺 namespace」根本没缺，
     这条测试就会静默变成「验证 .env 生效了」。
     """
@@ -139,17 +143,20 @@ def test_missing_namespace_exits_nonzero(tmp_path: Path) -> None:
         [INIT], namespace=None, log_file=log_file, cwd=tmp_path
     )
     assert code == 1
-    assert out.strip() == ""
-    assert err.strip() == "", "stderr 不应有任何输出"
+    assert out.strip() == "", "stdout 只能承载 JSON-RPC，启动期也不许写"
     assert "MEMORY_NAMESPACE" in log_file.read_text(encoding="utf-8")
+    # 新：宿主能看到原因
+    assert "MEMORY_NAMESPACE" in err, f"stderr 应给出可读原因，实际: {err!r}"
 
 
 def test_invalid_namespace_blocks_start(tmp_path: Path) -> None:
+    """非法 namespace：非零退出，stdout 干净，原因写日志 + stderr。"""
     log_file = tmp_path / "m.log"
-    _, err, code = run_mcp([INIT], namespace="Bad Name", log_file=log_file)
+    out, err, code = run_mcp([INIT], namespace="Bad Name", log_file=log_file)
     assert code != 0
-    assert err.strip() == "", "stderr 不应有任何输出"
+    assert out.strip() == "", "stdout 只能承载 JSON-RPC"
     assert "FATAL" in log_file.read_text(encoding="utf-8")
+    assert "FATAL" in err, f"stderr 应给出可读原因，实际: {err!r}"
 
 
 @pytest.mark.parametrize(

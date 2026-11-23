@@ -300,7 +300,11 @@ def main() -> int:
 
     setup_logging(settings)
 
-    if settings.MEMORY_NAMESPACE is None:
+    # 注意判的是「空」而不是「None」：空字符串过不了 pydantic 校验，
+    # 会在 `load_settings()` 阶段就抛出一大段 validation error ——
+    # 那条错误对用户没有任何指导意义（真正的修法是配一个域）。
+    # 这个分支只在配置层放行空串时才走到，属于 defensive；但保持「空即未设置」的口径一致。
+    if not (settings.MEMORY_NAMESPACE or "").strip():
         fatal(settings, "MEMORY_NAMESPACE 未设置——MCP server 必须由 host 通过环境变量注入 namespace")
         return 1
 

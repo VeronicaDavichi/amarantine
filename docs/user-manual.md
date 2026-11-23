@@ -116,59 +116,82 @@ cd /mnt/e/PycharmProjects/amarantine
 
 ### 起 MCP 服务（给 LLM 用）
 
-由 MCP 宿主（Claude Desktop / Cherry Studio / DSH / …）拉起子进程，
-**不是**常驻服务。宿主配置里让它执行：
+由 MCP 宿主拉起子进程，**不是**常驻服务。**用启动器，不要自己拼长命令**：
 
 ```bash
-<项目根>/back_end/.venv/bin/python -m memory.entrypoints.mcp_stdio
+# 启动器会读 back_end/.env，自动处理 namespace 与日志
+<仓库>/harness/mcp-start.sh
 ```
 
-Windows 用户如果代码在 WSL 里，用这种形式（**把两处路径换成你自己的**）：
-
-```bash
-wsl -d <发行版名> --exec bash -c 'cd /mnt/<盘>/<你的路径>/amarantine/back_end && .venv-linux/bin/python -m memory.entrypoints.mcp_stdio'
-```
-
-#### 客户端配置示例（Claude Desktop 的 `claude_desktop_config.json`）
+#### 宿主配置（WSL 场景，可直接粘贴）
 
 ```json
 {
   "mcpServers": {
     "amarantine": {
       "command": "wsl",
-      "args": [
-        "-d", "Ubuntu2204", "--exec", "bash", "-c",
-        "cd /mnt/e/PycharmProjects/amarantine/back_end && .venv-linux/bin/python -m memory.entrypoints.mcp_stdio"
-      ],
-      "env": {
-        "MEMORY_NAMESPACE": "work",
-        "LOG_FILE": "/tmp/amarantine-mcp.log"
-      }
+      "args": ["-d", "<你的发行版>", "--exec", "bash",
+               "/mnt/<盘>/<路径>/amarantine/harness/mcp-start.sh"]
     }
   }
 }
 ```
 
-原生 Linux / macOS 直接写 `"command": "/path/to/back_end/.venv/bin/python"`，
-`args` 用 `["-m", "memory.entrypoints.mcp_stdio"]`。
+实测返回：`serverInfo: amarantine-memory` + **5 个工具**
+（`memory_recall` / `memory_remember` / `memory_forget` / `memory_whoami` / `memory_feedback`）。
+
+原生 Linux / macOS 直接：
+
+```json
+{"mcpServers": {"amarantine": {"command": "/abs/path/harness/mcp-start.sh"}}}
+```
+
+#### 为什么不用「一行长命令」
+
+宿主如果把命令按空格拆成多个 args，`bash -lc` 只吃到第一个词：
+
+```
+bash -lc cd /mnt/…/back_end && MEMORY_NAMESPACE=… exec python -m …
+         ↑ 只有这个被当成命令字符串
+```
+
+结果：进程起来又立刻退出，**宿主显示「已连接但未注册任何工具」**。
+原因只躺在日志里，实测排查花了一整轮。启动器把复杂命令收进脚本，
+配置里没有空格、`&&`、引号需要转义。
+
+若你坚持写长命令，**整段必须加引号**：
+
+```json
+"args": ["-d", "Ubuntu2204", "--exec", "bash", "-lc",
+         "cd /mnt/e/…/back_end && MEMORY_NAMESPACE=qq-… LOG_FILE=/tmp/m.log exec .venv-linux/bin/python3 -m memory.entrypoints.mcp_stdio"]
+```
 
 #### 三条硬要求
 
 | 要求 | 为什么 |
 |---|---|
-| **`MEMORY_NAMESPACE` 由宿主注入** | 不能由 LLM 传（工具参数里的 namespace 一律被拒）；换 namespace 要重启进程 |
-| **日志必须落文件**（`LOG_FILE`） | stdout 只允许写 JSON-RPC 消息；往 stdout 打日志会污染协议、直接连接失败 |
-| **依赖要先起来** | 写入需要 embedding + Weaviate；召回还可用到 Neo4j |
+| **`MEMORY_NAMESPACE` 写进 `back_end/.env`** | 不能由 LLM 传（工具参数里的 namespace 一律被拒）。**也不能靠 `FOO=x wsl.exe` 前置注入** —— Windows 侧环境变量默认不跨界进 WSL（实测无效） |
+| **日志落 `LOG_FILE`** | stdout 只允许 JSON-RPC；日志打到 stdout 宿主直接解析失败 |
+| **依赖先起来** | 写入要 embedding + Weaviate；没起也能连上，但 `memory_remember` 会失败 |
 
-#### 自检（不用连客户端）
+#### 挂上后自检（不用开客户端）
 
 ```bash
-cd back_end
-.venv-linux/bin/python3 ../harness/e2e_mcp.py
-# 期望：OK: MCP stdio 端到端全绿（15 项）
+cd back_end && .venv-linux/bin/python3 ../harness/e2e_mcp.py
+# 期望：OK: MCP stdio 端到端全绿
 ```
 
-它真的会拉起子进程走一遍：`initialize → tools/list → remember → recall → feedback → 退出`。
+#### 排障：宿主说「已连接但没工具」
+
+| 现象 | 原因 | 处理 |
+|---|---|---|
+| 宿主显示已连接、工具数 0 | 命令被拆开，`bash -lc` 只拿到第一段 | 改用 `mcp-start.sh` |
+| `amarantine mcp: MEMORY_NAMESPACE 未设置` | 没配域 | 写进 `back_end/.env` |
+| 日志里有 `MEMORY_NAMESPACE 非法: ''` | 空串过不了校验 | 同上 |
+| 什么都没有 | 日志被打到 stdout | 检查是否漏了 `LOG_FILE` |
+
+> 从 2026-11-23 起，**启动期**致命错误会同时写 stderr，宿主通常能直接显示原因
+> （运行期仍然绝不写 —— 那时协议已建立）。**stdout 永远只有协议**。
 
 ### 起管理接口（给人用）
 
