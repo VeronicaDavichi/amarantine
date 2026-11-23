@@ -113,6 +113,13 @@ SCHEMA_PROPERTIES: list[dict[str, Any]] = [
         "dataType": ["text"],
         "tokenization": "word",
     },
+    # spec 051：窗口内原文的分词。**它不是向量来源**（向量仍只由 summary 生成），
+    # 只供那一路独立的 BM25 使用 —— 摘要与原文两个分数分开算，不混。
+    {
+        "name": "raw_text_tokens",
+        "dataType": ["text"],
+        "tokenization": "word",
+    },
     # 派生片段层软删标记（事件卡本身永不软删）
     # 用 `is_deleted` 布尔而不是靠 `deleted_at IsNull`：Weaviate 的 property 级
     # `invertedIndexConfig`（indexNullState）在 1.28 的建表请求里会被静默忽略，
@@ -708,6 +715,63 @@ class WeaviateStore:
             )
 
     # ---------- 人工裁决（D5 resolve） ----------
+
+    def set_raw_text_tokens(
+        self, event_id: str, namespace: str, *, tokens: str
+    ) -> None:
+        """写原文分词（spec 051）。空串表示「这张卡没有可用原文」。
+
+        **只改这一个字段**：向量、摘要、其余属性全部不动，
+        因为原文不进向量也不进摘要 BM25 —— 它是独立一路的信号。
+        """
+        self.ensure_collection()
+        uid = deterministic_uuid(namespace, event_id)
+        url = f"{self._base}/v1/objects/{COLLECTION}/{uid}"
+        try:
+            resp = self._http.patch(
+                url,
+                json={
+                    "class": COLLECTION,
+                    "properties": {"raw_text_tokens": tokens or ""},
+                },
+            )
+            resp.raise_for_status()
+        except httpx.HTTPError as exc:
+            raise WeaviateStoreError(f"写 raw_text_tokens 失败: {exc}") from exc
+
+    def count_raw_text_indexed(self, namespace: str) -> tuple[int, int]:
+        """`(已有原文分词的卡数, 该域总卡数)` —— 给 `/health` 用。
+
+        为什么返回两个数：只报「已索引 4383」看不出漏没漏，
+        必须能看到分母。空串不算已索引（那正是「没有可用原文」的标记）。
+        """
+        self.ensure_collection()
+        total = 0
+        indexed = 0
+        offset = 0
+        while True:
+            gql = (
+                "{ Get { " + COLLECTION + "("
+                'where: {path:["namespace"], operator: Equal, valueText:"'
+                + namespace + '"}, limit: 500, offset: ' + str(offset) + ") "
+                "{ raw_text_tokens } } }"
+            )
+            try:
+                data = self._http.post(
+                    f"{self._base}/v1/graphql", json={"query": gql}
+                ).json()
+            except httpx.HTTPError as exc:
+                raise WeaviateStoreError(f"统计原文索引失败: {exc}") from exc
+            rows = (((data.get("data") or {}).get("Get") or {})
+                    .get(COLLECTION) or [])
+            if not rows:
+                break
+            total += len(rows)
+            indexed += sum(1 for r in rows if (r.get("raw_text_tokens") or "").strip())
+            if len(rows) < 500:
+                break
+            offset += 500
+        return indexed, total
 
     def set_review_verdict(
         self,

@@ -1,5 +1,5 @@
 ---
-status: draft
+status: in-progress
 created: 2026-11-20
 priority: high
 tags:
@@ -8,7 +8,12 @@ tags:
 - weaviate
 - indexing
 created_at: 2026-11-20T06:29:51.618362900Z
-updated_at: 2026-11-20T06:30:18.066310965Z
+updated_at: 2026-11-23T00:58:08.254124533Z
+transitions:
+- status: planned
+  at: 2026-11-23T00:58:08.159242989Z
+- status: in-progress
+  at: 2026-11-23T00:58:08.254124533Z
 ---
 # 召回 hit@5 只有 0.37：它不是调参问题，是原文从未被索引
 

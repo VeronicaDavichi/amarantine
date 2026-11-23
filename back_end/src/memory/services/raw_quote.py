@@ -283,6 +283,29 @@ class RawQuoteStore:
             ).fetchone()
         return _row_to_quote(row) if row is not None else None
 
+    def texts_for(self, namespace: str, quote_ids: list[str]) -> list[str]:
+        """按给定顺序取原文文本（**一次查询**，不要循环调 `get`）。
+
+        spec 051 的材料组装要按卡的 `raw_quote_ids` 批量取；
+        N+1 在 30 条/卡 × 5 卡 = 150 次查询时是致命的。
+        查不到的 id 直接跳过（不返回占位符，调用方不该看到假的空串）。
+        """
+        ids = [q for q in (quote_ids or []) if q]
+        if not ids:
+            return []
+        placeholders = ",".join("?" * len(ids))
+        con = self._connect()
+        try:
+            rows = con.execute(
+                f"SELECT quote_id, text FROM raw_quote "
+                f"WHERE namespace=? AND quote_id IN ({placeholders})",
+                (namespace, *ids),
+            ).fetchall()
+        finally:
+            con.close()
+        found = {r["quote_id"]: (r["text"] or "") for r in rows}
+        return [found[q] for q in ids if q in found]
+
     def count(self, namespace: str) -> int:
         with self._connect() as conn:
             row = conn.execute(
@@ -771,10 +794,11 @@ def run_ingest(
         logger.warning("ingest %s | job=%s", msg, job_id)
         outcome.errors.append(msg)
 
+    created_ids: list[str] = []
     for idx, event in enumerate(events):
         try:
             msg_time = _event_time(event, usable, fallback_dates[idx])
-            remember_event(
+            result = remember_event(
                 namespace=namespace,
                 summary=event.summary,
                 date_hint=relative_time_hint(event.summary),
@@ -785,11 +809,25 @@ def run_ingest(
                 raw_quote_ids=list(quote_ids),
             )
             outcome.events_created += 1
+            if getattr(result, "event_id", None):
+                created_ids.append(result.event_id)
         except Exception as exc:  # noqa: BLE001 - 单条失败只跳过
             # **不**把它计进 `turns_skipped`：那一栏记的是「被 do_not_store
             # 拦下的 turn 数」，写卡失败是「摘要没变成卡」，两码事。
             outcome.errors.append(f"第 {idx + 1} 条: {type(exc).__name__}: {exc}")
             logger.warning("ingest 单条写卡失败 %s #%d: %s", job_id, idx + 1, exc)
+
+    # spec 051：给刚建的卡写原文分词（开关关闭时什么都不做）
+    if created_ids:
+        from memory.services import raw_text_index
+
+        raw_text_index.index_cards(
+            namespace=namespace,
+            event_ids=created_ids,
+            quote_ids=list(quote_ids),
+            settings=settings,
+            raw_store=raw_store,
+        )
 
     final = JOB_DONE if outcome.events_created > 0 else JOB_FAILED
     job_store.set_status(

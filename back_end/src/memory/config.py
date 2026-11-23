@@ -75,6 +75,18 @@ class Settings(BaseSettings):
     # 权威成员表目录（`export_qq_identities.py` 的产物）。留空用默认位置。
     IDENTITY_DIR: str = Field(default="")
 
+    # ---------- 原文分词索引（spec 051）----------
+    #
+    # 让「我记得有句话…」能找回卡：向量与摘要 BM25 都只看摘要，
+    # 而摘要只写 30 条窗口里的一个主要话题（实测 90% 的原话与摘要零交集）。
+    # 关闭时召回与材料输出与没有这个特性时**逐条一致**。
+    RAW_TEXT_INDEX_ENABLED: bool = False
+    #: 单卡写进 `raw_text_tokens` 的最大字符数（按整条截断，不砍半句）。
+    #: 去营销后实测 P95 = 2677，取 4000 覆盖绝大多数窗口。
+    RAW_TEXT_INDEX_MAX_CHARS: int = 4000
+    #: 召回材料里每条卡最多带多少字原文（spec 051 定 2000）。
+    RAW_MATERIAL_MAX_CHARS: int = 2000
+
     # ---------- 身份与隔离 ----------
     MEMORY_NAMESPACE: str | None = Field(
         default=None,
