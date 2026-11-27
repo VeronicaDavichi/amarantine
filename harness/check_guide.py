@@ -123,6 +123,8 @@ def main() -> int:
         "QQ_MCP_PLAIN_DIR", "QQ_NT_DB_DIR", "QQ_NT_MSG_DB",
         # 非配置项：mcp_client.mjs 里的「能力 → 工具名」别名表
         "CAPABILITY_ALIASES",
+        # 非配置项：spec 052 的代码常量（向量文本上限，属实现细节不是用户开关）
+        "VECTOR_MAX_CHARS",
     }
     unknown = [v for v in unknown if v not in allowed_extra]
     for v in unknown:
