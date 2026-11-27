@@ -391,8 +391,23 @@ def remember_event(
             )
 
         # 8) embed（只对确实要写的内容付费）
+        #
+        # spec 052：向量源从 `summary`（P50 17 字）换成**窗口内原文**（约 780 字）。
+        # 摘要里没写的细节，靠向量是永远找不回来的。
+        # 原文全被两道闸挡掉时退回 summary（那种卡约占 0.5%）。
         encode = embedder or (lambda text, cfg: embed_one(text, cfg))  # type: ignore[operator]
-        vector = encode(summary, settings)  # type: ignore[operator]
+        vector_text, vector_src = _vector_text_for(
+            namespace=namespace,
+            summary=summary,
+            raw_quote_ids=raw_quote_ids,
+            settings=settings,
+        )
+        if vector_src == "summary" and raw_quote_ids:
+            logger.info(
+                "向量退回摘要（原文全被闸挡掉） | event_id=%s quotes=%d",
+                event_id, len(raw_quote_ids),
+            )
+        vector = encode(vector_text, settings)  # type: ignore[operator]
         if not isinstance(vector, list):
             raise EmbeddingError(f"编码函数返回了非向量: {type(vector)}")
 
@@ -690,6 +705,34 @@ def _record_surname_declarations(
             event_id,
         )
     return fresh
+
+
+def _vector_text_for(
+    *,
+    namespace: str,
+    summary: str,
+    raw_quote_ids: list[str] | None,
+    settings: Settings,
+) -> tuple[str, str]:
+    """拼向量用的文本（spec 052）：窗口内原文，取不到就退回摘要。
+
+    **任何失败都退回 summary** —— 向量文本拿不到不该让整张卡写不进去。
+    退路很便宜（摘要本来就存在），而写卡失败的代价是一整条记忆丢失。
+    """
+    if not raw_quote_ids:
+        return summary, "summary"
+    try:
+        from memory.services import raw_text_index as R
+        from memory.services.raw_quote import RawQuoteStore, db_path_from_settings
+
+        store = RawQuoteStore(db_path_from_settings(settings))
+        texts = store.texts_for(namespace, list(raw_quote_ids))
+        if not texts:
+            return summary, "summary"
+        return R.build_vector_text(texts, fallback=summary)
+    except Exception as exc:  # noqa: BLE001 - 退回摘要，不阻断写卡
+        logger.warning("拼向量文本失败（退回摘要）: %s", exc)
+        return summary, "summary"
 
 
 def _record_alias_rejects(

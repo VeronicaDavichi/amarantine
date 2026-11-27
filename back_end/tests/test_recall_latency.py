@@ -94,17 +94,47 @@ def _warnings(caplog) -> list[str]:
 
 
 def test_elapsed_ms_is_recorded() -> None:
-    """正常路径必须有耗时，且 > 0（0 意味着没测，不是「很快」）。"""
+    """正常路径必须有耗时，且 > 0（0 意味着没测，不是「很快」）。
+
+    上限放到 30s 是**故意的**：这条测的是「埋点有没有被填」，
+    不是性能断言。性能由 `test_elapsed_ms_reflects_slow_channel`（比较相对差）
+    和 /tmp 里的真实 eval 守着。
+
+    原来写 5000ms，在本机跑向量重算时会被打破（实测 5752ms，
+    而三个通道加起来只有 0.02ms —— 时间全花在通道之外）。
+    那是测量噪声，不该让测试红。
+    """
     res = _run(Settings(), FakeStore(vector_ms=20))
     assert res.elapsed_ms > 0
-    assert res.elapsed_ms < 5000
+    assert res.elapsed_ms < 30_000
 
 
 def test_elapsed_ms_reflects_slow_channel() -> None:
-    """通道真慢时，总耗时必须跟着变大 —— 防「埋点写了个常量」。"""
-    fast = _run(Settings(), FakeStore(vector_ms=0))
-    slow = _run(Settings(), FakeStore(vector_ms=200))
-    assert slow.elapsed_ms > fast.elapsed_ms + 100
+    """通道真慢时，总耗时必须跟着变大 —— 防「埋点写了个常量」。
+
+    ## 为什么取多次最小值
+
+    这条断言比较的是**总耗时**，而总耗时包含通道之外的开销
+    （jieba 预热、线程池创建、机器被别的进程抢占…）。
+
+    实测踩过：机器上跑着向量重算时，一次 `fast` 测出 **5752ms**，
+    而它的 `channel_ms` 三个通道加起来只有 **0.02ms** ——
+    时间全花在通道之外，断言直接翻车。这不是代码回归，是测量噪声。
+
+    取三次最小值能把「一次性冷启动」压掉，保留的仍是原意
+    （慢通道 → 总耗时变大）。
+    """
+
+    def best_of(ms: int, n: int = 3) -> float:
+        return min(_run(Settings(), FakeStore(vector_ms=ms)).elapsed_ms
+                   for _ in range(n))
+
+    fast = best_of(0)
+    slow = best_of(200)
+    assert slow > fast + 100, (
+        f"慢通道(200ms)总耗时 {slow:.0f}ms 没有明显大于快通道 {fast:.0f}ms"
+        f" —— 要么埋点被写成常量，要么机器负载噪声太大"
+    )
 
 
 def test_empty_result_also_has_elapsed() -> None:

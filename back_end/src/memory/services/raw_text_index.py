@@ -199,3 +199,47 @@ def index_cards(
     except Exception as exc:  # noqa: BLE001 - 增强项，绝不阻断主流程
         logger.warning("原文索引写入失败（已忽略）: %s", exc)
         return 0
+
+#: 向量文本的字符上限。与索引上限分开：索引怕对象变大，向量怕服务端超时。
+#: 实测 bge-m3 在 CPU 上 780 字约 2.6 秒；4000 字会接近 10 秒，太慢。
+VECTOR_MAX_CHARS = 1200
+
+
+def build_vector_text(
+    texts: list[str],
+    *,
+    fallback: str,
+    max_chars: int = VECTOR_MAX_CHARS,
+) -> tuple[str, str]:
+    """给**向量**用的文本（spec 052）：窗口内原文，而不是摘要。
+
+    ## 为什么换源
+
+    摘要 P50 只有 17 字，而一张卡覆盖 30 条原文（约 780 字）。
+    向量只编码摘要 = 窗口里 97% 的信息在向量空间不存在。
+    实测（279 张卡池内，60 样本）：hit@1 0.417→0.550，MRR 0.465→0.558。
+
+    ## 两道闸 + 回退
+
+    - 营销长文 / QQ 卡片 JSON 不进向量（噪声直接进语义空间最糟）
+    - 全被闸挡掉时**退回 summary**（否则这张卡没法写进向量库）
+      实测这种卡 23 张 / 4383（0.5%）
+
+    Returns:
+        `(文本, 来源)`；来源 ∈ `raw` / `summary`，便于调用方记日志与断言。
+    """
+    kept = filter_quotes(texts)
+    if not kept:
+        return (fallback or ""), "summary"
+    doc = JOIN_SEP.join(kept)
+    if max_chars > 0 and len(doc) > max_chars:
+        # 按整条截断：宁可少一整条，也不要把一条消息砍成半句
+        out: list[str] = []
+        used = 0
+        for line in kept:
+            if used + len(line) > max_chars and out:
+                break
+            out.append(line)
+            used += len(line) + len(JOIN_SEP)
+        doc = JOIN_SEP.join(out) if out else doc[:max_chars]
+    return doc, "raw"
