@@ -665,6 +665,46 @@ def _min_ts(turns: list[dict[str, Any]]) -> str | None:
     return min(stamps) if stamps else None
 
 
+def quotes_for_event(
+    event: object,
+    quote_ids: list[str],
+    turns_count: int,
+) -> list[str]:
+    """这张卡该挂哪些原文（按 `source_indices`，不是整批）。
+
+    ## 为什么必须按事件映射
+
+    30 条是**滑动窗口**，一个窗口里通常有多个「事项」。切分器把它们拆成
+    若干事件，每个事件有自己的 `source_indices`（1-based，指向本批 turns）。
+
+    原来的实现是 `raw_quote_ids=list(quote_ids)` —— 整批 30 条挂到**每张**卡上。
+    实测后果（2026-11-27）：
+
+    - 每卡原文条数 P50 = P90 = max = **30**（一窗切 ~14 卡，每卡本该 2-3 条）
+    - 90% 的原话与卡片摘要零内容交集（摘要只写一个话题，窗口里却有多个）
+    - 卡级向量把 30 条混成一条 → 语义被稀释（纯向量 hit@5 0.400）
+    - 「每原文一向量」也救不了：同卡其余原文根本不相关（hit@5 0.267）
+
+    ## 兜底
+
+    模型没给 `source_indices` 时**退回整批**（保持旧行为）。
+    宁可多挂，也不能让卡失去溯源 —— 原文是事实层，卡挂丢了就查不回去。
+    """
+    indices = getattr(event, "source_indices", None) or []
+    picked: list[str] = []
+    for i in indices:
+        try:
+            idx = int(i)
+        except (TypeError, ValueError):
+            continue
+        # source_indices 是 1-based，且必须落在本批范围内
+        if 1 <= idx <= min(turns_count, len(quote_ids)):
+            qid = quote_ids[idx - 1]
+            if qid and qid not in picked:
+                picked.append(qid)
+    return picked or list(quote_ids)
+
+
 def _event_time(event: Any, turns: list[dict[str, Any]], fallback: str | None):
     """事件时间：优先用 source_indices 指向消息的最早 ts，其次 4-gram 兜底。"""
     indices = [i for i in (event.source_indices or []) if 1 <= i <= len(turns)]
@@ -841,7 +881,9 @@ def run_ingest(
                 session_id=session_id,
                 resolves=[event.merge_into] if event.merge_into else None,
                 settings=settings,
-                raw_quote_ids=list(quote_ids),
+                # 只挂这张卡自己的原文（spec 055）。整批挂会让每卡 30 条、
+                # 话题混在一起，摘要/向量/BM25 三条路全被稀释。
+                raw_quote_ids=quotes_for_event(event, quote_ids, len(usable)),
             )
             outcome.events_created += 1
             if getattr(result, "event_id", None):
