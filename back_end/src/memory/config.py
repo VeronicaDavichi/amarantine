@@ -114,7 +114,18 @@ class Settings(BaseSettings):
     #: 每路召回的候选条数（ADR：候选每路 top 50，再交给动态 K 截断）
     RECALL_CANDIDATES: int = 50
     RECALL_DROP_RATIO: float = 0.6
-    RECALL_GAP_RATIO: float = 0.15
+    #: 断崖阈值：相邻名次的分差超过这个比例就截断（认为后面都不相关）。
+    #:
+    #: **0.15 是错的**（2026-11-27 实测）。RRF 融合后分数归一化，相邻名次的
+    #: 相对降幅本来就常有 15–30%（`1/(60+rank)` 的天然形状），于是断崖检测
+    #: **几乎每次查询都触发**，把材料截到 1–2 条。
+    #:
+    #: 实测（60 样本 × 3 个 seed，rerank 关）：
+    #:   gap=0.15 → hit@5 平均 0.544，材料均 4.8–6.2
+    #:   gap=0.35 → hit@5 平均 **0.628**（+0.083），材料均 8.9–10.7
+    #: 而 `hit@1` 在三个 seed 上**完全不变** —— 只是把该给的材料给出来，
+    #: 没有放进噪声。0.35 以上（0.5/0.7/关闭）收益不再增加，所以取 0.35。
+    RECALL_GAP_RATIO: float = 0.35
     CONTEXT_TOKEN_BUDGET: int = 3000
     RECALL_COUNT_MIN_SCORE: float = 0.5
     RECALL_EMPTY_THRESHOLD: float = 0.35
