@@ -83,7 +83,17 @@ def main() -> int:
             headers={"Content-Type": "application/json"})
         return json.loads(urllib.request.urlopen(req, timeout=300).read())
 
-    def quote2cards(ns: str) -> dict[str, list[str]]:
+    def text2cards(ns: str) -> dict[str, list[str]]:
+        """`原文文本 → 卡片列表`。
+
+        **不能按 quote_id 对齐**：`quote_id` 的哈希含 namespace（spec 005），
+        同一句话导进两个域得到不同 id。text 才是跨域不变的身份。
+        """
+        # 先建 quote_id → text
+        con = sqlite3.connect(f"file:{DB}?mode=ro", uri=True)
+        q2t = {q: (t or "") for q, t in con.execute(
+            "SELECT quote_id, text FROM raw_quote WHERE namespace=?", (ns,))}
+        con.close()
         out: dict[str, list[str]] = {}
         offset = 0
         while True:
@@ -95,7 +105,9 @@ def main() -> int:
                 break
             for x in rows:
                 for q in x.get("raw_quote_ids") or []:
-                    out.setdefault(q, []).append(x["event_id"])
+                    t = q2t.get(q)
+                    if t:
+                        out.setdefault(t, []).append(x["event_id"])
             if len(rows) < 500:
                 break
             offset += 500
@@ -108,12 +120,12 @@ def main() -> int:
         (args.old,))]
     con.close()
 
-    old_map = quote2cards(args.old)
-    new_map = quote2cards(args.new)
+    old_map = text2cards(args.old)
+    new_map = text2cards(args.new)
     print(f"旧 {args.old}: {sum(len(v) for v in old_map.values())} 关联 / "
-          f"{len(old_map)} 原文有卡")
+          f"{len(old_map)} 条原文有卡")
     print(f"新 {args.new}: {sum(len(v) for v in new_map.values())} 关联 / "
-          f"{len(new_map)} 原文有卡")
+          f"{len(new_map)} 条原文有卡")
 
     random.seed(args.seed)
     random.shuffle(quotes)
@@ -126,12 +138,13 @@ def main() -> int:
         if not usable(text, q):
             skipped["不合格"] = skipped.get("不合格", 0) + 1
             continue
-        if qid not in old_map or qid not in new_map:
+        t = (text or "")
+        if t not in old_map or t not in new_map:
             skipped["某边缺卡"] = skipped.get("某边缺卡", 0) + 1
             continue
         pairs.append({"quote_id": qid, "query": q,
-                      "old_targets": set(old_map[qid]),
-                      "new_targets": set(new_map[qid])})
+                      "old_targets": set(old_map[t]),
+                      "new_targets": set(new_map[t])})
     print(f"可用样本 {len(pairs)} 条；跳过 {skipped}\n")
 
     def run(ns: str, key: str) -> dict:
