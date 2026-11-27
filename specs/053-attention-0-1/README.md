@@ -92,45 +92,168 @@ ingest 原文
 
 分档（用户选定「改提示词分档」）：
 
-| attention | 摘要要求 | 预期长度 |
-|---|---|---|
-| 未配置 / < 0.3 | 一句话事件描述（现状） | ~17 字 |
-| 0.3–0.7 | 两三句：含时间、人物、动作、结果 | ~50 字 |
-| ≥ 0.7 | 完整段落：再加背景、原因、后续影响 | ~120 字 |
+| attention | 摘要要求 | 预期长度 | 与现状对比 |
+|---|---|---|---|
+| 未配置 / < 0.3 | 一句话事件描述（现状） | ~17 字 | 不变 |
+| 0.3–0.7 | 两三句：含时间、人物、动作、结果 | ~50 字 | 3× |
+| ≥ 0.7 | 完整段落：再加背景、原因、后续影响 | ~120 字 | 7× |
+
+现状实测：P50 17 字 / P90 31 字 / max 66 字。所以 120 字是**上限档**，不是平均。
+
+**分档边界 0.3 / 0.7 是初始值**，不是算出来的。依据只有「默认档要让绝大多数
+实体落在里面」：大部分实体不配置 = 低档；`0.7` 以上留给"明确说我很在意他"。
+按真实使用反馈再调，不假装它是理论最优。
+
+### 和 spec 052 的配合：摘要变长不会把向量带歪
+
+这点值得单独说。**052 之后向量由原文窗口生成，不再用 summary**
+（摘要只有 17 字时向量信息量太低）。
+
+所以「关注度高 → 摘要写长」**只影响 LLM 读到的文字**，
+不影响向量语义 —— 两者已经解耦。如果没有 052，摘要变长会改变向量，
+那就得重新评估召回分布漂移。
+
+### 多实体取 max 的副作用（已知，接受）
 
 一条记忆涉及多个实体时取 **max**：只要有一个高关注对象，这条就值得记细。
 
+**副作用**：「A 和 B 聊天时顺带提到小张」，也会按小张的高 attention 写成完整段落——
+即使那件事跟小张关系不大。
+
+**为什么仍然选 max**：换成"加权平均"或"只算主角"需要判断谁是主角，
+而现在没有可靠的判定（摘要还没生成，用什么判断？）。
+max 至少不会漏掉"真的在讲他"的情况。副作用表现为**多记了一些细节**，
+比漏记便宜。留着观察，真成问题再改。
+
+### `attention=0` 与「未配置」不做区分
+
+两者都进低档。**「不想让他出现」不是 attention 的职责**
+—— 那是 `entity_suppress`（已有，spec 044）。在文档里指过去，
+避免有人把 attention=0 当屏蔽用。
+
+### 两条切分路径都要支持
+
+`ingest` 有分支：有 `session_id` 走 `split_with_sources`（带上下文），
+否则走 `split_all`（二分不丢）。`detail_level` 两条都要能传，
+否则「有会话的导入」和「没会话的导入」行为不一致，排查时会很困惑。
+
 ### 遗忘路径：attention 抬高保护
 
-`forget` 的保留判定里，卡片涉及高 attention 实体时提升保护等级
-（不替换 `pinned` 语义，只是把「可忘」降级为「观察」）。
-与 `importance` 独立：一条 `importance` 低但涉及关注对象的卡不该被清掉。
+`forget` 现在分三桶（`core/forget_policy.classify`），判定顺序是：
+
+```
+PROTECTED      人工 keep / pinned / retention=long / unresolved
+               / graph_hub（度≥8）/ confirmed_by_use / 宽限期
+SAFE_TO_DELETE 人工 delete
+NEED_REVIEW    importance ≥ PROTECT_IMPORTANCE_REVIEW（灰区，交人工看）
+SAFE_TO_DELETE 其余（空闲超期且没被召回过）
+```
+
+**落点：紧挨 `importance` 灰区那一步，加一条同等级的判定**
+
+```python
+if candidate.attention >= PROTECT_ATTENTION:      # 新增
+    return verdict(BUCKET_NEED_REVIEW, "high_attention")
+```
+
+**为什么放 NEED_REVIEW 而不是 PROTECTED**：
+
+- `PROTECTED` 里全是**硬信号**（人工钉住、图谱枢纽、被确认引用过），
+  它们的意思是「绝对不删」。attention 是人给的意愿，不该和它们同级。
+- `NEED_REVIEW` 是「不确定，交人看」—— 正合适：关注对象的卡不该被自动清掉，
+  但也不是神圣不可删。人看一眼决定。
+
+**为什么和 `importance` 分开判**：一条卡可能 `importance` 很低（当时看着是琐事），
+但涉及你在意的人（"小张说他妈住院了"）—— 这种不该被当垃圾清掉。
+
+**实现要点**：`ForgetCandidate` 要加 `attention: float = 0.0` 字段；
+`forget_scan.load_candidates()` 批量查一次 `entity_attention`，
+按卡的 `entity_names` 取 max 填进去（**批量查，不是每卡一次**）。
 
 ### 召回路径：弱边按 attention 放宽
 
-这是用户最强调的一层。现状：关系边有 `label`（exact/probable）和
-`confidence`，但图通道**不看 attention**，弱边一律同等对待。
+这是主人最强调的一层。但**第一版设计是空中楼阁**，已推翻：
 
-改动：图通道查询时，**若 query 涉及高 attention 实体**，
-把 `probable` / 低 confidence 边的阈值放宽：
+> ❌ 原设计：图通道按 `confidence` 阈值放宽 `probable` 边。
+>
+> 实测查证（2026-11-27，namespace `qq-505456846`）：
+>
+> | 边类型 | 条数 | 有 confidence 吗 | 参与召回吗 |
+> |---|---|---|---|
+> | `INVOLVES` | 1239 | ❌ 无 | ✅ 路 1/3/4 |
+> | `MENTIONS` | 1434 | ❌ 无 | ✅ 路 2/3/4 |
+> | `RELATED`（共现） | 19927 | ❌ 无 | ✅ 老 cypher 路 3 |
+> | `OWNS`/`MAINTAINS`/… | 84 | ✅ 有（0.5–1.0） | ❌ **不参与召回** |
+>
+> 也就是说：**能参与召回的边都没有 confidence，有 confidence 的边都不参与召回。**
+> 原设计的阈值在代码里根本没有落点。
+
+**真正的「弱边」是 `RELATED` 共现边**（19927 条 / 4383 卡 ≈ 4.5 条/卡）：
+它只知道「这两条记忆提到过同一个东西」，是最松的关联 —— 正是
+「关注他就要多挖他的蛛丝马迹」该作用的地方。
+
+#### 落点：扩展范围，不是阈值
+
+图通道现有 7 条路（`_SEARCH_CYPHER`），其中路 3/4 是**扩展**：
 
 ```
-低 attention（<0.3）：只用 exact + confidence >= 0.6
-中（0.3–0.7）：      exact + confidence >= 0.4
-高（>=0.7）：        exact + probable（confidence 不设门槛）
+路 1  人直连       INVOLVES        ← 强信号，不动
+路 2  实体直连     MENTIONS        ← 强信号，不动
+路 3  实体→人→他人的其他事件         ← 扩展（1 跳）
+路 4  实体→动作→同动作且共享人的事件  ← 扩展
+路 7  别名主人直连                    ← 强信号，不动
 ```
 
-同时在图通道返回的 event_id 上加权（RRF 里给更高位次）——
-因为他关注这个人，与他的间接关联也更有价值。
+按 attention 加码（**只加不减**，避免伤到现有召回）：
+
+| attention | 图通道行为 |
+|---|---|
+| 未配置 / < 0.3 | 现状：路 1/2/3/4/7，扩展 1 跳 |
+| 0.3–0.7 | 路 3/4 的 `limit` × 2（多挖一层邻居） |
+| ≥ 0.7 | 再加 **`RELATED` 1 跳扩展**（老 cypher 里已有这条，新 cypher 补上） |
+
+**为什么「只加不减」**：把低 attention 的扩展关掉会**降低**现有召回，
+而 attention 是新增能力，不该顺手砍掉旧行为。低档就是今天的默认。
+
+#### 不做 RRF 加权
+
+原设计还写了「图通道给更高位次」，撤掉 ——
+ADR C.B4 定的是**等权**，为了一个可选特性去破等权不划算。
+attention 的效果通过「多召回到候选」体现，由 rerank / 动态 K 自然排序。
+
+#### 触发条件：只看 query 里显式提到的实体
+
+- query 里出现「小张」→ 查小张的 attention → 按档加码
+- query 里只有「他」「那个人」→ **不触发**（指代消解在 LLM 侧，服务端不做）
+
+这条边界要写清，否则会有人期待「说『他』也能生效」。
 
 ### 输入方式
 
-| 入口 | 形态 |
-|---|---|
-| 管理接口 | `PUT /admin/entities/{name}/attention` body `{"attention": 0.8, "note": "..."}` |
-| 查询 | `GET /admin/entities/attention` 列出已设置的 |
-| MCP 工具 | `memory_attention(name, attention)` —— LLM 可主动说「我很关注小张」 |
-| 默认 | 不存在该实体的记录 = 日常（<0.3 档），**不预先写库** |
+| 入口 | 形态 | 谁用 |
+|---|---|---|
+| 管理接口 | `PUT /admin/entities/{name}/attention` body `{"attention":0.8,"note":"核心同事"}` | 人（主入口） |
+| 查询 | `GET /admin/entities/attention` 列出已设置的 | 人 |
+| 删除 | `DELETE /admin/entities/{name}/attention` 回到默认档 | 人 |
+| MCP 工具 | `memory_attention(name, attention, note)` | LLM（**有限制**，见下） |
+| 默认 | 没有记录 = 日常（<0.3 档），**不预先写库** | — |
+
+#### MCP 工具要有护栏
+
+LLM 会自己猜「用户大概很关注小张吧」——那样 attention 就不准了，
+而它会长期影响之后所有摘要长度。三条限制：
+
+1. **description 只允许一种触发**：「用户**明确表达**了对某人的重视程度」
+   （原话如「我很在意小张」「小张的事多记一点」）。禁止从交互频次、
+   提到次数自己推断 —— 那是自动学习，本 spec 明确不做。
+2. **必须带 `note`**：写清用户原话依据（如「用户说：小张的事多记点」）。
+   空 note 直接拒绝，逼 LLM 留下可审计的理由。
+3. **管理接口可以看 `decided_by`**：区分是人设的（`manual`）还是 LLM 设的（`llm`），
+   人对 LLM 设的可以一眼推翻。
+
+**为什么还要给 LLM 这个工具**：用户说「以后小张的事多记点」时，
+如果只能人去开管理接口，就不会有人真的去设 —— 这是「功能存在但没人用」。
+让 LLM 转达，但要留痕。
 
 ### 时间维度：attention 是会变的，而记忆应该保留「当时有多了解他」
 
@@ -181,14 +304,15 @@ ingest 原文
 
 ## Plan
 
-- [ ] T1 `services/entity_attention.py`：表 + CRUD + `max_attention(names)`
+- [ ] T1 `services/entity_attention.py`：表（含 `since`）+ CRUD + `max_attention(names)` 批量查
 - [ ] T2 管理接口三件（GET 列表 / PUT 设置 / DELETE 取消）
-- [ ] T3 `llm_split`：`detail_level` 参数 → 提示词三档
-- [ ] T4 `ingest` 接线：原文粗提实体 → 查 attention → 传 detail_level
-- [ ] T5 `graph_search`：按 attention 放宽弱边阈值
-- [ ] T6 `forget`：attention 抬高保护等级
-- [ ] T7 MCP 工具 `memory_attention`
-- [ ] T8 文档：user-manual「关注度」一节 + 三档说明；degradation 不涉及
+- [ ] T3 `llm_split`：`detail_level` 参数 → 提示词三档（**两条切分路径都要支持**）
+- [ ] T4 `ingest` 接线：原文粗提实体 → 查 attention 取 max → 传 detail_level
+- [ ] T5 `graph_search`：按 attention **加码扩展范围**（路 3/4 的 limit ×2 → 再加 RELATED 1 跳）
+- [ ] T6 `forget`：`ForgetCandidate` 加 attention；`load_candidates` 批量填；
+      分桶加 `high_attention → NEED_REVIEW`
+- [ ] T7 MCP 工具 `memory_attention`（description 限「用户明确表达」+ note 必填）
+- [ ] T8 文档：user-manual「关注度」一节（三档 / 时间维度 / 与 entity_suppress 的区别）
 
 ## Test
 
@@ -198,12 +322,15 @@ ingest 原文
 | D2 | attention=0.8 时摘要明显更长，且含时间/人物/动作 | 真库：写入 5 条对比字数分布 |
 | D3 | 多实体取 max：A=0.9 B=0.1 → 走高档 | 单测 |
 | D4 | 空/未配置的名字不报错，按日常档 | 单测 |
-| D5 | 图通道：高 attention 时 probable 边被召回，低时不被召回 | 单测（fake driver）+ 真库抽查 |
-| D6 | 遗忘：涉及高 attention 实体的卡不进入可忘桶 | 单测 |
+| D5 | 图通道：高 attention 时路 3/4 的 limit 放大且启用 RELATED 扩展；低档与今天完全一致 | 单测（fake driver）+ 真库抽查 |
+| D5b | **只加不减**：低档的召回结果与改动前逐条一致 | 真库：60 样本改动前后比对 |
+| D6 | 遗忘：涉及高 attention 实体的卡进 `NEED_REVIEW`（不是 `PROTECTED`，也不是 `SAFE_TO_DELETE`） | 单测 |
 | D7 | **attention 升高后，早期卡一字不改**（这是设计意图，不是妥协） | 真库：设 0.1 写卡 → 改成 0.9 → 查旧卡 summary/event_id 完全不变 |
 | D7b | attention=0.9 之后新写的卡明显更细，新旧两批并存 | 真库：同话题前后各写一条，对比字数 |
 | D7c | 早期浅卡仍可被召回（原文向量/BM25 兜底） | 真库：用早期原话查，能命中那张老卡 |
-| D8 | 存量单测零回归 | pytest |
+| D9 | MCP 工具拒绝空 note；`decided_by` 记为 `llm` | 单测 |
+| D10 | 两条切分路径（有/无 session_id）都受 detail_level 影响 | 单测 |
+| D11 | 存量单测零回归 | pytest |
 
 ## Notes
 
