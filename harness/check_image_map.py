@@ -28,9 +28,9 @@ sys.stdout.reconfigure(encoding="utf-8")
 from memory.services.local_paths import load_settings_from_project  # noqa: E402
 from memory.services.raw_quote import db_path_from_settings  # noqa: E402
 
-NS = "qq-505456846-v2"
+NS = "qq-10000000001-v2"
 PIC_ROOT = pathlib.Path(
-    "/mnt/d/TencentData/Chats/Tencent Files/505456846/nt_qq/nt_data/Pic")
+    "/mnt/d/TencentData/Chats/Tencent Files/10000000001/nt_qq/nt_data/Pic")
 
 # `[图片] 8FDD64B8...png` 或 `[图片] xxx.jpg`
 IMG_RE = re.compile(r"\[图片\]\s*([A-Za-z0-9]{16,64})\.(png|jpg|jpeg|gif|webp)",

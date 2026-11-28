@@ -1,5 +1,5 @@
 ---
-status: draft
+status: in-progress
 created: 2026-11-28
 priority: medium
 tags:
@@ -8,7 +8,12 @@ tags:
 - ingest
 - boundary
 created_at: 2026-11-28T11:36:14.579640700Z
-updated_at: 2026-11-28T11:36:19.060316208Z
+updated_at: 2026-11-28T11:38:40.567423103Z
+transitions:
+- status: planned
+  at: 2026-11-28T11:38:40.477716148Z
+- status: in-progress
+  at: 2026-11-28T11:38:40.567423103Z
 ---
 # 图片理解只走实时入口，历史灌入不追溯
 
@@ -31,7 +36,7 @@ updated_at: 2026-11-28T11:36:19.060316208Z
 ### 历史图片基本拿不到
 
 想给历史消息补图，前提是从 `[图片] HASH` 定位到文件。实测（namespace
-`qq-505456846-v2`，9112 条原文）：
+`qq-10000000001-v2`，9112 条原文）：
 
 | 项 | 值 |
 |---|---|
@@ -143,9 +148,9 @@ POST /admin/realtime            # 单条消息即时入库（同步返回 quote_
 - [x] T2 统计图片消息构成（1416 含图 / 820 纯图 / 1178 纯表情视频）
 - [x] T3 定「概括写进 text」而不加字段（复用四层管道）
 - [x] T4 定三级降级链（不许丢消息）
-- [ ] T5 `POST /admin/realtime` 单条同步入口（**待 OneBot 接入时**）
-- [ ] T6 视觉概括服务（`services/image_caption.py`）：取图 → 模型 → 一句中文
-- [ ] T7 上下文增强：概括时带上前后文（`[图片]` 前后的几条消息）
+- [x] T5 `POST /admin/realtime` 单条同步入口（已实现，含三级降级 + 幂等）
+- [x] T6 `services/image_caption.py`：URL/路径/bytes 三种来源 + 上下文 + 绝不抛异常
+- [x] T7 上下文增强：同 session 最近 3 条一起送进提示词
 
 ## Test
 
@@ -182,3 +187,54 @@ POST /admin/realtime            # 单条消息即时入库（同步返回 quote_
 | 多模态向量（图片直接进向量库） | 意味着新增一路索引 + 改召回 + 改 rerank；文本化已经把语义榨出来了 |
 | 图片单独存为一张卡 | 图片是某条消息的**内容**，不是独立事件；拆开会破坏「谁说了一句什么」 |
 | 视觉概括同步阻塞 `/admin/ingest` | 历史灌入不该被视觉模型拖慢，且历史图本来就拿不到 |
+
+### 2026-11-28 · 实现完成（T5 / T6 / T7）
+
+**改动**
+
+| 文件 | 内容 |
+|---|---|
+| `services/image_caption.py` | 新增。取图（URL/路径/bytes）→ 视觉模型 → 一句中文 |
+| `config.py` | `IMAGE_CAPTION_ENABLED` / `IMAGE_CAPTION_MAX_TOKENS` / `IMAGE_CAPTION_TIMEOUT_MS` |
+| `entrypoints/admin_http.py` | 新增 `POST /admin/realtime`（单条同步） |
+| `tests/test_056_image_caption.py` | 17 条：取图边界 / 两 provider 的 block 形态 / 异常全吞 / 前缀剥离 |
+| `tests/test_056_realtime.py` | 9 条：纯文本 / 概括成功 / 失败保占位符 / 开关关闭不调模型 / 幂等 / 无 source / 400 / 鉴权 |
+| `docs/user-manual.md` | 「图片理解」一节 |
+
+**真实调用验证（3 张真实图片 + 真 LLM）**
+
+| 版本 | 结果 |
+|---|---|
+| `IMAGE_CAPTION_MAX_TOKENS=320` | **1/3 成功** |
+| `IMAGE_CAPTION_MAX_TOKENS=1500` | **3/3 成功** |
+
+失败原因是带 thinking 的模型把思考算进 `max_tokens`，320 让「想完就没额度输出」，
+直接空返回（错误信息：`没有返回文本（可能被 max_tokens 截断在 thinking 阶段）`）。
+已把默认值调到 1500 并在配置注释里写明，避免有人「优化」回去。
+
+耗时 1.8–5.3 秒/张，对实时入口可接受。
+
+**实现中改掉的一个设计错误**
+
+第一版设计是「先落占位符版本 → 概括后替换文本 → 重算 quote_id」。
+问题：`quote_id` 由文本哈希决定，替换后 id 变了 ——
+**同一条消息重发会因为「概括是否成功」落到不同 id，幂等直接破掉**。
+而且需要存储层新增 `replace_text`（不该为这个加）。
+
+改成**先概括、再算 id、一次写入**。代价是这条路径慢 2–5 秒，
+换的是 id 稳定 + 存储层不用动。
+
+**隐私处理**
+
+端到端验证脚本原本会把概括正文打到终端。缓存里是真人私照与带敏感文字的截图，
+打出来等于二次留存。已改成只输出「成功/长度」，不输出正文。
+
+**测试基线**：1737 passed（含新增 26 条），零回归。
+
+**顺带修的测试脆弱性**
+
+`tests/test_recall_budget.py` 从 `.env` 读设置，我在 `.env` 里开了
+`RAW_TEXT_INDEX_ENABLED=true` 之后它挂了（fake store 缺 `search_bm25_raw`，
+且多一路不慢的通道破坏了「所有通道都超时」的构造）。
+修法：fake 补方法 + `_settings()` 里显式关掉这个开关。
+按该文件原有的约定（已钉 `RERANK_ENABLED` / `CHUNK_ENABLED`）保持一致。

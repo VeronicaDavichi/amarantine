@@ -53,6 +53,16 @@ class SlowStore:
         time.sleep(self.seconds)
         return list(self.hits)
 
+    def search_bm25_raw(self, *a, **kw):
+        """spec 051 的原文 BM25 通道。
+
+        这里返回空：本文件测的是**预算与超时**，不是原文命中。
+        补这个方法是为了 fake 的接口完整性 —— 否则 `Settings()` 一旦从
+        `.env` 读到 `RAW_TEXT_INDEX_ENABLED=true`，recall 就会调它并记进
+        `trace["errors"]`，把「无错误」的断言弄红。
+        """
+        return []
+
     def search_bm25(self, *a, **kw):
         time.sleep(self.bm25_seconds)
         return list(self.bm25_hits)
@@ -74,6 +84,10 @@ def _settings():
     s.RECALL_BUDGET_MS = BUDGET_MS
     s.RERANK_ENABLED = False
     s.CHUNK_ENABLED = False
+    # 与上面两个同理：可选通道全关，本文件只测预算。
+    # 不钉死的话，`.env` 里一开就多一路不慢的通道，
+    # 「所有通道都超时」的构造失效，empty_reason 会从 budget_exhausted 变 no_candidate。
+    s.RAW_TEXT_INDEX_ENABLED = False
     return s
 
 

@@ -594,6 +594,51 @@ class IngestRequest(BaseModel):
     roster: list[str | dict[str, Any]] | None = None
 
 
+class RealtimeImage(BaseModel):
+    """实时消息里的图片（spec 056）。
+
+    三种来源任选其一：`url`（网关给的临时地址）/ `path`（已经落盘的本地文件）。
+    都没有就只写占位符。
+    """
+
+    url: str | None = None
+    path: str | None = None
+    #: 网关给的原始哈希（用于降级时的占位符，如 `[图片] <hash>.jpg`）
+    hash: str | None = None
+    ext: str = "jpg"
+
+
+class RealtimeRequest(BaseModel):
+    """单条消息即时入库。
+
+    **为什么单条**：实时场景要「发完就记得」，异步 job 的排队延迟不可接受。
+    单条切分成本低（几条消息），同步跑得动。
+    """
+
+    namespace: str | None = None
+    session_id: str | None = None
+    role: str = "user"
+    ts: str | None = None
+    text: str = ""
+    source: str = "realtime"
+    #: 图片列表（可空）
+    images: list[RealtimeImage] = []
+    #: 是否**跳过**视觉概括（默认 false = 按配置走）
+    skip_caption: bool = False
+
+
+class RealtimeResponse(BaseModel):
+    quote_id: str
+    #: True = 新写入；False = 已存在（幂等命中）
+    created: bool
+    #: 实际落库的文本（图片概括成功时与请求里的 text 不同）
+    text: str
+    #: 每张图的处理结果：`caption` / `placeholder` / `no_source`
+    images: list[dict[str, str]] = []
+    #: 这张消息是否触发了一次召回前的建卡（当前不建，留给 ingest）
+    note: str = ""
+
+
 class IngestResponse(BaseModel):
     job_id: str | None = None
     status: str
@@ -2205,6 +2250,102 @@ def create_app(
         )
 
     # ------------------------------------------------- 原文层（4.2 / 4.8）
+
+    @app.post(
+        "/admin/realtime",
+        response_model=RealtimeResponse,
+        dependencies=[Depends(require_token)],
+    )
+    def admin_realtime(body: RealtimeRequest) -> RealtimeResponse:
+        """单条消息即时入库（spec 056）。
+
+        **图片走保存动作**：取图 → 视觉概括 → 文本化写进 `raw_quote.text`。
+
+        ## 顺序：先概括，再算 id，一次写入
+
+        `quote_id` 由 text 哈希决定。如果先写占位符版本、概括后再改文本，
+        `quote_id` 会变 —— **同一条消息重发会因为「概括是否成功」落到不同 id**，
+        幂等就破了。所以先概括完再算 id。
+
+        代价是这条路径会慢 2-5 秒（一次视觉调用），换 id 稳定。
+
+        ## 降级
+
+        概括失败/关闭/超时 → 保留 `[图片] <hash>.<ext>` 占位符，
+        **绝不丢消息**。
+        """
+        from memory.services import image_caption as cap
+        from memory.services.raw_quote import (
+            RawQuoteStore,
+            db_path_from_settings,
+            quote_id_for,
+        )
+
+        ns = _namespace(body.namespace)
+        raw_store = RawQuoteStore(db_path_from_settings(cfg))
+
+        # 1) 逐张图概括（成功→描述，失败→占位符）
+        img_results: list[dict[str, str]] = []
+        markers: list[str] = []
+        should_caption = (
+            bool(body.images)
+            and not body.skip_caption
+            and getattr(cfg, "IMAGE_CAPTION_ENABLED", False)
+        )
+
+        # 上下文：同 session 最近几条（帮模型判断「这个」指什么）
+        ctx: list[str] = []
+        if should_caption:
+            try:
+                ctx = [r.text for r in raw_store.recent_for_session(
+                    ns, body.session_id or "", limit=3) if (r.text or "").strip()]
+            except Exception:  # noqa: BLE001 - 没上下文也能概括
+                ctx = []
+
+        for img in body.images or []:
+            ext = (img.ext or "jpg").lstrip(".")
+            fallback = f"[图片] {img.hash}.{ext}" if img.hash else "[图片]"
+            src = img.path or img.url or ""
+            if not src:
+                markers.append(fallback)
+                img_results.append({"status": "no_source", "text": fallback})
+                continue
+            cap_text = cap.caption(src, settings=cfg, context=ctx) if should_caption else None
+            if cap_text:
+                marker = cap.render_marker(cap_text)
+                markers.append(marker)
+                img_results.append({"status": "caption", "text": marker,
+                                    "source": src})
+            else:
+                markers.append(fallback)
+                img_results.append({"status": "placeholder", "text": fallback,
+                                    "source": src})
+
+        # 2) 组装最终文本
+        parts: list[str] = []
+        if (body.text or "").strip():
+            parts.append(body.text.strip())
+        parts.extend(markers)
+        final_text = "\n".join(p for p in parts if p)
+        if not final_text:
+            raise HTTPException(status_code=400, detail="text 与 images 不能同时为空")
+
+        # 3) 一次写入（id 由最终文本决定，幂等）
+        qid = quote_id_for(
+            namespace=ns, source=body.source, session_id=body.session_id,
+            ts=body.ts, text=final_text,
+        )
+        created = raw_store.put(
+            namespace=ns, quote_id=qid, text=final_text, role=body.role,
+            source=body.source, ts=body.ts, session_id=body.session_id,
+        )
+        return RealtimeResponse(
+            quote_id=qid,
+            created=bool(created),
+            text=final_text,
+            images=img_results,
+            note="原文已落；要建卡请把这条喂给 /admin/ingest",
+        )
 
     @app.post(
         "/admin/ingest",

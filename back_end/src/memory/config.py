@@ -271,6 +271,21 @@ class Settings(BaseSettings):
     #: 800ms 留足余量，且仍在 RECALL_BUDGET_MS=1500 之内。
     RERANK_TIMEOUT_MS: int = 800
 
+    # ---------- 图片视觉概括（spec 056）----------
+    #
+    # **只在实时入口生效**：历史灌入不追溯（实测历史图只有 1% 能定位到文件）。
+    # 关掉时行为与没有这个特性完全一致：图片消息只存 `[图片] <hash>` 占位符。
+    IMAGE_CAPTION_ENABLED: bool = False
+    #: 概括结果长度上限。
+    #:
+    #: **不能用小值**：带 thinking 的模型（deepseek-v4-flash 等）会把思考
+    #: 也算进 max_tokens，320 会让它「想完就没额度输出」，直接空返回。
+    #: 实测 320 时 3 张图失败 2 张，1500 时 3/3 成功。
+    #: 提示词本身要求 40 字内，这里给宽松额度只为容纳思考过程。
+    IMAGE_CAPTION_MAX_TOKENS: int = 1500
+    #: 单张图概括的超时。视觉模型比纯文本慢，别用 LLM_TIMEOUT_MS 卡太死。
+    IMAGE_CAPTION_TIMEOUT_MS: int = 60000
+
     #: `anthropic`（Messages API）或 `openai`（chat/completions）。
     #: 本机接的是 hongwang 网关，走 Anthropic 协议。
     LLM_PROVIDER: str = "anthropic"

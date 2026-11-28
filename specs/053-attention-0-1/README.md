@@ -176,7 +176,7 @@ if candidate.attention >= PROTECT_ATTENTION:      # 新增
 
 > ❌ 原设计：图通道按 `confidence` 阈值放宽 `probable` 边。
 >
-> 实测查证（2026-11-27，namespace `qq-505456846`）：
+> 实测查证（2026-11-27，namespace `qq-10000000001`）：
 >
 > | 边类型 | 条数 | 有 confidence 吗 | 参与召回吗 |
 > |---|---|---|---|

@@ -27,7 +27,7 @@ import urllib.request
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "back_end" / "src"))
 
-NS_DEFAULT = "qq-505456846"
+NS_DEFAULT = "qq-10000000001"
 
 
 def _bgrams(text: str, n: int = 4) -> set[str]:

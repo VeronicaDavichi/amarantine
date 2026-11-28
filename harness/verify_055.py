@@ -66,8 +66,8 @@ def main() -> int:
     con = sqlite3.connect(f"file:{db_path_from_settings(s)}?mode=ro", uri=True)
     rows = con.execute(
         "SELECT text, ts, session_id FROM raw_quote "
-        "WHERE namespace='qq-505456846' AND session_id IN "
-        "(SELECT session_id FROM raw_quote WHERE namespace='qq-505456846' "
+        "WHERE namespace='qq-10000000001' AND session_id IN "
+        "(SELECT session_id FROM raw_quote WHERE namespace='qq-10000000001' "
         " GROUP BY session_id ORDER BY COUNT(*) DESC LIMIT 1) "
         "ORDER BY ts LIMIT 60").fetchall()
     con.close()

@@ -16,7 +16,7 @@ sys.stdout.reconfigure(encoding="utf-8")
 from memory.services.local_paths import load_settings_from_project  # noqa: E402
 from memory.services.raw_quote import db_path_from_settings  # noqa: E402
 
-NS = "qq-505456846-v2"
+NS = "qq-10000000001-v2"
 IMG_RE = re.compile(r"\[图片\]\s*[A-Za-z0-9]{16,64}\.(?:png|jpg|jpeg|gif|webp)", re.I)
 OTHER_MEDIA = re.compile(r"\[(表情|视频|动画表情|语音|文件|链接)\]")
 
