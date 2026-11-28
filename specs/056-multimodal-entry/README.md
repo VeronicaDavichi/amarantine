@@ -1,5 +1,5 @@
 ---
-status: in-progress
+status: complete
 created: 2026-11-28
 priority: medium
 tags:
@@ -8,12 +8,15 @@ tags:
 - ingest
 - boundary
 created_at: 2026-11-28T11:36:14.579640700Z
-updated_at: 2026-11-28T11:38:40.567423103Z
+updated_at: 2026-11-28T11:53:22.534748421Z
+completed_at: 2026-11-28T11:53:22.534748421Z
 transitions:
 - status: planned
   at: 2026-11-28T11:38:40.477716148Z
 - status: in-progress
   at: 2026-11-28T11:38:40.567423103Z
+- status: complete
+  at: 2026-11-28T11:53:22.534748421Z
 ---
 # 图片理解只走实时入口，历史灌入不追溯
 
